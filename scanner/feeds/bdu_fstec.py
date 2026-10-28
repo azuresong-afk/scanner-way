@@ -19,6 +19,12 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from scanner.feeds.severity import bdu_best_score
+
+if TYPE_CHECKING:
+    from scanner.feeds.store import ReferenceStore
 
 CVE_RE = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
 # Базовая оценка идёт после слова "составляет", напр.
@@ -98,8 +104,15 @@ def _find_header(rows: list[tuple]) -> tuple[int, dict[int, str]]:
 
 
 def _parse_score(rec: BduRecord) -> float | None:
-    """Достаёт числовую базовую оценку CVSS из текста уровня опасности."""
+    """Достаёт числовую базовую оценку CVSS из текста уровня опасности.
+
+    В выгрузке часто две строки (CVSS 2.0 и 3.x) — берём оценку по самой
+    новой версии CVSS; если версия не указана — первое найденное число.
+    """
     if rec.severity_text:
+        best = bdu_best_score(rec.severity_text)
+        if best is not None:
+            return best
         m = CVSS_SCORE_RE.search(rec.severity_text)
         if m:
             return float(m.group(1).replace(",", "."))
@@ -147,10 +160,85 @@ class BduFstecFeed:
         rows = list(ws.iter_rows(values_only=True))
         yield from parse_rows(rows)
 
-    def sync(self) -> int:
-        # TODO (итерация 3): upsert записей в reference_bdu_entry, заполнить
-        # cve_ids[] для связи с reference_nvd_cve. Парсинг уже реализован выше.
-        count = 0
-        for _rec in self.iter_records():
-            count += 1
-        return count
+    def sync(self, store: ReferenceStore, *, batch_size: int = 1000) -> int:
+        """Upsert всех записей выгрузки в reference_bdu_entry (вместе с cve_ids[]).
+
+        Повторная загрузка новой выгрузки обновляет записи по bdu_id.
+        Возвращает число загруженных записей.
+        """
+        total, batch = 0, []
+        for rec in self.iter_records():
+            batch.append(rec)
+            if len(batch) >= batch_size:
+                total += store.upsert_bdu(batch)
+                batch = []
+        if batch:
+            total += store.upsert_bdu(batch)
+        return total
+
+
+# ---------- Разбор поля «Версия ПО» ----------
+
+@dataclass(frozen=True, slots=True)
+class BduVersionSpec:
+    """Одна позиция поля «Версия ПО»: «от 2.4.0 до 2.4.51 включительно (HTTP Server)»."""
+    software: str
+    exact: str | None = None
+    start: str | None = None          # «от X» — включительно
+    end: str | None = None            # «до Y»
+    end_inclusive: bool = False       # «до Y включительно»
+    unknown: bool = False             # «-» — версия не указана
+
+
+_RANGE_RE = re.compile(
+    r"^(?:от\s+(?P<start>\S+))?\s*(?:до\s+(?P<end>\S+))?\s*(?P<incl>включительно)?$",
+    re.IGNORECASE)
+
+
+def _split_top_level(text: str) -> list[str]:
+    """Делит строку по запятым вне скобок (в названиях ПО бывают вложенные скобки)."""
+    items, cur, depth = [], [], 0
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            items.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+    if "".join(cur).strip():
+        items.append("".join(cur).strip())
+    return items
+
+
+def parse_bdu_versions(versions: str | None) -> list[BduVersionSpec]:
+    """Разбирает поле «Версия ПО» в список (ПО, версия/диапазон)."""
+    specs: list[BduVersionSpec] = []
+    for item in _split_top_level(versions or ""):
+        if not item.endswith(")") or "(" not in item:
+            continue
+        # Последняя сбалансированная группа скобок — название ПО.
+        depth = 0
+        for pos in range(len(item) - 1, -1, -1):
+            if item[pos] == ")":
+                depth += 1
+            elif item[pos] == "(":
+                depth -= 1
+                if depth == 0:
+                    break
+        expr, software = item[:pos].strip(), item[pos + 1:-1].strip()
+        if not software:
+            continue
+        if expr in ("", "-"):
+            specs.append(BduVersionSpec(software, unknown=True))
+            continue
+        m = _RANGE_RE.match(expr)
+        if m and (m.group("start") or m.group("end")):
+            specs.append(BduVersionSpec(
+                software, start=m.group("start"), end=m.group("end"),
+                end_inclusive=bool(m.group("incl"))))
+        else:
+            specs.append(BduVersionSpec(software, exact=expr))
+    return specs
