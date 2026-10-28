@@ -1,0 +1,7 @@
+{"template-id":"CVE-2021-44228","info":{"name":"Apache Log4j2 Remote Code Execution","severity":"critical","description":"Apache Log4j2 JNDI RCE (Log4Shell).","reference":["https://nvd.nist.gov/vuln/detail/CVE-2021-44228"],"classification":{"cve-id":["CVE-2021-44228"],"cvss-score":10.0}},"host":"http://10.0.0.5:8080","ip":"10.0.0.5","port":8080,"matched-at":"http://10.0.0.5:8080/","type":"http"}
+{"template-id":"tech-detect","info":{"name":"Wappalyzer Technology Detection","severity":"info"},"host":"http://10.0.0.5:80","ip":"10.0.0.5","port":80,"matched-at":"http://10.0.0.5:80","extracted-results":["nginx"],"type":"http"}
+{"template-id":"ssh-auth-methods","info":{"name":"SSH Auth Methods","severity":"info","classification":{"cve-id":null}},"ip":"10.0.0.5","host":"10.0.0.5:22","port":22,"matched-at":"10.0.0.5:22","type":"ssh"}
+{"template-id":"CVE-2014-0160","info":{"name":"OpenSSL Heartbleed","severity":"high","reference":["see CVE-2014-0160 for details"],"classification":{"cvss-score":"7.5"}},"ip":"10.0.0.6","host":"https://10.0.0.6:443","port":443,"matched-at":"https://10.0.0.6:443","type":"ssl"}
+{"template-id":"weak-cipher","info":{"name":"Weak TLS Cipher","severity":"medium"},"ip":"10.0.0.6","port":443,"type":"ssl"}
+
+not-json-noise-line
