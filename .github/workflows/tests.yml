@@ -1,0 +1,30 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: scanner_test
+          POSTGRES_USER: scanner
+          POSTGRES_PASSWORD: scanner
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U scanner" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      SCANNER_TEST_DATABASE_URL: postgresql+psycopg://scanner:scanner@localhost:5432/scanner_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
