@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpango-1.0-0 \
         libpangoft2-1.0-0 \
         fonts-dejavu-core \
+        fonts-inter \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

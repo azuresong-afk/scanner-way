@@ -74,14 +74,24 @@ def resolver() -> RemediationResolver:
         "BDU:2023-04110": BduRecord(
             bdu_id="BDU:2023-04110", remediation=BDU_REMEDIATION,
             fix_method="Обновление программного обеспечения",
-            cve_ids=["CVE-2023-38408"]),
+            cve_ids=["CVE-2023-38408"], cwe="CWE-428",
+            refs="https://www.openssh.com/txt/release-9.3p2\n"
+                 "https://www.exploit-db.com/exploits/51757\n"
+                 "https://github.com/openssh/openssh-portable\n"
+                 "https://security-tracker.debian.org/tracker/CVE-2023-38408\n"
+                 "https://wiki.astralinux.ru/astra-linux-se17-bulletin-2023-1018SE17"),
         "BDU:2021-04880": BduRecord(
             bdu_id="BDU:2021-04880",
             remediation="Обновление Apache HTTP Server до версии 2.4.51",
-            cve_ids=["CVE-2021-41773"]),
+            cve_ids=["CVE-2021-41773"], cwe="CWE-22",
+            refs="https://httpd.apache.org/security/vulnerabilities_24.html\n"
+                 "https://www.securitylab.ru/news/526063.php"),
     }
     nvd = {"CVE-2019-0708": "Install the Microsoft security update KB4499175; disable RDP "
                             "or enable Network Level Authentication."}
     benchmark = {"xccdf_org.ssgproject.content_rule_sshd_disable_root_login":
                  "Установите PermitRootLogin no в /etc/ssh/sshd_config и перезапустите sshd."}
-    return RemediationResolver(bdu=bdu, nvd=nvd, benchmark=benchmark)
+    nvd_refs = {"CVE-2019-0708": [
+        "https://portal.msrc.microsoft.com/en-US/security-guidance/advisory/CVE-2019-0708",
+        "http://packetstormsecurity.com/files/153133/BlueKeep.html"]}
+    return RemediationResolver(bdu=bdu, nvd=nvd, benchmark=benchmark, nvd_refs=nvd_refs)

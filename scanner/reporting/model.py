@@ -359,7 +359,7 @@ def _summary(views: list[FindingView], trend: Trend | None) -> Summary:
                             if f.severity in (Severity.CRITICAL, Severity.HIGH)})
         points.append(
             f"Находок критического и высокого уровня: {urgent} (хостов: {urgent_hosts}). "
-            "Их устранение — первоочередная задача, сроки указаны в плане устранения.")
+            "Их устранение — первоочередная задача (см. план устранения).")
     else:
         points.append("Находок критического и высокого уровня не выявлено.")
     creds = [f for f in findings if f.finding_type is FindingType.CRED]
