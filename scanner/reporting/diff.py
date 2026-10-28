@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from scanner.core.models import Finding
+from scanner.core.models import Finding, Severity
 
 
 @dataclass(slots=True)
@@ -36,3 +36,24 @@ def diff_runs(previous: list[Finding], current: list[Finding],
         if k not in cur:
             d.fixed.append(f)
     return d
+
+
+def diff_by_module(previous: list[Finding], current: list[Finding],
+                   historically_fixed: set[str] | None = None) -> dict[str, RunDiff]:
+    """diff_runs отдельно по каждому модулю (модуль входит в dedup_key,
+    поэтому сумма по модулям совпадает со сводным diff)."""
+    modules = sorted({f.module for f in previous} | {f.module for f in current})
+    return {
+        m: diff_runs([f for f in previous if f.module == m],
+                     [f for f in current if f.module == m],
+                     historically_fixed)
+        for m in modules
+    }
+
+
+def severity_counts(findings: list[Finding]) -> dict[Severity, int]:
+    """Количество находок по уровням опасности (все уровни, включая нулевые)."""
+    counts = {s: 0 for s in Severity}
+    for f in findings:
+        counts[f.severity] += 1
+    return counts
