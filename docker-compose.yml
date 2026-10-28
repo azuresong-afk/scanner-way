@@ -3,7 +3,8 @@ services:
     build: .
     env_file: .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - ./:/app
       - feeds_data:/data
@@ -13,7 +14,10 @@ services:
       - NET_ADMIN
     ports:
       - "8000:8000"
-    command: uvicorn scanner.api.main:app --host 0.0.0.0 --port 8000
+    # Единый источник схемы — Alembic: применяем миграции, затем запускаем API.
+    # (Раньше схема грузилась через initdb-SQL в обход Alembic, из-за чего
+    # расходились две ветки инициализации — см. PR интеграции.)
+    command: sh -c "alembic upgrade head && uvicorn scanner.api.main:app --host 0.0.0.0 --port 8000"
 
   db:
     image: postgres:16
@@ -24,9 +28,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./db/migrations:/docker-entrypoint-initdb.d:ro
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   pg_data:

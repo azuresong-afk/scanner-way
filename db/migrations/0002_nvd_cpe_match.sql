@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS reference_nvd_cpe_match (
     vendor             TEXT NOT NULL,
     product            TEXT NOT NULL,
     version            TEXT,                   -- '*' = любая (тогда смотрим диапазон)
-    update             TEXT,
+    "update"           TEXT,
     version_start_incl TEXT,
     version_start_excl TEXT,
     version_end_incl   TEXT,
