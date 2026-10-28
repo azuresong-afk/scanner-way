@@ -20,6 +20,20 @@ services:
     # миграции -> одноразовая загрузка БДУ -> шаблоны Nuclei -> запуск API.
     restart: unless-stopped
 
+  web:
+    # Веб-интерфейс (React + nginx). nginx проксирует /api/* на сервис app,
+    # поэтому UI и API живут на одном origin и CORS не нужен. API_UPSTREAM
+    # указывает на внутреннее имя сервиса API в сети compose (app:8000).
+    build:
+      context: ./web
+    environment:
+      API_UPSTREAM: http://app:8000
+    depends_on:
+      - app
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
   db:
     image: postgres:16
     env_file: .env

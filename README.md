@@ -31,10 +31,12 @@ OpenSCAP, Lynis), миграции схемы, создание первого �
 cp .env.example .env
 # отредактируйте .env: задайте SCANNER_API_SECRET, пароли БД и администратора
 # (по желанию) положите выгрузку БДУ: cp /путь/vullist.xlsx ./data/vullist.xlsx
-docker compose up --build        # поднимает app + postgres и всё готовит сам
+docker compose up --build        # поднимает web + app + postgres и всё готовит сам
 ```
-API: http://localhost:8000 (проверка: `GET /health`). Вход — администратором
-из `SCANNER_API_BOOTSTRAP_ADMIN/PASSWORD`.
+- Веб-интерфейс: http://localhost:8080 — вход администратором из
+  `SCANNER_API_BOOTSTRAP_ADMIN/PASSWORD`.
+- API напрямую: http://localhost:8000 (проверка: `GET /health`). Веб-сервис
+  проксирует запросы на API сам (`/api/*`), так что UI и API на одном origin.
 
 Что делает контейнер при старте (`docker/entrypoint.sh`): `alembic upgrade head`
 → одноразовая загрузка БДУ из `BDU_FSTEC_FEED_PATH` → обновление шаблонов Nuclei
