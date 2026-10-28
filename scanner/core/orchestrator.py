@@ -48,15 +48,21 @@ ModuleFactory = Callable[[], ScanModule]
 log = logging.getLogger(__name__)
 
 
-def default_module_registry() -> dict[str, ModuleFactory]:
-    """Имя модуля -> фабрика. Импорт ленивый: модули тянут свои зависимости."""
+def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFactory]:
+    """Имя модуля -> фабрика. Импорт ленивый: модули тянут свои зависимости.
+
+    matcher — слой сопоставления CVE/БДУ (feeds.matcher.VulnMatcher). Когда он
+    задан, модуль vuln обогащает находки CVE/БДУ ФСТЭК; без него (matcher=None)
+    находки остаются без привязки к справочникам — поэтому в реальном прогоне
+    RunService всегда передаёт matcher над справочниками из БД.
+    """
     def discovery() -> ScanModule:
         from scanner.modules.discovery import DiscoveryModule
         return DiscoveryModule()
 
     def vuln() -> ScanModule:
         from scanner.modules.vuln import VulnModule
-        return VulnModule()
+        return VulnModule(matcher=matcher)
 
     def config_audit() -> ScanModule:
         from scanner.modules.config_audit import ConfigAuditModule
@@ -223,13 +229,36 @@ class RunService:
 
     def __init__(self, session_factory: sessionmaker[Session], audit: AuditSink, *,
                  registry: Mapping[str, ModuleFactory] | None = None,
-                 executor: Executor | None = None):
+                 executor: Executor | None = None,
+                 reference_store: object | None = None):
         self.sessions = session_factory
         self.audit = audit
-        self.registry = dict(registry if registry is not None
-                             else default_module_registry())
+        # Без явного реестра строим стандартный и подключаем к vuln сопоставление
+        # с CVE/БДУ ФСТЭК над справочниками из той же БД — иначе находки реального
+        # прогона остались бы без привязки к БДУ (ключевая функция продукта).
+        if registry is not None:
+            self.registry = dict(registry)
+        else:
+            self.registry = dict(default_module_registry(
+                matcher=self._build_matcher(reference_store)))
         self.executor = executor or ThreadPoolExecutor(max_workers=2,
                                                        thread_name_prefix="scan-run")
+
+    def _build_matcher(self, reference_store: object | None):
+        """VulnMatcher над справочниками БД; None, если БД/справочники недоступны."""
+        store = reference_store
+        if store is None:
+            engine = getattr(self.sessions, "kw", {}).get("bind")
+            if engine is None:
+                return None
+            try:
+                from scanner.feeds.store import SqlReferenceStore
+                store = SqlReferenceStore(engine)
+            except Exception:  # noqa: BLE001 — без справочников прогон всё равно идёт
+                log.exception("cannot build reference store; vuln findings won't be enriched")
+                return None
+        from scanner.feeds.matcher import VulnMatcher
+        return VulnMatcher(store)
 
     # --- проверки до постановки --------------------------------------------
     def known_modules(self) -> list[str]:
