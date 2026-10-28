@@ -3,6 +3,9 @@ __pycache__/
 .env
 .venv/
 *.egg-info/
-/data/
 build/
 *.egg-info/
+
+# данные контейнера, кроме маркера каталога
+/data/*
+!/data/.gitkeep
