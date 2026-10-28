@@ -1,18 +1,363 @@
-"""Модуль 2: поиск уязвимостей (бэкенды: Nuclei, опционально OpenVAS/GVM).
+"""Модуль 2: поиск уязвимостей (бэкенд: Nuclei).
 
-Берёт сервисы из discovery (ctx.services), запускает шаблонные проверки, затем
-обогащает находки через слой сопоставления (CVE/NVD + БДУ ФСТЭК).
+Берёт сервисы из discovery (``ctx.services``) или цели (``ctx.targets``), строит
+из них список URL/host:port, запускает по ним шаблонные проверки Nuclei и
+нормализует JSONL-вывод в единый контракт :class:`Finding`. Затем, если задан
+слой сопоставления (``feeds.matcher.VulnMatcher``), каждая находка обогащается
+CVE/БДУ ФСТЭК, CVSS и severity — это питает приоритетную функцию продукта.
+
+Безопасность (defense in depth поверх allowlist-гейта оркестратора):
+- цели берутся из ``ctx.services``/``ctx.targets`` (уже отфильтрованы allowlist-ом);
+  модуль дополнительно принимает только литеральные IP-адреса и отклоняет всё
+  остальное с записью отказа в аудит — так в argv Nuclei не попадёт ни hostname,
+  ни подсеть, ни опция;
+- Nuclei вызывается без shell, с явными лимитами из :class:`RateProfile`
+  (``-rate-limit``, ``-concurrency``) и таймаутами; сетевые взаимодействия, не
+  связанные со сканированием (авто-апдейт шаблонов и телеметрия), отключены;
+- каждый вызов (полная команда) и его итог пишутся в ``ctx.audit``.
+
+Nuclei в CI не требуется: раннер (``Runner``) подменяется, а парсер проверяется
+на эталонном JSONL. Живой запуск использует ``_subprocess_runner``.
 """
 from __future__ import annotations
 
+import ipaddress
+import json
+import re
+import shlex
+import subprocess
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field
+
+from scanner.core.models import Finding, FindingType, ServiceInfo, Severity
+from scanner.core.ratelimit import RateProfile
 from scanner.modules.base import ScanContext, ScanModule
+
+# Раннер: (argv, stdin_targets, timeout_sec) -> JSONL со stdout. Подменяется в тестах.
+Runner = Callable[[list[str], str, float], str]
+
+# severity Nuclei -> наша шкала
+_SEVERITY_MAP = {
+    "info": Severity.INFO,
+    "low": Severity.LOW,
+    "medium": Severity.MEDIUM,
+    "high": Severity.HIGH,
+    "critical": Severity.CRITICAL,
+    "unknown": Severity.INFO,
+}
+
+# Какие схемы вытягивать из сервиса. Для TLS-портов берём https.
+_TLS_SERVICES = {"https", "ssl", "https-alt", "imaps", "pop3s", "smtps", "ldaps"}
+_TLS_PORTS = {443, 8443, 993, 995, 465, 636, 990}
+
+_CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
+
+
+class VulnScanError(RuntimeError):
+    """Nuclei завершился с ошибкой или вернул неразбираемый вывод."""
+
+
+@dataclass(slots=True)
+class VulnOptions:
+    nuclei_path: str = "nuclei"
+    # Набор/серьёзность шаблонов — согласуются с заказчиком на этапе engagement.
+    templates: list[str] = field(default_factory=list)      # -t (пусто = дефолтные Nuclei)
+    tags: list[str] = field(default_factory=list)            # -tags
+    severities: list[str] = field(default_factory=list)      # -severity (пусто = все)
+    exclude_tags: list[str] = field(default_factory=lambda: ["dos", "fuzz"])
+    batch_size: int = 128                                    # целей на один вызов
+    timeout_per_target_sec: int = 20                         # -timeout
+    overall_timeout_sec: int = 1800                          # жёсткий таймаут процесса
+
+
+def validate_targets(targets: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Делит цели на (валидные IP, отклонённые). Подсети и имена — отклоняются."""
+    ok, rejected = [], []
+    for t in targets:
+        try:
+            ok.append(str(ipaddress.ip_address(t.strip())))
+        except ValueError:
+            rejected.append(t)
+    return ok, rejected
+
+
+def _host_literal(host: str) -> str:
+    """IPv6 в URL/host:port оборачивается в скобки."""
+    try:
+        if ipaddress.ip_address(host).version == 6:
+            return f"[{host}]"
+    except ValueError:
+        pass
+    return host
+
+
+def _is_tls(service: ServiceInfo) -> bool:
+    svc = (service.service or "").lower()
+    return svc in _TLS_SERVICES or service.port in _TLS_PORTS
+
+
+def service_to_input(service: ServiceInfo) -> str | None:
+    """Строит одну строку-цель Nuclei из сервиса. Только литеральные IP."""
+    try:
+        ipaddress.ip_address(service.host)
+    except ValueError:
+        return None
+    if service.protocol and service.protocol.lower() == "udp":
+        return None  # Nuclei работает по TCP/HTTP; UDP-сервисы пропускаем
+    host = _host_literal(service.host)
+    svc = (service.service or "").lower()
+    if svc in {"http", "http-alt", "http-proxy"} or service.port in {80, 8080, 8000}:
+        return f"http://{host}:{service.port}"
+    if _is_tls(service):
+        return f"https://{host}:{service.port}"
+    # прочие сервисы — как host:port, пусть Nuclei сам подберёт протокол
+    return f"{host}:{service.port}"
+
+
+def build_inputs(ctx: ScanContext) -> tuple[list[str], list[str]]:
+    """Собирает список строк-целей Nuclei и список отклонённых исходных значений.
+
+    Приоритет — у ``ctx.services`` (точные порты из discovery). Если сервисов нет,
+    берём ``ctx.targets`` как голые хосты (Nuclei сам определит порты/схемы).
+    """
+    inputs: list[str] = []
+    rejected: list[str] = []
+    seen: set[str] = set()
+    if ctx.services:
+        for s in ctx.services:
+            line = service_to_input(s)
+            if line is None:
+                rejected.append(f"{s.host}:{s.port}/{s.protocol}")
+            elif line not in seen:
+                seen.add(line)
+                inputs.append(line)
+    else:
+        ok, bad = validate_targets(ctx.targets)
+        rejected.extend(bad)
+        for h in ok:
+            line = _host_literal(h)
+            if line not in seen:
+                seen.add(line)
+                inputs.append(line)
+    return inputs, rejected
+
+
+def build_nuclei_command(rate: RateProfile, opts: VulnOptions) -> list[str]:
+    """Собирает argv Nuclei. Цели подаются в stdin (``-l -``), не в argv."""
+    cmd = [
+        opts.nuclei_path,
+        "-l", "-",                 # список целей из stdin
+        "-jsonl",                  # структурированный вывод в stdout
+        "-silent",                 # без баннера/прогресса в stdout
+        "-no-color",
+        "-disable-update-check",   # никаких сетевых вызовов помимо сканирования
+        "-rate-limit", str(max(1, int(rate.max_requests_per_sec))),
+        "-concurrency", str(max(1, rate.max_concurrency)),
+        "-timeout", str(opts.timeout_per_target_sec),
+    ]
+    for t in opts.templates:
+        cmd += ["-t", t]
+    if opts.tags:
+        cmd += ["-tags", ",".join(opts.tags)]
+    if opts.exclude_tags:
+        cmd += ["-exclude-tags", ",".join(opts.exclude_tags)]
+    if opts.severities:
+        cmd += ["-severity", ",".join(opts.severities)]
+    return cmd
+
+
+def _subprocess_runner(cmd: list[str], stdin_targets: str, timeout: float) -> str:
+    proc = subprocess.run(cmd, input=stdin_targets, capture_output=True, text=True,
+                          timeout=timeout, check=False)
+    # Nuclei отдаёт rc=0 даже когда ничего не найдено; ненулевой — ошибка запуска.
+    if proc.returncode != 0:
+        raise VulnScanError(f"nuclei rc={proc.returncode}: {proc.stderr.strip()[:500]}")
+    return proc.stdout
+
+
+def _collect_cves(info: dict, classification: dict) -> list[str]:
+    cves: list[str] = []
+    for cid in classification.get("cve-id") or []:
+        if cid:
+            cves.append(cid.upper())
+    # некоторые шаблоны кладут CVE только в references/теги
+    for ref in info.get("reference") or []:
+        for m in _CVE_RE.findall(str(ref)):
+            cves.append(m.upper())
+    return list(dict.fromkeys(cves))
+
+
+def parse_nuclei_jsonl(output: str, module: str = "vuln") -> list[Finding]:
+    """Разбирает JSONL-вывод Nuclei в список нормализованных Finding.
+
+    Пустые строки и нераспознанные записи пропускаются (устойчивость к примесям
+    в stdout). Информационные (severity=info) результаты тоже сохраняются как
+    находки типа INFO — отчёт/сравнение прогонов решают, что показывать.
+    """
+    findings: list[Finding] = []
+    for raw in output.splitlines():
+        raw = raw.strip()
+        if not raw or raw[0] != "{":
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+
+        info = rec.get("info") or {}
+        classification = info.get("classification") or {}
+        template_id = rec.get("template-id") or rec.get("templateID") or "nuclei"
+        host = rec.get("ip") or rec.get("host") or ""
+        # host может быть URL (http://1.2.3.4:80) — вытащим адрес
+        host = _extract_host(host) or _extract_host(str(rec.get("host") or "")) or host
+
+        port = _extract_port(rec)
+        sev = _SEVERITY_MAP.get(str(info.get("severity") or "").lower(), Severity.INFO)
+        cves = _collect_cves(info, classification)
+        cvss = classification.get("cvss-score")
+        try:
+            cvss = float(cvss) if cvss is not None else None
+        except (TypeError, ValueError):
+            cvss = None
+
+        ftype = FindingType.VULN if sev != Severity.INFO or cves else FindingType.INFO
+        # vuln_id: CVE при наличии (стабилен между прогонами), иначе id шаблона
+        vuln_id = cves[0] if cves else f"NUCLEI:{template_id}"
+
+        findings.append(Finding(
+            module=module,
+            host=host,
+            port=port,
+            finding_type=ftype,
+            title=info.get("name") or template_id,
+            severity=sev,
+            vuln_id=vuln_id,
+            cve_ids=cves,
+            cvss=cvss,
+            evidence=_evidence(rec, info, template_id),
+        ))
+    return findings
+
+
+def _extract_host(value: str) -> str | None:
+    if not value:
+        return None
+    v = value
+    if "://" in v:
+        v = v.split("://", 1)[1]
+    v = v.split("/", 1)[0]
+    if v.startswith("["):                       # [ipv6]:port
+        return v[1:].split("]", 1)[0]
+    if v.count(":") == 1:                        # host:port
+        v = v.split(":", 1)[0]
+    try:
+        ipaddress.ip_address(v)
+        return v
+    except ValueError:
+        return value if value and "://" not in value and ":" not in value else v or None
+
+
+def _extract_port(rec: dict) -> int | None:
+    port = rec.get("port")
+    if port is not None:
+        try:
+            return int(port)
+        except (TypeError, ValueError):
+            pass
+    for key in ("matched-at", "host", "url"):
+        v = str(rec.get(key) or "")
+        if "://" in v:
+            v = v.split("://", 1)[1]
+        v = v.split("/", 1)[0]
+        if v.startswith("["):
+            v = v.split("]", 1)[1].lstrip(":")
+        elif v.count(":") == 1:
+            v = v.split(":", 1)[1]
+        else:
+            v = ""
+        if v.isdigit():
+            return int(v)
+    return None
+
+
+def _evidence(rec: dict, info: dict, template_id: str) -> str | None:
+    lines = [f"template: {template_id}"]
+    matched = rec.get("matched-at") or rec.get("matched")
+    if matched:
+        lines.append(f"matched-at: {matched}")
+    extracted = rec.get("extracted-results")
+    if extracted:
+        lines.append("extracted: " + ", ".join(str(x) for x in extracted[:5]))
+    desc = info.get("description")
+    if desc:
+        lines.append(f"description: {str(desc).strip()[:300]}")
+    return "; ".join(lines) or None
+
+
+class _Matcher:
+    """Минимальный интерфейс слоя сопоставления (feeds.matcher.VulnMatcher)."""
+
+    def enrich(self, finding: Finding, service: ServiceInfo | None = None) -> Finding: ...
 
 
 class VulnModule(ScanModule):
     name = "vuln"
 
-    def run(self, ctx: ScanContext):
-        # TODO (итерация 3): запустить Nuclei по ctx.services/targets,
-        # нормализовать вывод, сопоставить с reference_nvd_cve и
-        # reference_bdu_entry (feeds.matcher), вернуть Finding с cve_ids/bdu_ids.
-        raise NotImplementedError("vuln: Nuclei/OpenVAS backend — итерация 3")
+    def __init__(self, options: VulnOptions | None = None,
+                 runner: Runner | None = None,
+                 matcher: _Matcher | None = None):
+        """
+        :param matcher: слой сопоставления CVE/БДУ (``feeds.matcher.VulnMatcher``).
+            Если задан — каждая находка обогащается CVE/БДУ ФСТЭК, CVSS и severity.
+        """
+        self.options = options or VulnOptions()
+        self._runner = runner or _subprocess_runner
+        self._matcher = matcher
+
+    def run(self, ctx: ScanContext) -> list[Finding]:
+        inputs, rejected = build_inputs(ctx)
+        for r in rejected:
+            ctx.audit.record(subject="scanner", action="vuln_deny", target=r,
+                             result="not_an_ip_literal")
+        if not inputs:
+            return []
+
+        opts = self.options
+        cmd = build_nuclei_command(ctx.rate, opts)
+        findings: list[Finding] = []
+        step = max(1, opts.batch_size)
+        for i in range(0, len(inputs), step):
+            batch = inputs[i:i + step]
+            stdin_targets = "\n".join(batch) + "\n"
+            ctx.audit.record(subject="scanner", action="nuclei_exec",
+                             target=f"{len(batch)} targets", result="started",
+                             details=shlex.join(cmd))
+            try:
+                output = self._runner(cmd, stdin_targets, float(opts.overall_timeout_sec))
+                batch_findings = parse_nuclei_jsonl(output, self.name)
+            except (VulnScanError, subprocess.TimeoutExpired, OSError) as e:
+                ctx.audit.record(subject="scanner", action="nuclei_exec",
+                                 target=f"{len(batch)} targets", result="error",
+                                 details=str(e)[:500])
+                raise VulnScanError(str(e)) from e
+            ctx.audit.record(subject="scanner", action="nuclei_exec",
+                             target=f"{len(batch)} targets", result="ok",
+                             details=f"findings={len(batch_findings)}")
+            findings.extend(self._enrich(batch_findings, ctx.services))
+        return findings
+
+    def _enrich(self, findings: Iterable[Finding],
+                services: list[ServiceInfo] | None) -> list[Finding]:
+        """Обогащает находки через matcher, сопоставляя сервис по host:port."""
+        out = list(findings)
+        if self._matcher is None:
+            return out
+        by_hostport: dict[tuple[str, int | None], ServiceInfo] = {}
+        for s in services or []:
+            by_hostport[(s.host, s.port)] = s
+        for f in out:
+            svc = by_hostport.get((f.host, f.port))
+            self._matcher.enrich(f, svc)
+        return out
