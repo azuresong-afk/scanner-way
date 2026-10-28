@@ -22,7 +22,7 @@ from xml.sax.saxutils import escape
 from scanner.core.models import FindingStatus, Severity
 from scanner.reporting.model import SEVERITY_LABELS, SEVERITY_ORDER
 
-FONT = "DejaVu Sans"
+FONT = "Inter, DejaVu Sans"
 
 # Цвета критичности (как у Nessus/Qualys: тёмно-красный -> оранжевый -> янтарный
 # -> синий -> серый). «Информационный» намеренно нейтрально-серый. Цвет никогда не
@@ -38,10 +38,10 @@ STATUS_HEX: dict[FindingStatus, str] = {
     FindingStatus.NEW: "#e8590c",
     FindingStatus.REGRESSION: "#b42318",
     FindingStatus.OPEN: "#5b6475",
-    FindingStatus.FIXED: "#23733f",
+    FindingStatus.FIXED: "#067647",
 }
-INK, MUTED, GRID, SURFACE = "#1d2433", "#5b6475", "#e4e7ec", "#ffffff"
-NEUTRAL = "#c3c9d3"
+INK, MUTED, GRID, SURFACE = "#101828", "#667085", "#f2f4f7", "#ffffff"
+NEUTRAL, ACCENT, AXIS = "#d0d5dd", "#1d2b4f", "#d0d5dd"
 
 
 # --- примитивы ------------------------------------------------------------------
@@ -161,7 +161,7 @@ def _svg_shape(s) -> str:
     if isinstance(s, Rect):
         if s.w <= 0 or s.h <= 0:
             return ""
-        r = min(3.0, s.w / 2, s.h / 2) if s.round_end else 0
+        r = min(4.0, s.w / 2, s.h / 2) if s.round_end else 0
         if s.round_end == "right":
             x, y, w, h = s.x, s.y, s.w, s.h
             d = (f"M{x:.1f},{y:.1f}H{x + w - r:.1f}Q{x + w:.1f},{y:.1f} {x + w:.1f},{y + r:.1f}"
@@ -209,7 +209,7 @@ def _png_rect(d, s: Rect, k: int) -> None:
     if s.w <= 0 or s.h <= 0:
         return
     x0, y0, x1, y1 = s.x * k, s.y * k, (s.x + s.w) * k, (s.y + s.h) * k
-    r = min(3.0, s.w / 2, s.h / 2) * k if s.round_end else 0
+    r = min(4.0, s.w / 2, s.h / 2) * k if s.round_end else 0
     if not r:
         d.rectangle([x0, y0, x1, y1], fill=s.fill)
         return
@@ -299,7 +299,7 @@ def severity_donut(counts: dict[Severity, int]) -> Scene:
     """Кольцо распределения по уровню опасности + легенда с числом и долей."""
     total = sum(counts.values())
     sc = Scene("severity", 340, 180, "Распределение находок по уровню опасности")
-    cx, cy, r, ri = 88, 90, 78, 50
+    cx, cy, r, ri = 88, 90, 76, 56
     if total:
         a = 0.0
         for s in SEVERITY_ORDER:
@@ -312,8 +312,8 @@ def severity_donut(counts: dict[Severity, int]) -> Scene:
             a += span
     else:
         sc.add(Arc(cx, cy, r, ri, 0, 360, GRID, "Находок нет"))
-    sc.add(Text(cx, cy + 4, str(total), 24, INK, "middle", bold=True),
-           Text(cx, cy + 20, "находок", 9.5, MUTED, "middle"))
+    sc.add(Text(cx, cy + 5, str(total), 26, INK, "middle", bold=True),
+           Text(cx, cy + 22, "находок", 9, MUTED, "middle"))
     y = 38
     for s in SEVERITY_ORDER:
         n = counts[s]
@@ -328,7 +328,7 @@ def severity_donut(counts: dict[Severity, int]) -> Scene:
 def stacked_bars(key: str, label: str, rows: Sequence[tuple[str, dict[Severity, int]]],
                  width: int = 520, label_w: int = 150) -> Scene:
     """Горизонтальные столбцы с разбивкой по опасности (хосты, модули)."""
-    band, bar, bottom = 26, 16, 22
+    band, bar, bottom = 26, 13, 22
     sc = Scene(key, width, 0, label)
     top_pad = _legend(sc, 4, 12, [(SEVERITY_LABELS[s], SEVERITY_HEX[s])
                                   for s in SEVERITY_ORDER]) + 14
@@ -382,7 +382,7 @@ def trend_columns(points: Sequence[RunPoint], width: int = 340) -> Scene:
         sc.add(Line(left, y, width - 8, y), Text(left - 6, y + 3, str(t), 9, MUTED, "end"))
     n = max(len(points), 1)
     slot = plot_w / n
-    col = min(36, slot * 0.6)
+    col = min(30, slot * 0.5)
     for i, p in enumerate(points):
         x = left + slot * i + (slot - col) / 2
         y = base
@@ -397,7 +397,7 @@ def trend_columns(points: Sequence[RunPoint], width: int = 340) -> Scene:
         total = sum(p.counts.values())
         sc.add(Text(x + col / 2, y - 5, str(total), 10, INK, "middle", bold=True),
                Text(x + col / 2, base + 15, _short(p.label, 14), 9.5, MUTED, "middle"))
-    sc.add(Line(left, base, width - 8, base, MUTED))
+    sc.add(Line(left, base, width - 8, base, AXIS))
     return sc
 
 
@@ -415,7 +415,7 @@ def waterfall(previous: int, fixed: int, new: int, regression: int,
          f"Новые: +{new}"),
         ("Повторно", previous - fixed + new, current, STATUS_HEX[FindingStatus.REGRESSION],
          f"Повторно выявлены: +{regression}"),
-        ("Стало", 0, current, INK, f"Текущий прогон: {current}"),
+        ("Стало", 0, current, ACCENT, f"Текущий прогон: {current}"),
     ]
     left, top, base = 34, 24, height - 26
     plot_w, plot_h = width - left - 8, base - top
@@ -424,7 +424,7 @@ def waterfall(previous: int, fixed: int, new: int, regression: int,
         y = base - plot_h * t / peak
         sc.add(Line(left, y, width - 8, y), Text(left - 6, y + 3, str(t), 9, MUTED, "end"))
     slot = plot_w / len(steps)
-    col = min(40, slot * 0.6)
+    col = min(32, slot * 0.55)
     values = [previous, -fixed, new, regression, current]
     for i, (name, lo, hi, color, title) in enumerate(steps):
         x = left + slot * i + (slot - col) / 2
@@ -438,6 +438,6 @@ def waterfall(previous: int, fixed: int, new: int, regression: int,
         if 0 < i < len(steps) - 1:   # соединитель уровня с предыдущим шагом
             level = hi if i == 1 else lo
             yl = base - plot_h * level / peak
-            sc.add(Line(x - (slot - col), yl, x, yl, MUTED, 0.75))
-    sc.add(Line(left, base, width - 8, base, MUTED))
+            sc.add(Line(x - (slot - col), yl, x, yl, AXIS, 1))
+    sc.add(Line(left, base, width - 8, base, AXIS))
     return sc

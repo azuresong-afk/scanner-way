@@ -10,7 +10,12 @@ from scanner.core.models import Finding, FindingType, Severity
 from scanner.reporting import charts as ch
 from scanner.reporting.charts import RunPoint
 from scanner.reporting.model import ReportContext, build_report
-from scanner.reporting.render import ReportFormat, ReportRenderer, build_charts
+from scanner.reporting.render import (
+    ReportFormat,
+    ReportRenderer,
+    build_charts,
+    host_blocks,
+)
 from tests import reporting_fixtures as fx
 
 ALL_CHARTS = {"severity", "hosts", "modules", "waterfall", "trend"}
@@ -137,3 +142,44 @@ def test_png_matches_scene_size():
     scene = ch.severity_donut({s: 1 for s in Severity})
     img = Image.open(io.BytesIO(scene.to_png(scale=2)))
     assert img.size == (scene.width * 2, scene.height * 2)
+
+
+# --- содержание: без сроков, раздел по хостам ---------------------------------------
+
+def _docx_xml(report) -> str:
+    raw = ReportRenderer().render(report, ReportFormat.DOCX)
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        return z.read("word/document.xml").decode()
+
+
+def test_no_remediation_deadlines_in_documents(report):
+    html = ReportRenderer().render_html(report)
+    xml = _docx_xml(report)
+    for text in (html, xml):
+        assert not re.search(r"до \d+ дн\.", text)
+        assert "Срок" not in text and "по плану" not in text
+    # контракт JSON сохранён: поле остаётся для интеграций
+    data = json.loads(ReportRenderer().render(report, ReportFormat.JSON))
+    assert "deadline_days" in data["remediation_plan"][0]
+
+
+def test_host_blocks_cover_every_finding(report):
+    blocks = host_blocks(report)
+    assert sum(b.total for b in blocks) == report.summary.total
+    assert [b.host for b in blocks] == [h.host for h in report.summary.top_hosts]
+    first = blocks[0]
+    assert first.host == "10.0.0.1" and first.risk is Severity.CRITICAL
+    assert first.ports == [22]
+
+
+def test_html_and_docx_have_per_host_section(report):
+    html = ReportRenderer().render_html(report)
+    assert "Результаты по хостам" in html
+    assert html.count('class="host"') == report.summary.hosts
+    section = html.split("Результаты по хостам", 1)[1]
+    for v in report.combined.findings:
+        assert v.finding.title in section
+    xml = _docx_xml(report)
+    assert "Результаты по хостам" in xml
+    for b in host_blocks(report):
+        assert b.host in xml
