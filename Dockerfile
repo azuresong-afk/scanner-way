@@ -5,6 +5,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap \
         openscap-scanner \
         lynis \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        fonts-dejavu-core \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

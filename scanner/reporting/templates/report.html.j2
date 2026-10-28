@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ r.context.title }}</title>
+<style>
+  :root {
+    --ink: #1d2433; --muted: #5b6475; --line: #d9dde5; --bg: #ffffff; --panel: #f5f7fa;
+    --critical: #8e1b1b; --high: #c2410c; --medium: #b7791f; --low: #2f6f9f; --info: #6b7280;
+    --good: #23733f;
+  }
+  @page { size: A4; margin: 18mm 15mm 18mm 15mm;
+          @bottom-right { content: "стр. " counter(page) " из " counter(pages);
+                          font-family: "DejaVu Sans", sans-serif; font-size: 8pt;
+                          color: #5b6475; } }
+  * { box-sizing: border-box; }
+  body { font-family: "DejaVu Sans", "Segoe UI", Arial, sans-serif; color: var(--ink);
+         background: var(--bg); margin: 0 auto; max-width: 1100px; padding: 24px 16px;
+         font-size: 10.5pt; line-height: 1.45; }
+  @media print { body { padding: 0; max-width: none; } }
+  h1 { font-size: 20pt; margin: 0 0 4px; }
+  h2 { font-size: 14.5pt; margin: 28px 0 10px; padding-bottom: 4px;
+       border-bottom: 2px solid var(--ink); page-break-after: avoid; }
+  h3 { font-size: 12pt; margin: 18px 0 8px; page-break-after: avoid; }
+  .meta { color: var(--muted); margin-bottom: 16px; }
+  .meta span { display: inline-block; margin-right: 18px; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; }
+  th, td { border: 1px solid var(--line); padding: 5px 7px; text-align: left;
+           vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; }
+  tr { page-break-inside: avoid; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+  .tile { flex: 1 1 80px; border: 1px solid var(--line); border-radius: 6px;
+          padding: 8px 10px; background: var(--panel); }
+  .tile b { display: block; font-size: 17pt; }
+  .tile small { color: var(--muted); }
+  .sev { display: inline-block; padding: 1px 7px; border-radius: 10px; color: #fff;
+         font-size: 8.5pt; font-weight: 600; white-space: nowrap; }
+  .sev-critical { background: var(--critical); } .sev-high { background: var(--high); }
+  .sev-medium { background: var(--medium); } .sev-low { background: var(--low); }
+  .sev-info { background: var(--info); }
+  .status { font-size: 8.5pt; color: var(--muted); white-space: nowrap; }
+  .status-new, .status-regression { color: var(--high); font-weight: 600; }
+  .status-fixed { color: var(--good); font-weight: 600; }
+  .risk { padding: 10px 12px; border-left: 5px solid var(--ink); background: var(--panel);
+          margin: 10px 0; }
+  .risk-critical { border-color: var(--critical); } .risk-high { border-color: var(--high); }
+  .risk-medium { border-color: var(--medium); } .risk-low { border-color: var(--low); }
+  .finding { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+             margin: 0 0 10px; page-break-inside: avoid; }
+  .finding h4 { margin: 0 0 6px; font-size: 10.5pt; }
+  .kv { color: var(--muted); font-size: 9pt; margin-bottom: 6px; }
+  .kv span { margin-right: 14px; }
+  .fix { background: #eef6f0; border-left: 4px solid var(--good); padding: 7px 10px;
+         margin-top: 6px; }
+  .fix b { color: var(--good); }
+  .fix .src { color: var(--muted); font-size: 8.5pt; }
+  pre { white-space: pre-wrap; word-break: break-word; background: var(--panel);
+        padding: 6px 8px; font-size: 8.5pt; margin: 6px 0 0; border-radius: 4px; }
+  a { color: var(--low); word-break: break-all; }
+  .delta-up { color: var(--high); } .delta-down { color: var(--good); }
+  .muted { color: var(--muted); }
+  .wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+{% macro sev(s) %}<span class="sev sev-{{ s }}">{{ SEVERITY_LABELS[s] }}</span>{% endmacro %}
+{% macro deadline(d) %}{% if d is none %}по плану{% else %}до {{ d }} дн.{% endif %}{% endmacro %}
+
+<h1>{{ r.context.title }}</h1>
+<div class="meta">
+  {% if r.context.customer %}<span>Заказчик: <b>{{ r.context.customer }}</b></span>{% endif %}
+  {% if r.context.engagement %}<span>Договор / проект: {{ r.context.engagement }}</span>{% endif %}
+  {% if r.context.run_id is not none %}<span>Прогон: {{ r.context.run_id }}</span>{% endif %}
+  {% if r.context.previous_run_id is not none %}<span>Сравнение с прогоном: {{ r.context.previous_run_id }}</span>{% endif %}
+  <span>Сформирован: {{ r.context.generated_at.strftime("%d.%m.%Y %H:%M UTC") }}</span>
+</div>
+
+<h2>1. Резюме для руководства</h2>
+<div class="risk risk-{{ r.summary.risk_level or 'none' }}">
+  Общий уровень риска: <b>{{ r.summary.risk_label }}</b>.
+  Хостов с находками: {{ r.summary.hosts }}, всего находок: {{ r.summary.total }}.
+</div>
+<div class="tiles">
+  {% for s in SEVERITY_ORDER %}
+  <div class="tile"><small>{{ SEVERITY_LABELS[s] }}</small><b>{{ r.summary.severity_counts[s] }}</b></div>
+  {% endfor %}
+</div>
+<ul>
+  {% for p in r.summary.key_points %}<li>{{ p }}</li>{% endfor %}
+</ul>
+{% if r.summary.top_hosts %}
+<h3>Наиболее уязвимые хосты</h3>
+<div class="wrap"><table>
+  <tr><th>Хост</th>{% for s in SEVERITY_ORDER %}<th class="num">{{ SEVERITY_LABELS[s] }}</th>{% endfor %}<th class="num">Всего</th></tr>
+  {% for h in r.summary.top_hosts %}
+  <tr><td>{{ h.host }}</td>{% for s in SEVERITY_ORDER %}<td class="num">{{ h.counts[s] }}</td>{% endfor %}<td class="num"><b>{{ h.total }}</b></td></tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+<h3>Находки по модулям</h3>
+<div class="wrap"><table>
+  <tr><th>Модуль</th>{% for s in SEVERITY_ORDER %}<th class="num">{{ SEVERITY_LABELS[s] }}</th>{% endfor %}<th class="num">Всего</th></tr>
+  {% for m in r.modules %}
+  <tr><td>{{ m.label }}</td>{% for s in SEVERITY_ORDER %}<td class="num">{{ m.severity_counts[s] }}</td>{% endfor %}<td class="num"><b>{{ m.findings|length }}</b></td></tr>
+  {% endfor %}
+</table></div>
+
+<h2>2. План устранения</h2>
+{% if r.plan %}
+<p class="muted">Одинаковые меры объединены: одна строка — одно действие и все хосты, где его нужно выполнить.
+Порядок — по уровню опасности и числу затронутых хостов.</p>
+<div class="wrap"><table>
+  <tr><th>№</th><th>Опасность</th><th>Что сделать</th><th>Где</th><th>Срок</th></tr>
+  {% for p in r.plan %}
+  <tr>
+    <td class="num">{{ loop.index }}</td>
+    <td>{{ sev(p.severity) }}</td>
+    <td>{{ p.action }}<br><span class="muted">Источник: {{ p.source_label }}. Находки: {{ p.titles|join("; ") }}</span></td>
+    <td>{{ p.targets|join(", ") }}</td>
+    <td class="num">{{ deadline(p.deadline_days) }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<p>Мер устранения не требуется.</p>
+{% endif %}
+
+{% macro trend_block(t) %}
+<p><b>{{ t.verdict }}</b></p>
+<div class="tiles">
+  {% for st in STATUS_ORDER %}
+  <div class="tile"><small>{{ STATUS_LABELS[st] }}</small><b>{{ t.counts[st] }}</b></div>
+  {% endfor %}
+</div>
+<table>
+  <tr><th>Уровень опасности</th><th class="num">Предыдущий прогон</th><th class="num">Текущий прогон</th><th class="num">Изменение</th></tr>
+  {% for d in t.severity %}
+  <tr><td>{{ d.label }}</td><td class="num">{{ d.previous }}</td><td class="num">{{ d.current }}</td>
+      <td class="num {% if d.delta > 0 %}delta-up{% elif d.delta < 0 %}delta-down{% endif %}">{{ "%+d"|format(d.delta) if d.delta else "0" }}</td></tr>
+  {% endfor %}
+</table>
+{% if t.fixed %}
+<h3>Устранено с предыдущего прогона</h3>
+<table>
+  <tr><th>Опасность</th><th>Находка</th><th>Хост</th></tr>
+  {% for v in t.fixed %}
+  <tr><td>{{ sev(v.finding.severity) }}</td><td>{{ v.finding.title }}</td><td>{{ v.target }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endmacro %}
+
+<h2>3. Сравнение с предыдущим прогоном</h2>
+{% if r.has_trend %}
+{{ trend_block(r.combined.trend) }}
+<h3>Динамика по модулям</h3>
+<div class="wrap"><table>
+  <tr><th>Модуль</th>{% for st in STATUS_ORDER %}<th class="num">{{ STATUS_LABELS[st] }}</th>{% endfor %}</tr>
+  {% for m in r.modules if m.trend %}
+  <tr><td>{{ m.label }}</td>{% for st in STATUS_ORDER %}<td class="num">{{ m.trend.counts[st] }}</td>{% endfor %}</tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<p>Предыдущий прогон не задан — это первый прогон, сравнение будет доступно со следующего.</p>
+{% endif %}
+
+<h2>4. Детальные результаты для инженеров</h2>
+{% for m in r.modules %}
+<h3>4.{{ loop.index }}. {{ m.label }}</h3>
+{% if not m.findings %}<p>Открытых находок нет.</p>{% endif %}
+{% for s, label, group in m.by_severity %}
+  {% for v in group %}
+  {% set f = v.finding %}
+  <div class="finding">
+    <h4>{{ sev(f.severity) }} {{ f.title }}
+      {% if v.status %}<span class="status status-{{ v.status }}">· {{ v.status_label }}</span>{% endif %}</h4>
+    <div class="kv">
+      <span>Хост: <b>{{ v.target }}</b></span>
+      {% if f.vuln_id %}<span>ID: {{ f.vuln_id }}</span>{% endif %}
+      {% if f.cvss is not none %}<span>CVSS: {{ "%.1f"|format(f.cvss) }}</span>{% endif %}
+      {% if f.cve_ids %}<span>CVE: {{ f.cve_ids|join(", ") }}</span>{% endif %}
+      {% if f.bdu_ids %}<span>БДУ: {{ f.bdu_ids|join(", ") }}</span>{% endif %}
+    </div>
+    {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
+    <div class="fix">
+      <b>Рекомендация по устранению</b> <span class="src">({{ v.remediation.source_label }}; срок: {{ deadline(v.remediation.deadline_days) }})</span><br>
+      {{ v.remediation.text }}
+      {% if v.remediation.fix_method %}<br><span class="muted">Способ устранения: {{ v.remediation.fix_method }}</span>{% endif %}
+      {% if v.remediation.references %}<br><span class="src">Ссылки:
+        {% for ref in v.remediation.references %}<a href="{{ ref }}">{{ ref }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% endfor %}
+{% endfor %}
+
+<p class="muted">Отчёт сформирован по результатам авторизованного тестирования в рамках договора.
+Сроки устранения — рекомендуемые и могут быть скорректированы политикой заказчика.</p>
+</body>
+</html>
