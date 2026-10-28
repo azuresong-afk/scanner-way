@@ -14,8 +14,11 @@ services:
     cap_add:
       - NET_RAW
       - NET_ADMIN
+    # API нужен снаружи только для отладки: веб ходит в него по сети compose.
+    # Поэтому по умолчанию он слушает только localhost хоста. Порт хоста
+    # меняется в .env (SCANNER_API_PORT), если 8000 уже занят.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${SCANNER_API_PORT:-8000}:8000"
     # ENTRYPOINT образа (docker/entrypoint.sh) сам готовит окружение:
     # миграции -> одноразовая загрузка БДУ -> шаблоны Nuclei -> запуск API.
     restart: unless-stopped
@@ -30,8 +33,9 @@ services:
       API_UPSTREAM: http://app:8000
     depends_on:
       - app
+    # Единственный порт, который нужен пользователям. Порт хоста — SCANNER_WEB_PORT.
     ports:
-      - "8080:8080"
+      - "${SCANNER_WEB_PORT:-8080}:8080"
     restart: unless-stopped
 
   db:
@@ -43,8 +47,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - pg_data:/var/lib/postgresql/data
+    # Только localhost хоста (резервные копии, отладка). Порт — SCANNER_DB_PORT.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${SCANNER_DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
