@@ -3,6 +3,7 @@ FROM python:3.12-slim
 # Внешние движки-бэкенды (вызываются как процессы; см. лицензии в architecture.md)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap \
+        openssh-client \
         openscap-scanner \
         lynis \
         libpango-1.0-0 \

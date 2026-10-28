@@ -1,0 +1,274 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<Benchmark xmlns="http://checklists.nist.gov/xccdf/1.2" xmlns:html="http://www.w3.org/1999/xhtml" id="xccdf_org.ssgproject.content_benchmark_DEBIAN-12" resolved="1" xml:lang="en-US" style="SCAP_1.2"><status date="2023-12-16">draft</status>
+  <title xml:lang="en-US">Guide to the Secure Configuration of Debian 12</title>
+  <version update="https://github.com/ComplianceAsCode/content/releases/latest">0.1.71</version>
+  <Group id="xccdf_org.ssgproject.content_group_services"><title>Services</title><Rule id="xccdf_org.ssgproject.content_rule_sshd_disable_empty_passwords" selected="false" role="full" severity="high">
+          <title xml:lang="en-US">Disable SSH Access via Empty Passwords</title>
+          <description xml:lang="en-US">Disallow SSH login with empty passwords.
+The default SSH configuration disables logins with empty passwords. The appropriate
+configuration is used if no value is set for <html:code>PermitEmptyPasswords</html:code>.
+<html:br />
+To explicitly disallow SSH login from accounts with empty passwords,
+add or correct the following line in
+
+
+<html:code>/etc/ssh/sshd_config</html:code>:
+
+<html:br />
+<html:pre>PermitEmptyPasswords no</html:pre>
+Any accounts with empty passwords should be disabled immediately, and PAM configuration
+should prevent users from being able to assign themselves empty passwords.</description>
+          <reference href="http://www.ssi.gouv.fr/administration/bonnes-pratiques/">NT007(R17)</reference>
+          <reference href="https://www.cisecurity.org/controls/">11</reference>
+          <reference href="https://www.cisecurity.org/controls/">12</reference>
+          <reference href="https://www.cisecurity.org/controls/">13</reference>
+          <reference href="https://www.cisecurity.org/controls/">14</reference>
+          <reference href="https://www.cisecurity.org/controls/">15</reference>
+          <rationale xml:lang="en-US">Configuring this setting for the SSH daemon provides additional assurance
+that remote login via SSH will require a password, even in the event of
+misconfiguration elsewhere.</rationale>
+          <fix id="sshd_disable_empty_passwords" system="urn:xccdf:fix:script:sh" complexity="low" disruption="low" strategy="restrict"># Remediation is applicable only in certain platforms
+if [ ! -f /.dockerenv ] &amp;&amp; [ ! -f /run/.containerenv ]; then
+
+if [ -e "/etc/ssh/sshd_config" ] ; then
+    
+    LC_ALL=C sed -i "/^\s*PermitEmptyPasswords\s\+/Id" "/etc/ssh/sshd_config"
+else
+    touch "/etc/ssh/sshd_config"
+fi
+# make sure file has newline at the end
+sed -i -e '$a\' "/etc/ssh/sshd_config"
+
+cp "/etc/ssh/sshd_config" "/etc/ssh/sshd_config.bak"
+# Insert at the beginning of the file
+printf '%s\n' "PermitEmptyPasswords no" &gt; "/etc/ssh/sshd_config"
+cat "/etc/ssh/sshd_config.bak" &gt;&gt; "/etc/ssh/sshd_config"
+# Clean up after ourselves.
+rm "/etc/ssh/sshd_config.bak"
+
+else
+    &gt;&amp;2 echo 'Remediation is not applicable, nothing was done'
+fi
+</fix>
+          <check system="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+            <check-export export-name="oval:ssg-sshd_required:var:1" value-id="xccdf_org.ssgproject.content_value_sshd_required" />
+            <check-content-ref name="oval:ssg-sshd_disable_empty_passwords:def:1" href="ssg-debian12-oval.xml" />
+          </check>
+          <check system="http://scap.nist.gov/schema/ocil/2">
+            <check-content-ref name="ocil:ssg-sshd_disable_empty_passwords_ocil:questionnaire:1" href="ssg-debian12-ocil.xml" />
+          </check>
+        </Rule>
+        <Rule id="xccdf_org.ssgproject.content_rule_accounts_password_minlen_login_defs" selected="false" role="full" severity="medium">
+            <title xml:lang="en-US">Set Password Minimum Length in login.defs</title>
+            <description xml:lang="en-US">To specify password length requirements for new accounts, edit the file
+<html:code>/etc/login.defs</html:code> and add or correct the following line:
+<html:pre>PASS_MIN_LEN <sub idref="xccdf_org.ssgproject.content_value_var_accounts_password_minlen_login_defs" use="legacy" /></html:pre>
+<html:br /><html:br />
+The DoD requirement is <html:code>15</html:code>.
+The FISMA requirement is <html:code>12</html:code>.
+The profile requirement is
+<html:code><sub idref="xccdf_org.ssgproject.content_value_var_accounts_password_minlen_login_defs" use="legacy" /></html:code>.
+If a program consults <html:code>/etc/login.defs</html:code> and also another PAM module
+(such as <html:code>pam_pwquality</html:code>) during a password change operation, then
+the most restrictive must be satisfied. See PAM section for more
+information about enforcing password quality requirements.</description>
+            <reference href="http://www.ssi.gouv.fr/administration/bonnes-pratiques/">BP28(R18)</reference>
+            <reference href="https://www.cisecurity.org/controls/">1</reference>
+            <reference href="https://www.cisecurity.org/controls/">12</reference>
+            <reference href="https://www.cisecurity.org/controls/">15</reference>
+            <reference href="https://www.cisecurity.org/controls/">16</reference>
+            <reference href="https://www.cisecurity.org/controls/">5</reference>
+            <rationale xml:lang="en-US">Requiring a minimum password length makes password
+cracking attacks more difficult by ensuring a larger
+search space. However, any security benefit from an onerous requirement
+must be carefully weighed against usability problems, support costs, or counterproductive
+behavior that may result.</rationale>
+            <platform idref="#package_shadow-utils" />
+            <check system="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+              <check-export export-name="oval:ssg-var_accounts_password_minlen_login_defs:var:1" value-id="xccdf_org.ssgproject.content_value_var_accounts_password_minlen_login_defs" />
+              <check-content-ref name="oval:ssg-accounts_password_minlen_login_defs:def:1" href="ssg-debian12-oval.xml" />
+            </check>
+            <check system="http://scap.nist.gov/schema/ocil/2">
+              <check-content-ref name="ocil:ssg-accounts_password_minlen_login_defs_ocil:questionnaire:1" href="ssg-debian12-ocil.xml" />
+            </check>
+          </Rule>
+          <Rule id="xccdf_org.ssgproject.content_rule_sshd_set_idle_timeout" selected="false" role="full" severity="medium">
+          <title xml:lang="en-US">Set SSH Client Alive Interval</title>
+          <description xml:lang="en-US">SSH allows administrators to set a network responsiveness timeout interval.
+After this interval has passed, the unresponsive client will be automatically logged out.
+<html:br /><html:br />
+To set this timeout interval, edit the following line in <html:code>/etc/ssh/sshd_config</html:code> as
+follows:
+<html:pre>ClientAliveInterval <html:b><sub idref="xccdf_org.ssgproject.content_value_sshd_idle_timeout_value" use="legacy" /></html:b></html:pre>
+<html:br /><html:br />
+The timeout <html:b>interval</html:b> is given in seconds. For example, have a timeout
+of 10 minutes, set <html:b>interval</html:b> to 600.
+<html:br /><html:br />
+If a shorter timeout has already been set for the login shell, that value will
+preempt any SSH setting made in <html:code>/etc/ssh/sshd_config</html:code>. Keep in mind that
+some processes may stop SSH from correctly detecting that the user is idle.</description>
+          <warning xml:lang="en-US" category="dependency">SSH disconnecting unresponsive clients will not have desired effect without also
+configuring ClientAliveCountMax in the SSH service configuration.</warning>
+          <warning xml:lang="en-US" category="general">Following conditions may prevent the SSH session to time out:
+<html:ul><html:li>Remote processes on the remote machine generates output. As the output has to be transferred over the network to the client, the timeout is reset every time such transfer happens.</html:li><html:li>Any <html:code>scp</html:code> or <html:code>sftp</html:code> activity by the same user to the host resets the timeout.</html:li></html:ul></warning>
+          <reference href="http://www.ssi.gouv.fr/administration/bonnes-pratiques/">BP28(R29)</reference>
+          <reference href="https://www.cisecurity.org/controls/">1</reference>
+          <reference href="https://www.cisecurity.org/controls/">12</reference>
+          <reference href="https://www.cisecurity.org/controls/">13</reference>
+          <reference href="https://www.cisecurity.org/controls/">14</reference>
+          <reference href="https://www.cisecurity.org/controls/">15</reference>
+          <rationale xml:lang="en-US">Terminating an idle ssh session within a short time period reduces the window of
+opportunity for unauthorized personnel to take control of a management session
+enabled on the console or console port that has been let unattended.</rationale>
+          <requires idref="xccdf_org.ssgproject.content_rule_sshd_set_keepalive_0" />
+          <fix id="sshd_set_idle_timeout" system="urn:xccdf:fix:script:sh"># Remediation is applicable only in certain platforms
+if [ ! -f /.dockerenv ] &amp;&amp; [ ! -f /run/.containerenv ]; then
+
+sshd_idle_timeout_value='<sub idref="xccdf_org.ssgproject.content_value_sshd_idle_timeout_value" use="legacy" />'
+
+
+if [ -e "/etc/ssh/sshd_config" ] ; then
+    
+    LC_ALL=C sed -i "/^\s*ClientAliveInterval\s\+/Id" "/etc/ssh/sshd_config"
+else
+    touch "/etc/ssh/sshd_config"
+fi
+# make sure file has newline at the end
+sed -i -e '$a\' "/etc/ssh/sshd_config"
+
+cp "/etc/ssh/sshd_config" "/etc/ssh/sshd_config.bak"
+# Insert at the beginning of the file
+printf '%s\n' "ClientAliveInterval $sshd_idle_timeout_value" &gt; "/etc/ssh/sshd_config"
+cat "/etc/ssh/sshd_config.bak" &gt;&gt; "/etc/ssh/sshd_config"
+# Clean up after ourselves.
+rm "/etc/ssh/sshd_config.bak"
+
+else
+    &gt;&amp;2 echo 'Remediation is not applicable, nothing was done'
+fi
+</fix>
+          <check system="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+            <check-export export-name="oval:ssg-var_sshd_set_keepalive:var:1" value-id="xccdf_org.ssgproject.content_value_var_sshd_set_keepalive" />
+            <check-export export-name="oval:ssg-sshd_required:var:1" value-id="xccdf_org.ssgproject.content_value_sshd_required" />
+            <check-export export-name="oval:ssg-sshd_idle_timeout_value:var:1" value-id="xccdf_org.ssgproject.content_value_sshd_idle_timeout_value" />
+            <check-content-ref name="oval:ssg-sshd_set_idle_timeout:def:1" href="ssg-debian12-oval.xml" />
+          </check>
+          <check system="http://scap.nist.gov/schema/ocil/2">
+            <check-content-ref name="ocil:ssg-sshd_set_idle_timeout_ocil:questionnaire:1" href="ssg-debian12-ocil.xml" />
+          </check>
+        </Rule>
+        </Group><Rule id="xccdf_org.ssgproject.content_rule_sshd_disable_root_login" selected="false" role="full" severity="medium">
+          <title xml:lang="en-US">Disable SSH Root Login</title>
+          <description xml:lang="en-US">The root user should never be allowed to login to a
+system directly over a network.
+To disable root login via SSH, add or correct the following line in
+
+
+<html:code>/etc/ssh/sshd_config</html:code>:
+
+<html:pre>PermitRootLogin no</html:pre></description>
+          <reference href="http://www.ssi.gouv.fr/administration/bonnes-pratiques/">BP28(R19)</reference>
+          <reference href="http://www.ssi.gouv.fr/administration/bonnes-pratiques/">NT007(R21)</reference>
+          <reference href="https://www.cisecurity.org/controls/">1</reference>
+          <reference href="https://www.cisecurity.org/controls/">11</reference>
+          <reference href="https://www.cisecurity.org/controls/">12</reference>
+          <reference href="https://www.cisecurity.org/controls/">13</reference>
+          <rationale xml:lang="en-US">Even though the communications channel may be encrypted, an additional layer of
+security is gained by extending the policy of not logging directly on as root.
+In addition, logging in with a user-specific account provides individual
+accountability of actions performed on the system and also helps to minimize
+direct attack attempts on root's password.</rationale>
+          <fix id="sshd_disable_root_login" system="urn:xccdf:fix:script:sh" complexity="low" disruption="low" strategy="restrict"># Remediation is applicable only in certain platforms
+if [ ! -f /.dockerenv ] &amp;&amp; [ ! -f /run/.containerenv ]; then
+
+if [ -e "/etc/ssh/sshd_config" ] ; then
+    
+    LC_ALL=C sed -i "/^\s*PermitRootLogin\s\+/Id" "/etc/ssh/sshd_config"
+else
+    touch "/etc/ssh/sshd_config"
+fi
+# make sure file has newline at the end
+sed -i -e '$a\' "/etc/ssh/sshd_config"
+
+cp "/etc/ssh/sshd_config" "/etc/ssh/sshd_config.bak"
+# Insert at the beginning of the file
+printf '%s\n' "PermitRootLogin no" &gt; "/etc/ssh/sshd_config"
+cat "/etc/ssh/sshd_config.bak" &gt;&gt; "/etc/ssh/sshd_config"
+# Clean up after ourselves.
+rm "/etc/ssh/sshd_config.bak"
+
+else
+    &gt;&amp;2 echo 'Remediation is not applicable, nothing was done'
+fi
+</fix>
+          <check system="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+            <check-export export-name="oval:ssg-sshd_required:var:1" value-id="xccdf_org.ssgproject.content_value_sshd_required" />
+            <check-content-ref name="oval:ssg-sshd_disable_root_login:def:1" href="ssg-debian12-oval.xml" />
+          </check>
+          <check system="http://scap.nist.gov/schema/ocil/2">
+            <check-content-ref name="ocil:ssg-sshd_disable_root_login_ocil:questionnaire:1" href="ssg-debian12-ocil.xml" />
+          </check>
+        </Rule>
+        <Rule id="xccdf_org.ssgproject.content_rule_package_telnetd_removed" selected="false" role="full" severity="high">
+        <title xml:lang="en-US">Uninstall the telnet server</title>
+        <description xml:lang="en-US">The telnet daemon should be uninstalled.</description>
+        <reference href="http://www.ssi.gouv.fr/administration/bonnes-pratiques/">BP28(R1)</reference>
+        <reference href="http://www.ssi.gouv.fr/administration/bonnes-pratiques/">NT007(R03)</reference>
+        <reference href="https://www.cisecurity.org/controls/">11</reference>
+        <reference href="https://www.cisecurity.org/controls/">12</reference>
+        <reference href="https://www.cisecurity.org/controls/">14</reference>
+        <reference href="https://www.cisecurity.org/controls/">15</reference>
+        <rationale xml:lang="en-US"><html:code>telnet</html:code> allows clear text communications, and does not protect
+any data transmission between client and server. Any confidential data
+can be listened and no integrity checking is made.'</rationale>
+        <fix id="package_telnetd_removed" system="urn:xccdf:fix:script:sh" complexity="low" disruption="low" strategy="disable">
+# CAUTION: This remediation script will remove telnetd
+#	   from the system, and may remove any packages
+#	   that depend on telnetd. Execute this
+#	   remediation AFTER testing on a non-production
+#	   system!
+
+DEBIAN_FRONTEND=noninteractive apt-get remove -y "telnetd"
+</fix>
+        <check system="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+          <check-content-ref name="oval:ssg-package_telnetd_removed:def:1" href="ssg-debian12-oval.xml" />
+        </check>
+      </Rule>
+    <Rule id="xccdf_org.ssgproject.content_rule_file_permissions_etc_shadow" selected="false" role="full" severity="medium">
+            <title xml:lang="en-US">Verify Permissions on shadow File</title>
+            <description xml:lang="en-US">
+To properly set the permissions of <html:code>/etc/shadow</html:code>, run the command:
+<html:pre>$ sudo chmod 0640 /etc/shadow</html:pre></description>
+            <reference href="http://www.ssi.gouv.fr/administration/bonnes-pratiques/">BP28(R36)</reference>
+            <reference href="https://www.cisecurity.org/controls/">12</reference>
+            <reference href="https://www.cisecurity.org/controls/">13</reference>
+            <reference href="https://www.cisecurity.org/controls/">14</reference>
+            <reference href="https://www.cisecurity.org/controls/">15</reference>
+            <reference href="https://www.cisecurity.org/controls/">16</reference>
+            <rationale xml:lang="en-US">The <html:code>/etc/shadow</html:code> file contains the list of local
+system accounts and stores password hashes. Protection of this file is
+critical for system security. Failure to give ownership of this file
+to root provides the designated owner with access to sensitive information
+which could weaken the system security posture.</rationale>
+            <fix id="file_permissions_etc_shadow" system="urn:xccdf:fix:script:sh" complexity="low" disruption="low" strategy="configure">
+
+
+
+
+chmod u-xs,g-xws,o-xwrt /etc/shadow
+</fix>
+            <check system="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+              <check-content-ref name="oval:ssg-file_permissions_etc_shadow:def:1" href="ssg-debian12-oval.xml" />
+            </check>
+            <check system="http://scap.nist.gov/schema/ocil/2">
+              <check-content-ref name="ocil:ssg-file_permissions_etc_shadow_ocil:questionnaire:1" href="ssg-debian12-ocil.xml" />
+            </check>
+          </Rule>
+        <TestResult id="xccdf_org.open-scap_testresult_xccdf_org.ssgproject.content_profile_standard" start-time="2026-10-28T10:09:29+00:00" end-time="2026-10-28T10:09:29+00:00" version="0.1.71" test-system="cpe:/a:redhat:openscap:1.3.9"><benchmark href="/usr/share/xml/scap/ssg/content/ssg-debian12-ds.xml" id="xccdf_org.ssgproject.content_benchmark_DEBIAN-12" />
+    <title>OSCAP Scan Result</title>
+    <identity authenticated="false" privileged="false">root</identity>
+    <profile idref="xccdf_org.ssgproject.content_profile_standard" />
+    <target>vm</target>
+    <target-address>127.0.0.1</target-address>
+    <rule-result idref="xccdf_org.ssgproject.content_rule_sshd_disable_root_login" role="full" severity="medium" weight="1.000000"><result>fail</result><check system="http://oval.mitre.org/XMLSchema/oval-definitions-5"><check-content-ref name="oval:ssg-sshd_disable_root_login:def:1" href="#oval0" /></check></rule-result><rule-result idref="xccdf_org.ssgproject.content_rule_sshd_disable_empty_passwords" role="full" severity="high" weight="1.000000"><result>pass</result></rule-result><rule-result idref="xccdf_org.ssgproject.content_rule_package_telnetd_removed" role="full" severity="high" weight="1.000000"><result>fail</result><check system="http://oval.mitre.org/XMLSchema/oval-definitions-5"><check-content-ref name="oval:ssg-package_telnetd_removed:def:1" href="#oval0" /></check></rule-result><rule-result idref="xccdf_org.ssgproject.content_rule_accounts_password_minlen_login_defs" role="full" severity="medium" weight="1.000000"><result>fail</result><check system="http://oval.mitre.org/XMLSchema/oval-definitions-5"><check-content-ref name="oval:ssg-accounts_password_minlen_login_defs:def:1" href="#oval0" /></check></rule-result><rule-result idref="xccdf_org.ssgproject.content_rule_file_permissions_etc_shadow" role="full" severity="medium" weight="1.000000"><result>error</result></rule-result><rule-result idref="xccdf_org.ssgproject.content_rule_sshd_set_idle_timeout" role="full" severity="medium" weight="1.000000"><result>notapplicable</result></rule-result><score system="urn:xccdf:scoring:default" maximum="100.000000">0.000000</score>
+  </TestResult></Benchmark>
