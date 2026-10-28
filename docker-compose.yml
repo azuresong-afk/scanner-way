@@ -7,17 +7,18 @@ services:
         condition: service_healthy
     volumes:
       - ./:/app
-      - feeds_data:/data
+      # Выгрузка БДУ ФСТЭК и прочие данные: положите vullist.xlsx сюда и
+      # укажите BDU_FSTEC_FEED_PATH — entrypoint загрузит её один раз при старте.
+      - ./data:/data
     # cap_add NET_RAW нужен nmap для SYN/OS-fingerprint; включается осознанно
     cap_add:
       - NET_RAW
       - NET_ADMIN
     ports:
       - "8000:8000"
-    # Единый источник схемы — Alembic: применяем миграции, затем запускаем API.
-    # (Раньше схема грузилась через initdb-SQL в обход Alembic, из-за чего
-    # расходились две ветки инициализации — см. PR интеграции.)
-    command: sh -c "alembic upgrade head && uvicorn scanner.api.main:app --host 0.0.0.0 --port 8000"
+    # ENTRYPOINT образа (docker/entrypoint.sh) сам готовит окружение:
+    # миграции -> одноразовая загрузка БДУ -> шаблоны Nuclei -> запуск API.
+    restart: unless-stopped
 
   db:
     image: postgres:16
@@ -35,7 +36,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
 volumes:
   pg_data:
-  feeds_data:

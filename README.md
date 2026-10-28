@@ -22,11 +22,35 @@ PostgreSQL и отчётами (HTML/PDF/DOCX/JSON).
 Итерация 1 — каркас и интерфейсы. Модули пока заглушки (`NotImplementedError`),
 реальное сканирование появляется в следующих итерациях (см. план в architecture.md).
 
-## Быстрый старт (dev)
+## Быстрый старт (одна команда)
+Окружение готовится само: сборка образа со всеми движками (nmap, Nuclei,
+OpenSCAP, Lynis), миграции схемы, создание первого администратора, однократная
+загрузка выгрузки БДУ ФСТЭК (если файл положен) и запуск API.
+
 ```bash
 cp .env.example .env
-docker compose up -d        # поднимает app + postgres
-# применить схему БД (референс): db/migrations/0001_initial.sql
+# отредактируйте .env: задайте SCANNER_API_SECRET, пароли БД и администратора
+# (по желанию) положите выгрузку БДУ: cp /путь/vullist.xlsx ./data/vullist.xlsx
+docker compose up --build        # поднимает app + postgres и всё готовит сам
+```
+API: http://localhost:8000 (проверка: `GET /health`). Вход — администратором
+из `SCANNER_API_BOOTSTRAP_ADMIN/PASSWORD`.
+
+Что делает контейнер при старте (`docker/entrypoint.sh`): `alembic upgrade head`
+→ одноразовая загрузка БДУ из `BDU_FSTEC_FEED_PATH` → обновление шаблонов Nuclei
+(если есть сеть) → запуск API. Роли/права и первый админ создаются самим
+приложением, пока в БД нет пользователей.
+
+Загрузка CVE из NVD (по желанию, нужна сеть/ключ):
+```bash
+docker compose exec app scanner feeds sync-nvd
+```
+
+### Запуск без Docker (dev)
+```bash
+pip install -e ".[dev]"
+alembic upgrade head          # нужен PostgreSQL; URL в SCANNER_DATABASE_URL
+uvicorn scanner.api.main:app --reload
 ```
 
 ## Структура
