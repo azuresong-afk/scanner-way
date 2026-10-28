@@ -37,6 +37,7 @@ from scanner.reporting.model import (
     FindingView,
     Report,
 )
+from scanner.reporting.remediation import RefLink, describe_ref
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -83,7 +84,14 @@ def _env() -> Environment:
         STATUS_ORDER=STATUS_ORDER, STATUS_LABELS=STATUS_LABELS,
         SEVERITY_HEX={str(k): v for k, v in SEVERITY_HEX.items()},
     )
+    env.filters["links"] = _links
     return env
+
+
+def _links(urls: list[str], limit: int | None = None) -> list[RefLink]:
+    """Ссылки с подписями (бюллетень производителя, ОС, БДУ, NVD, CWE…)."""
+    out = [link for u in urls if (link := describe_ref(u)) is not None]
+    return out[:limit] if limit else out
 
 
 def _rgb(hex_color: str):
@@ -216,6 +224,7 @@ class ReportRenderer:
         from docx import Document
         from docx.enum.table import WD_TABLE_ALIGNMENT
         from docx.enum.text import WD_BREAK
+        from docx.opc.constants import RELATIONSHIP_TYPE as RT
         from docx.oxml import OxmlElement
         from docx.oxml.ns import qn
         from docx.shared import Cm, Pt, RGBColor
@@ -270,6 +279,25 @@ class ReportRenderer:
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.space_before = Pt(0)
             p.add_run().font.size = Pt(pt)
+
+        def hyperlink(par, url: str, size: float = 8):
+            """Кликабельная ссылка (python-docx не умеет их «из коробки»)."""
+            rid = par.part.relate_to(url, RT.HYPERLINK, is_external=True)
+            h = OxmlElement("w:hyperlink")
+            h.set(qn("r:id"), rid)
+            r = OxmlElement("w:r")
+            rpr = OxmlElement("w:rPr")
+            for tag, val in (("w:color", ACCENT_2.lstrip("#")), ("w:u", "single"),
+                             ("w:sz", str(int(size * 2)))):
+                el = OxmlElement(tag)
+                el.set(qn("w:val"), val)
+                rpr.append(el)
+            r.append(rpr)
+            t = OxmlElement("w:t")
+            t.text = _x(url)
+            r.append(t)
+            h.append(r)
+            par._p.append(h)
 
         def small(par, text: str, color: str = MUTED, size: float = 8.5, bold=False,
                   italic=False):
@@ -429,6 +457,10 @@ class ReportRenderer:
                 cell.paragraphs[0].runs[0].bold = True
                 small(cell.add_paragraph(),
                       f"Источник: {p.source_label} · {'; '.join(p.titles)}", MUTED, 8)
+                for link in _links(p.references, 4):
+                    lp = cell.add_paragraph()
+                    small(lp, f"{link.label}: ", INK_2, 8)
+                    hyperlink(lp, link.url)
         else:
             doc.add_paragraph("Мер устранения не требуется.")
 
@@ -542,9 +574,12 @@ class ReportRenderer:
                     note = f"Источник: {rem.source_label}."
                     if rem.fix_method:
                         note += f" Способ устранения: {rem.fix_method}."
-                    if rem.references:
-                        note += " Ссылки: " + ", ".join(rem.references)
                     small(rp, "\n" + note, MUTED, 8)
+                    if rem.references:
+                        small(rp, "\nСсылки на устранение:", GOOD, 8, bold=True)
+                        for link in _links(rem.references):
+                            small(rp, f"\n{link.label}: ", INK_2, 8, bold=True)
+                            hyperlink(rp, link.url)
 
         spacer(10)
         small(doc.add_paragraph(), "Отчёт сформирован по результатам авторизованного "

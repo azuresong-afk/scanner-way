@@ -132,6 +132,7 @@
   .host table { table-layout: fixed; }
   .host td { word-wrap: break-word; overflow-wrap: anywhere; }
   .host .status { white-space: normal; }
+  .host .ids a { white-space: nowrap; overflow-wrap: normal; }
   .host-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
                padding: 10px 14px; background: var(--panel); border-radius: 10px 10px 0 0;
                border-bottom: 1px solid var(--line); page-break-after: avoid; }
@@ -162,6 +163,12 @@
   .fix .label { color: var(--good); font-weight: 600; font-size: 7pt; letter-spacing: .08em;
                 text-transform: uppercase; display: block; margin-bottom: 2px; }
   .fix .src { color: var(--muted); font-size: 7.5pt; display: block; margin-top: 4px; }
+  .refs { margin-top: 8px; padding-top: 6px; border-top: 1px solid #d1fadf; }
+  .refs .label { color: var(--good); font-weight: 600; font-size: 7pt; letter-spacing: .08em;
+                 text-transform: uppercase; display: block; margin-bottom: 2px; }
+  .refs ol { margin: 0; padding-left: 18px; font-size: 8pt; }
+  .refs li { margin: 1px 0; }
+  .refs li b { color: var(--ink-2); font-weight: 600; margin-right: 4px; }
   .verdict { padding: 10px 14px; border-radius: 10px; background: var(--panel);
              border: 1px solid var(--line); color: var(--ink); font-weight: 600; margin: 0 0 12px; }
   .footer-note { color: var(--muted); font-size: 8pt; margin-top: 28px; padding-top: 10px;
@@ -255,7 +262,8 @@
   <tr>
     <td class="idx">{{ loop.index }}</td>
     <td>{{ sev(p.severity) }}</td>
-    <td class="action"><b>{{ p.action }}</b><span class="src">Источник: {{ p.source_label }} · {{ p.titles|join("; ") }}</span></td>
+    <td class="action"><b>{{ p.action }}</b><span class="src">Источник: {{ p.source_label }} · {{ p.titles|join("; ") }}</span>
+      {% if p.references %}<span class="src">{% for ref in p.references|links(4) %}<a href="{{ ref.url }}">{{ ref.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}</td>
     <td class="mono">{{ p.targets|join(", ") }}</td>
   </tr>
   {% endfor %}
@@ -327,7 +335,8 @@
     {% set f = v.finding %}
     <tr>
       <td>{{ sev(f.severity) }}</td>
-      <td>{{ f.title }}<div class="ids">{{ v.module_label }}</div></td>
+      <td>{{ f.title }}<div class="ids">{{ v.module_label }}</div>
+        {% if v.remediation.references %}<div class="ids">Устранение: {% for ref in v.remediation.references|links(2) %}<a href="{{ ref.url }}">{{ ref.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}</td>
       <td class="mono">{{ f.port if f.port is not none else "—" }}</td>
       <td class="ids">{% for c in f.cve_ids %}{{ c }}<br>{% endfor %}{% for b in f.bdu_ids %}{{ b }}<br>{% endfor %}{% if not f.cve_ids and not f.bdu_ids %}{{ f.vuln_id or "—" }}{% endif %}</td>
       <td class="num">{{ "%.1f"|format(f.cvss) if f.cvss is not none else "—" }}</td>
@@ -364,8 +373,13 @@
       <span class="label">Рекомендация по устранению</span>
       {{ v.remediation.text }}
       {% if v.remediation.fix_method %}<span class="src">Способ устранения: {{ v.remediation.fix_method }}</span>{% endif %}
-      <span class="src">Источник: {{ v.remediation.source_label }}{% if v.remediation.references %} · Ссылки:
-        {% for ref in v.remediation.references %}<a href="{{ ref }}">{{ ref }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</span>
+      <span class="src">Источник: {{ v.remediation.source_label }}</span>
+      {% if v.remediation.references %}
+      <div class="refs">
+        <span class="label">Ссылки на устранение</span>
+        <ol>{% for ref in v.remediation.references|links %}<li><b>{{ ref.label }}</b> <a href="{{ ref.url }}">{{ ref.url }}</a></li>{% endfor %}</ol>
+      </div>
+      {% endif %}
     </div>
   </div>
   {% endfor %}
