@@ -16,6 +16,7 @@ PostgreSQL и отчётами (HTML/PDF/DOCX/JSON).
 5. Reporting — хранение прогонов, сравнение и тренды (open/fixed/new/regression).
 
 Архитектура и обоснования: [`docs/architecture.md`](docs/architecture.md).
+Дорожная карта и промты для параллельной разработки: [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Статус
 Итерация 1 — каркас и интерфейсы. Модули пока заглушки (`NotImplementedError`),
