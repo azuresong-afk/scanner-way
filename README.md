@@ -29,6 +29,12 @@ docker compose up -d        # поднимает app + postgres
 # применить схему БД (референс): db/migrations/0001_initial.sql
 ```
 
+## Веб-интерфейс
+Каталог [`web/`](web/README.md): React + TypeScript поверх REST API — дашборд,
+договоры и allowlist, запуск и мониторинг прогонов, находки с привязкой к БДУ
+ФСТЭК и CVE, разбор по хостам, выгрузка отчётов, журнал аудита и управление
+пользователями. Два вида (боковое и верхнее меню), светлая и тёмная тема.
+
 ## Структура
 ```
 docs/        архитектура, модель безопасности
@@ -38,4 +44,5 @@ scanner/modules/ discovery, vuln, config_audit, cred_audit (общий инте�
 scanner/feeds/   загрузка справочников NVD и БДУ ФСТЭК
 scanner/reporting/  diff прогонов + рендер отчётов
 scanner/api/     FastAPI: запуск прогонов, отчёты, RBAC
+web/             веб-интерфейс (React + Vite, nginx-образ)
 ```

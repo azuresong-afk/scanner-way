@@ -17,6 +17,7 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -111,6 +112,14 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.state.runs = RunService(session_factory, audit, registry=registry,
                                 executor=executor)
     app.state.resolver_factory = resolver_factory
+
+    # Только явно перечисленные origin'ы; токен передаётся в заголовке
+    # Authorization, cookie не используются — allow_credentials не нужен.
+    if settings.cors_origin_list:
+        app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list,
+                           allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
+                           allow_headers=["Authorization", "Content-Type"],
+                           expose_headers=["Content-Disposition"], max_age=600)
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:

@@ -24,3 +24,12 @@ class ApiSettings(BaseSettings):
 
     # Сколько прогонов исполняется параллельно в процессе API.
     run_workers: int = 2
+
+    # Origin'ы веб-интерфейса через запятую (https://scanner.example.local).
+    # Пусто — CORS выключен: штатно интерфейс отдаётся с того же origin, что и
+    # API (nginx из web/Dockerfile проксирует /api), и CORS не нужен.
+    cors_origins: str = ""
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
