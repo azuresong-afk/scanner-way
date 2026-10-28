@@ -9,7 +9,7 @@ export interface TrendPoint {
 }
 
 const W = 640;
-const H = 220;
+const H = 280;
 const PAD = { l: 40, r: 16, t: 16, b: 30 };
 
 /**

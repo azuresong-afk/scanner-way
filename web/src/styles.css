@@ -413,55 +413,21 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .modal-wide { width: min(1200px, 100%); }
 .report-frame { width: 100%; height: 75vh; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
 
-/* ---------- переключатели вида ---------- */
-.segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
-.segmented button {
-  all: unset; cursor: pointer; width: 32px; height: 28px; display: grid; place-items: center; color: var(--text-3);
-}
-.segmented button + button { border-left: 1px solid var(--border-strong); }
-.segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
-.segmented button:hover { color: var(--text); }
-.segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .engagement-picker .select { width: auto; max-width: 360px; height: 34px; }
-.sidebar-foot .segmented button { height: 28px; }
-
-/* ---------- вид «B+C»: верхнее меню, просторные блоки ---------- */
-:root[data-layout="topnav"] { --radius: 16px; --radius-sm: 10px; }
-.topnav-shell { min-height: 100%; display: flex; flex-direction: column; }
-.topnav { background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
-.topnav-inner {
-  max-width: 1360px; margin: 0 auto; padding: 0 28px; min-height: 64px; display: flex; align-items: center;
-  gap: 8px 24px; flex-wrap: wrap;
-}
-.topnav .brand { padding: 0; }
-.topnav .brand-sub { display: none; }
-.topnav-links { display: flex; gap: 2px; flex-wrap: wrap; }
-.topnav-link { padding: 8px 12px; border-radius: 8px; color: var(--text-2); font-weight: 500; white-space: nowrap; }
-.topnav-link:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
-.topnav-link.active { color: var(--accent-text); background: var(--accent-soft); }
-.subbar { border-bottom: 1px solid var(--border); background: var(--bg); }
-.subbar-inner { max-width: 1360px; margin: 0 auto; padding: 10px 28px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.subbar-inner .spacer { flex: 1; }
-.content-centered { max-width: 1360px; margin: 0 auto; padding: 28px 28px 56px; gap: 24px; }
-:root[data-layout="topnav"] .card-pad { padding: 22px 24px; }
-:root[data-layout="topnav"] .card-head { padding: 18px 24px; }
-:root[data-layout="topnav"] .table th:first-child, :root[data-layout="topnav"] .table td:first-child { padding-left: 24px; }
-:root[data-layout="topnav"] .table th:last-child, :root[data-layout="topnav"] .table td:last-child { padding-right: 24px; }
-:root[data-layout="topnav"] h1 { font-size: 28px; font-weight: 700; }
-:root[data-layout="topnav"] h2 { font-size: 16px; }
-:root[data-layout="topnav"] .kpi { padding: 18px 20px; }
 @media (max-width: 960px) {
-  .topnav-inner, .subbar-inner, .content-centered { padding-left: 16px; padding-right: 16px; }
-  .topnav-links { order: 3; width: 100%; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 8px; }
   .hide-sm { display: none; }
+  .engagement-picker { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
+  .engagement-picker .select { width: 100%; max-width: none; min-width: 0; text-overflow: ellipsis; }
 }
+@media (max-width: 600px) { .engagement-picker > span { display: none; } }
 
-/* Герой-блок дашборда «B+C» */
+/* ---------- сводка: герой-блок и плитки изменений ---------- */
 .hero { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
 .hero-number { font-size: 46px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
 .hero .stackbar { height: 14px; }
 .hero .stackbar span { height: 14px !important; }
-.sev-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+.sev-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 600px) { .sev-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .sev-tile {
   all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px;
   border-radius: 12px; background: var(--surface-2);

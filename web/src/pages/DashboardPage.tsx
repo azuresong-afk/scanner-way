@@ -5,19 +5,16 @@ import { api } from "../api/client";
 import type { FindingOut, RunOut, ServiceOut, Severity } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
-import { HeatLegend, HostHeatmap } from "../components/charts/HostHeatmap";
-import { SeverityBars, SeverityStack } from "../components/charts/SeverityBars";
-import { TrendColumns } from "../components/charts/TrendColumns";
+import { SeverityStack } from "../components/charts/SeverityBars";
 import { TrendChart, type TrendPoint } from "../components/charts/TrendChart";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { ReportMenu } from "../components/ReportMenu";
 import { StartRunModal } from "../components/StartRunModal";
-import { Empty, ErrorAlert, Kpi, Loading, RefTags, RunStatusPill, SeverityBadge } from "../components/ui";
+import { Empty, ErrorAlert, Loading, RefTags, RunStatusPill, SeverityBadge } from "../components/ui";
 import { fmtDate, fmtDelta, fmtNumber, plural } from "../lib/format";
 import { isFinished, SEVERITY_LABEL, moduleList } from "../lib/labels";
 import { byHost, compareFindings, isIssue, issueTotal, severityCounts, summarize, type HostRow, type RunSummary } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
-import { useAppearance } from "../theme/AppearanceContext";
 
 const TREND_RUNS = 10;
 
@@ -59,11 +56,6 @@ async function loadDashboard(engagementId: number): Promise<DashData> {
   };
 }
 
-function deltaTone(d: number | null, lowerIsBetter = true): "good" | "bad" | undefined {
-  if (d === null || d === 0) return undefined;
-  return (d < 0) === lowerIsBetter ? "good" : "bad";
-}
-
 type Nav = (to: string) => void;
 
 function TrendLegend() {
@@ -81,15 +73,15 @@ function TrendLegend() {
   );
 }
 
-function TrendCard({ d, columns }: { d: DashData; columns?: boolean }) {
+function TrendCard({ d }: { d: DashData }) {
   return (
     <div className="card card-pad grow-3">
       <div className="inline" style={{ marginBottom: 8, justifyContent: "space-between" }}>
-        <h2>{columns ? "Динамика по прогонам" : "Открытые уязвимости по прогонам"}</h2>
+        <h2>Открытые уязвимости по прогонам</h2>
         <TrendLegend />
       </div>
       {d.trend.length > 1 ? (
-        columns ? <TrendColumns points={d.trend} /> : <TrendChart points={d.trend} />
+        <TrendChart points={d.trend} />
       ) : (
         <Empty title="Тренд появится после второго прогона" />
       )}
@@ -97,49 +89,9 @@ function TrendCard({ d, columns }: { d: DashData; columns?: boolean }) {
   );
 }
 
-function KpiRow({ s, d, latest }: { s: RunSummary; d: DashData; latest: RunOut }) {
-  const vs = (a: number, b: number | null) => (b === null ? "первый прогон" : `${fmtDelta(a - b)} к прошлому прогону`);
-  return (
-    <section className="kpis" aria-label="Ключевые показатели">
-      <Kpi label="Хостов в инвентаре" value={fmtNumber(s.hosts)} delta={vs(s.hosts, s.prevHosts)} />
-      <Kpi label="Открытых уязвимостей" value={fmtNumber(s.open)} delta={vs(s.open, s.prevOpen)} deltaTone={deltaTone(s.prevOpen === null ? null : s.open - s.prevOpen)} />
-      <Kpi
-        label="Критических"
-        value={s.counts.critical}
-        tone={s.counts.critical ? "critical" : undefined}
-        delta={vs(s.counts.critical, s.prevCritical)}
-        deltaTone={deltaTone(s.prevCritical === null ? null : s.counts.critical - s.prevCritical)}
-      />
-      <Kpi label="Новых" value={s.newCount} delta={`появились в №${latest.id}`} />
-      <Kpi label="Закрыто" value={s.fixed} delta={d.previous ? `устранены с №${d.previous.id}` : "нет базы сравнения"} deltaTone={s.fixed ? "good" : undefined} />
-      <Kpi label="Регрессии" value={s.regression} tone={s.regression ? "warn" : undefined} delta="вернулись после исправления" />
-    </section>
-  );
-}
-
-function SeverityCard({ s, latest, nav }: { s: RunSummary; latest: RunOut; nav: Nav }) {
-  return (
-    <div className="card card-pad grow-1 stack" style={{ gap: 14 }}>
-      <div className="inline" style={{ justifyContent: "space-between" }}>
-        <h2>По уровню опасности</h2>
-        <span className="faint" style={{ fontSize: 12 }}>
-          прогон №{latest.id}
-        </span>
-      </div>
-      <SeverityBars counts={s.counts} onPick={(sev) => nav(`/findings?run=${latest.id}&sev=${sev}`)} />
-      <div className="inline muted" style={{ marginTop: "auto", paddingTop: 12, borderTop: "1px solid var(--border)", justifyContent: "space-between", fontSize: 12 }}>
-        <span>Информационных: {s.counts.info}</span>
-        <span>
-          Сопоставлено с БДУ: <b style={{ color: "var(--text)" }}>{s.bduShare === null ? "—" : `${Math.round(s.bduShare * 100)}%`}</b>
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function RunsTable({ runs, nav }: { runs: RunOut[]; nav: Nav }) {
   return (
-    <div className="card grow-3" style={{ overflow: "hidden" }}>
+    <div className="card" style={{ overflow: "hidden" }}>
       <div className="card-head">
         <h2>Последние прогоны</h2>
         <Link to="/runs" style={{ fontSize: 13 }}>
@@ -178,38 +130,6 @@ function RunsTable({ runs, nav }: { runs: RunOut[]; nav: Nav }) {
   );
 }
 
-function RunsList({ runs }: { runs: RunOut[] }) {
-  return (
-    <div className="card card-pad grow-2 stack" style={{ gap: 0 }}>
-      <div className="inline" style={{ justifyContent: "space-between", marginBottom: 6 }}>
-        <h2>Прогоны</h2>
-        <Link to="/runs" style={{ fontSize: 13 }}>
-          Все
-        </Link>
-      </div>
-      {runs.slice(0, 5).map((r) => (
-        <Link
-          key={r.id}
-          to={`/runs/${r.id}`}
-          className="inline"
-          style={{ padding: "10px 0", borderTop: "1px solid var(--border)", color: "inherit", textDecoration: "none", flexWrap: "nowrap" }}
-        >
-          <b style={{ minWidth: 44 }}>№{r.id}</b>
-          <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-            <span style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {moduleList(r.modules)}
-            </span>
-            <span className="faint" style={{ fontSize: 12 }}>
-              {fmtDate(r.started_at ?? r.created_at)}
-            </span>
-          </span>
-          <RunStatusPill status={r.status} />
-        </Link>
-      ))}
-    </div>
-  );
-}
-
 function TopHosts({ hosts, latest }: { hosts: HostRow[]; latest: RunOut }) {
   return (
     <div className="card card-pad grow-2 stack" style={{ gap: 0 }}>
@@ -220,7 +140,7 @@ function TopHosts({ hosts, latest }: { hosts: HostRow[]; latest: RunOut }) {
         </Link>
       </div>
       {hosts.length === 0 && <Empty title="Уязвимых хостов нет" />}
-      {hosts.slice(0, 6).map((h) => (
+      {hosts.slice(0, 5).map((h) => (
         <Link
           key={h.host}
           to={`/hosts/${encodeURIComponent(h.host)}?run=${latest.id}`}
@@ -238,27 +158,6 @@ function TopHosts({ hosts, latest }: { hosts: HostRow[]; latest: RunOut }) {
           {!h.counts.critical && !h.counts.high && <span className="pill pill-muted">{h.total} уязв.</span>}
         </Link>
       ))}
-    </div>
-  );
-}
-
-function HeatCard({ hosts, latest, nav }: { hosts: HostRow[]; latest: RunOut; nav: Nav }) {
-  return (
-    <div className="card card-pad grow-3">
-      <div className="inline" style={{ justifyContent: "space-between", marginBottom: 10 }}>
-        <h2>Хосты × уровень опасности</h2>
-        <span className="inline" style={{ gap: 14 }}>
-          <HeatLegend />
-          <Link to={`/hosts?run=${latest.id}`} style={{ fontSize: 13 }}>
-            Все хосты
-          </Link>
-        </span>
-      </div>
-      {hosts.length ? (
-        <HostHeatmap rows={hosts} limit={8} onPick={(h) => nav(`/hosts/${encodeURIComponent(h)}?run=${latest.id}`)} />
-      ) : (
-        <Empty title="Уязвимых хостов нет" />
-      )}
     </div>
   );
 }
@@ -313,7 +212,7 @@ function PriorityCard({ top, latest, onOpen }: { top: FindingOut[]; latest: RunO
 
 const TILE_SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
 
-/** Герой-блок вида «B+C»: крупное число, распределение и плитки уровней. */
+/** Верх сводки: крупное число открытых уязвимостей, распределение и плитки уровней. */
 function HeroCard({ s, latest, d, nav }: { s: RunSummary; latest: RunOut; d: DashData; nav: Nav }) {
   const delta = s.prevOpen === null ? null : s.open - s.prevOpen;
   return (
@@ -388,7 +287,6 @@ function ChangeTiles({ s, latest, d }: { s: RunSummary; latest: RunOut; d: DashD
 
 export function DashboardPage() {
   const { has } = useAuth();
-  const { layout } = useAppearance();
   const { current, loading: engLoading, error: engError } = useEngagement();
   const navigate = useNavigate();
   const data = useAsync(() => loadDashboard(current!.id), [current?.id], !!current);
@@ -414,7 +312,6 @@ export function DashboardPage() {
   }
 
   const latest = d?.latest;
-  const wide = layout === "topnav";
 
   return (
     <>
@@ -424,7 +321,7 @@ export function DashboardPage() {
             {current.client ?? "Договор"} {current.contract_ref ? `· ${current.contract_ref}` : ""}
             {latest ? ` · последний прогон №${latest.id}, ${fmtDate(latest.finished_at ?? latest.started_at)}` : ""}
           </span>
-          <h1>{wide ? "Сводка по договору" : "Обзор безопасности"}</h1>
+          <h1>Сводка по договору</h1>
         </div>
         <div className="actions">
           {latest && has("view_report") && <ReportMenu runId={latest.id} compact />}
@@ -457,35 +354,18 @@ export function DashboardPage() {
         </div>
       )}
 
-      {d && latest && summary && !wide && (
+      {d && latest && summary && (
         <>
-          <KpiRow s={summary} d={d} latest={latest} />
           <section className="row">
-            <TrendCard d={d} />
-            <SeverityCard s={summary} latest={latest} nav={navigate} />
-          </section>
-          <section className="row">
-            <RunsTable runs={d.runs} nav={navigate} />
-            <TopHosts hosts={hosts} latest={latest} />
-          </section>
-          <PriorityCard top={top} latest={latest} onOpen={setOpen} />
-        </>
-      )}
-
-      {d && latest && summary && wide && (
-        <>
-          <section className="row" style={{ gap: 20 }}>
             <HeroCard s={summary} latest={latest} d={d} nav={navigate} />
             <ChangeTiles s={summary} latest={latest} d={d} />
           </section>
-          <section className="row" style={{ gap: 20 }}>
-            <TrendCard d={d} columns />
-            <RunsList runs={d.runs} />
-          </section>
-          <section className="row" style={{ gap: 20 }}>
-            <HeatCard hosts={hosts} latest={latest} nav={navigate} />
+          <section className="row">
+            <TrendCard d={d} />
+            <TopHosts hosts={hosts} latest={latest} />
           </section>
           <PriorityCard top={top} latest={latest} onOpen={setOpen} />
+          <RunsTable runs={d.runs} nav={navigate} />
         </>
       )}
 
