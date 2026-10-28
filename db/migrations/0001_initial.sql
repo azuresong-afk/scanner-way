@@ -126,17 +126,29 @@ CREATE TABLE IF NOT EXISTS reference_nvd_cve (
 );
 
 CREATE TABLE IF NOT EXISTS reference_bdu_entry (
-    bdu_id      TEXT PRIMARY KEY,          -- BDU:YYYY-NNNNN
-    title       TEXT,
-    description TEXT,
-    vendor      TEXT,
-    software    TEXT,
-    versions    TEXT,
-    severity    TEXT,
-    cvss        NUMERIC(4,1),
-    cve_ids     TEXT[] DEFAULT '{}',       -- связь с reference_nvd_cve
-    remediation TEXT,
-    updated_at  TIMESTAMPTZ
+    bdu_id            TEXT PRIMARY KEY,        -- BDU:YYYY-NNNNN
+    title             TEXT,
+    description       TEXT,
+    vendor            TEXT,                    -- Вендор ПО
+    software          TEXT,                    -- Название ПО
+    versions          TEXT,                    -- Версия ПО (строкой, как в выгрузке)
+    software_type     TEXT,                    -- Тип ПО
+    vuln_class        TEXT,                    -- Класс уязвимости
+    cvss2_vector      TEXT,                    -- CVSS 2.0 (вектор)
+    cvss3             TEXT,                    -- CVSS 3.0
+    cvss4             TEXT,                    -- CVSS 4.0
+    cvss_score        NUMERIC(4,1),            -- базовая оценка из "Уровень опасности"
+    severity_text     TEXT,                    -- "Уровень опасности уязвимости" (как есть)
+    exploit_available TEXT,                    -- Наличие эксплойта
+    status            TEXT,                    -- Статус уязвимости
+    cwe               TEXT,                    -- Тип ошибки CWE
+    cve_ids           TEXT[] DEFAULT '{}',     -- извлечено из "Идентификаторы других систем"
+    other_ids         TEXT,                    -- исходная строка идентификаторов
+    remediation       TEXT,                    -- Возможные меры по устранению
+    refs              TEXT,                    -- Ссылки на источники
+    detection_date    TEXT,
+    published_at      TEXT,
+    updated_at        TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_bdu_cve ON reference_bdu_entry USING GIN (cve_ids);
 
