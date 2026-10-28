@@ -5,6 +5,10 @@
 строятся из одной модели (`reporting.model.Report`), в каждой находке —
 рекомендация по устранению.
 
+Графика (дашборд руководителя, распределение по опасности, топ хостов, модули,
+каскад изменений и тренд по прогонам) строится в `reporting.charts`: одна
+геометрия — inline-SVG в HTML/PDF (без JS и внешних ресурсов) и PNG в DOCX.
+
 Безопасность: данные находок (evidence, баннеры сервисов) приходят с целей и
 считаются недоверенными — HTML экранируется (autoescape), WeasyPrint не
 загружает внешние ресурсы, из DOCX вырезаются недопустимые в XML символы.
@@ -13,13 +17,17 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from enum import StrEnum
 from io import BytesIO
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
 from scanner.core.models import FindingStatus, Severity
+from scanner.reporting import charts as ch
+from scanner.reporting.charts import SEVERITY_HEX, RunPoint, Scene
 from scanner.reporting.model import (
     SEVERITY_LABELS,
     SEVERITY_ORDER,
@@ -36,11 +44,8 @@ STATUS_ORDER: list[FindingStatus] = [
 ]
 
 SEVERITY_RGB: dict[Severity, tuple[int, int, int]] = {
-    Severity.CRITICAL: (0x8E, 0x1B, 0x1B),
-    Severity.HIGH: (0xC2, 0x41, 0x0C),
-    Severity.MEDIUM: (0xB7, 0x79, 0x1F),
-    Severity.LOW: (0x2F, 0x6F, 0x9F),
-    Severity.INFO: (0x6B, 0x72, 0x80),
+    s: tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))  # type: ignore[misc]
+    for s, h in SEVERITY_HEX.items()
 }
 
 
@@ -69,6 +74,7 @@ def _env() -> Environment:
     env.globals.update(
         SEVERITY_ORDER=SEVERITY_ORDER, SEVERITY_LABELS=SEVERITY_LABELS,
         STATUS_ORDER=STATUS_ORDER, STATUS_LABELS=STATUS_LABELS,
+        SEVERITY_HEX={str(k): v for k, v in SEVERITY_HEX.items()},
     )
     return env
 
@@ -89,15 +95,61 @@ def _deadline(days: int | None) -> str:
     return "по плану" if days is None else f"до {days} дн."
 
 
+def _run_label(run_id: object, fallback: str) -> str:
+    return fallback if run_id is None else f"Прогон {run_id}"
+
+
+def default_history(report: Report) -> list[RunPoint]:
+    """Две точки тренда (предыдущий -> текущий прогон) из самой модели отчёта."""
+    t = report.combined.trend
+    if t is None:
+        return []
+    c = report.context
+    return [
+        RunPoint(_run_label(c.previous_run_id, "Предыдущий"),
+                 {d.severity: d.previous for d in t.severity}),
+        RunPoint(_run_label(c.run_id, "Текущий"), {d.severity: d.current for d in t.severity}),
+    ]
+
+
+def build_charts(report: Report, history: Sequence[RunPoint] | None = None
+                 ) -> dict[str, Scene]:
+    """Диаграммы отчёта по ключам; набор зависит от данных (тренд — со 2-го прогона).
+
+    history — точки по прогонам в хронологическом порядке (последняя — текущий
+    прогон); если не задана, берутся предыдущий и текущий прогон из отчёта.
+    """
+    s = report.summary
+    out: dict[str, Scene] = {"severity": ch.severity_donut(s.severity_counts)}
+    if s.top_hosts:
+        out["hosts"] = ch.stacked_bars(
+            "hosts", "Наиболее уязвимые хосты по уровню опасности",
+            [(h.host, h.counts) for h in s.top_hosts], width=340, label_w=110)
+    if report.modules:
+        out["modules"] = ch.stacked_bars(
+            "modules", "Находки по модулям и уровню опасности",
+            [(m.label, m.severity_counts) for m in report.modules], width=680, label_w=170)
+    t = report.combined.trend
+    if t is not None:
+        k = t.counts
+        out["waterfall"] = ch.waterfall(
+            k[FindingStatus.OPEN] + k[FindingStatus.FIXED], k[FindingStatus.FIXED],
+            k[FindingStatus.NEW], k[FindingStatus.REGRESSION])
+        points = list(history) if history else default_history(report)
+        out["trend"] = ch.trend_columns(points)
+    return out
+
+
 class ReportRenderer:
-    def render(self, report: Report, fmt: ReportFormat | str) -> bytes:
+    def render(self, report: Report, fmt: ReportFormat | str,
+               history: Sequence[RunPoint] | None = None) -> bytes:
         fmt = ReportFormat(fmt)
         if fmt is ReportFormat.HTML:
-            return self.render_html(report).encode("utf-8")
+            return self.render_html(report, history).encode("utf-8")
         if fmt is ReportFormat.PDF:
-            return self.render_pdf(report)
+            return self.render_pdf(report, history)
         if fmt is ReportFormat.DOCX:
-            return self.render_docx(report)
+            return self.render_docx(report, history)
         return self.render_json(report)
 
     # --- JSON ---------------------------------------------------------------
@@ -105,19 +157,22 @@ class ReportRenderer:
         return json.dumps(report.to_dict(), ensure_ascii=False, indent=2).encode("utf-8")
 
     # --- HTML / PDF ---------------------------------------------------------
-    def render_html(self, report: Report) -> str:
-        return _env().get_template("report.html.j2").render(r=report)
+    def render_html(self, report: Report, history: Sequence[RunPoint] | None = None) -> str:
+        # SVG собран из экранированных строк (charts.py) — помечаем как безопасный
+        charts = {k: Markup(v.to_svg()) for k, v in build_charts(report, history).items()}
+        return _env().get_template("report.html.j2").render(r=report, charts=charts)
 
-    def render_pdf(self, report: Report) -> bytes:
+    def render_pdf(self, report: Report, history: Sequence[RunPoint] | None = None) -> bytes:
         try:
             from weasyprint import HTML  # тяжёлая зависимость (pango) — лениво
         except (ImportError, OSError) as e:
             raise RuntimeError(
                 "PDF недоступен: нужен WeasyPrint и системные библиотеки Pango") from e
-        return HTML(string=self.render_html(report), url_fetcher=_deny_fetch).write_pdf()
+        return HTML(string=self.render_html(report, history),
+                    url_fetcher=_deny_fetch).write_pdf()
 
     # --- DOCX ---------------------------------------------------------------
-    def render_docx(self, report: Report) -> bytes:
+    def render_docx(self, report: Report, history: Sequence[RunPoint] | None = None) -> bytes:
         from docx import Document
         from docx.shared import Cm, Pt, RGBColor
 
@@ -152,6 +207,12 @@ class ReportRenderer:
             doc.add_paragraph()  # отступ после таблицы
             return t
 
+        scenes = build_charts(report, history) if ch.png_available() else {}
+
+        def picture(key: str, width_cm: float):
+            if key in scenes:
+                doc.add_picture(BytesIO(scenes[key].to_png()), width=Cm(width_cm))
+
         def sev_run(par, s: Severity):
             run = par.add_run(f"[{SEVERITY_LABELS[s]}] ")
             run.bold = True
@@ -159,6 +220,9 @@ class ReportRenderer:
 
         def trend_block(t: Trend):
             doc.add_paragraph(_x(t.verdict)).runs[0].bold = True
+            if t is report.combined.trend:
+                picture("waterfall", 11.0)
+                picture("trend", 10.0)
             table([STATUS_LABELS[s] for s in STATUS_ORDER],
                   [[t.counts[s] for s in STATUS_ORDER]])
             table(["Уровень опасности", "Предыдущий", "Текущий", "Изменение"],
@@ -197,14 +261,17 @@ class ReportRenderer:
         p.add_run(f". Хостов с находками: {s.hosts}, всего находок: {s.total}.")
         table([SEVERITY_LABELS[x] for x in SEVERITY_ORDER],
               [[s.severity_counts[x] for x in SEVERITY_ORDER]])
+        picture("severity", 10.5)
         for point in s.key_points:
             doc.add_paragraph(_x(point), style="List Bullet")
         if s.top_hosts:
             doc.add_heading("Наиболее уязвимые хосты", level=2)
+            picture("hosts", 13.0)
             table(["Хост"] + [SEVERITY_LABELS[x] for x in SEVERITY_ORDER] + ["Всего"],
                   [[h.host] + [h.counts[x] for x in SEVERITY_ORDER] + [h.total]
                    for h in s.top_hosts], first_cm=3.5)
         doc.add_heading("Находки по модулям", level=2)
+        picture("modules", 16.5)
         severity_table(report.modules)
 
         # 2. План устранения

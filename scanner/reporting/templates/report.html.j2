@@ -7,8 +7,9 @@
 <style>
   :root {
     --ink: #1d2433; --muted: #5b6475; --line: #d9dde5; --bg: #ffffff; --panel: #f5f7fa;
-    --critical: #8e1b1b; --high: #c2410c; --medium: #b7791f; --low: #2f6f9f; --info: #6b7280;
-    --good: #23733f;
+    --critical: {{ SEVERITY_HEX.critical }}; --high: {{ SEVERITY_HEX.high }};
+    --medium: {{ SEVERITY_HEX.medium }}; --low: {{ SEVERITY_HEX.low }}; --info: {{ SEVERITY_HEX.info }};
+    --good: #23733f; --accent: #1f3a5f;
   }
   @page { size: A4; margin: 18mm 15mm 18mm 15mm;
           @bottom-right { content: "стр. " counter(page) " из " counter(pages);
@@ -18,8 +19,35 @@
   body { font-family: "DejaVu Sans", "Segoe UI", Arial, sans-serif; color: var(--ink);
          background: var(--bg); margin: 0 auto; max-width: 1100px; padding: 24px 16px;
          font-size: 10.5pt; line-height: 1.45; }
-  @media print { body { padding: 0; max-width: none; } }
+  @media print { body { padding: 0; max-width: none; } .wrap table { font-size: 9pt; } }
   h1 { font-size: 20pt; margin: 0 0 4px; }
+  .cover { border-top: 6px solid var(--accent); padding-top: 14px; margin-bottom: 18px; }
+  .cover .kicker { text-transform: uppercase; letter-spacing: .08em; font-size: 8.5pt;
+                   color: var(--muted); font-weight: 600; }
+  /* --- дашборд --- */
+  .kpis { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  .kpi { flex: 1 1 120px; border: 1px solid var(--line); border-radius: 8px;
+         padding: 9px 12px; background: var(--bg); page-break-inside: avoid; }
+  .kpi small { display: block; color: var(--muted); font-size: 8.5pt; }
+  .kpi b { display: block; font-size: 20pt; line-height: 1.15; margin-top: 2px; }
+  .kpi .sub { font-size: 8.5pt; color: var(--muted); }
+  .kpi-risk { color: #fff; border: none; }
+  .kpi-risk small, .kpi-risk .sub { color: rgba(255,255,255,.85); }
+  .kpi-risk.risk-none { background: var(--good); }
+  .kpi-risk.risk-medium { color: var(--ink); }
+  .kpi-risk.risk-medium small, .kpi-risk.risk-medium .sub { color: var(--ink); }
+  .kpi-risk.risk-critical { background: var(--critical); } .kpi-risk.risk-high { background: var(--high); }
+  .kpi-risk.risk-medium { background: var(--medium); } .kpi-risk.risk-low { background: var(--low); }
+  .up { color: var(--high); font-weight: 600; } .down { color: var(--good); font-weight: 600; }
+  .cards { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 14px; }
+  .card { flex: 1 1 300px; border: 1px solid var(--line); border-radius: 8px;
+          padding: 10px 12px 8px; page-break-inside: avoid; }
+  .card h4 { margin: 0 0 6px; font-size: 10pt; }
+  .card .note { color: var(--muted); font-size: 8.5pt; margin: 4px 0 0; }
+  svg.chart { display: block; width: 100%; height: auto; max-width: 460px; margin: 0 auto; }
+  svg.chart[data-chart="modules"] { max-width: 820px; }
+  .sevbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: 6px 0 2px; }
+  .sevbar span { display: block; height: 8px; margin-right: 2px; }
   h2 { font-size: 14.5pt; margin: 28px 0 10px; padding-bottom: 4px;
        border-bottom: 2px solid var(--ink); page-break-after: avoid; }
   h3 { font-size: 12pt; margin: 18px 0 8px; page-break-after: avoid; }
@@ -39,7 +67,7 @@
   .sev { display: inline-block; padding: 1px 7px; border-radius: 10px; color: #fff;
          font-size: 8.5pt; font-weight: 600; white-space: nowrap; }
   .sev-critical { background: var(--critical); } .sev-high { background: var(--high); }
-  .sev-medium { background: var(--medium); } .sev-low { background: var(--low); }
+  .sev-medium { background: var(--medium); color: var(--ink); } .sev-low { background: var(--low); }
   .sev-info { background: var(--info); }
   .status { font-size: 8.5pt; color: var(--muted); white-space: nowrap; }
   .status-new, .status-regression { color: var(--high); font-weight: 600; }
@@ -48,8 +76,15 @@
           margin: 10px 0; }
   .risk-critical { border-color: var(--critical); } .risk-high { border-color: var(--high); }
   .risk-medium { border-color: var(--medium); } .risk-low { border-color: var(--low); }
-  .finding { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  .finding { border: 1px solid var(--line); border-left-width: 5px; border-radius: 6px; padding: 10px 12px;
              margin: 0 0 10px; page-break-inside: avoid; }
+  .finding.f-critical { border-left-color: var(--critical); } .finding.f-high { border-left-color: var(--high); }
+  .finding.f-medium { border-left-color: var(--medium); } .finding.f-low { border-left-color: var(--low); }
+  .finding.f-info { border-left-color: var(--info); }
+  tr.p-critical td:first-child { border-left: 4px solid var(--critical); }
+  tr.p-high td:first-child { border-left: 4px solid var(--high); }
+  tr.p-medium td:first-child { border-left: 4px solid var(--medium); }
+  tr.p-low td:first-child { border-left: 4px solid var(--low); }
   .finding h4 { margin: 0 0 6px; font-size: 10.5pt; }
   .kv { color: var(--muted); font-size: 9pt; margin-bottom: 6px; }
   .kv span { margin-right: 14px; }
@@ -69,6 +104,8 @@
 {% macro sev(s) %}<span class="sev sev-{{ s }}">{{ SEVERITY_LABELS[s] }}</span>{% endmacro %}
 {% macro deadline(d) %}{% if d is none %}по плану{% else %}до {{ d }} дн.{% endif %}{% endmacro %}
 
+<div class="cover">
+<div class="kicker">Анализ защищённости · результаты сканирования</div>
 <h1>{{ r.context.title }}</h1>
 <div class="meta">
   {% if r.context.customer %}<span>Заказчик: <b>{{ r.context.customer }}</b></span>{% endif %}
@@ -77,17 +114,46 @@
   {% if r.context.previous_run_id is not none %}<span>Сравнение с прогоном: {{ r.context.previous_run_id }}</span>{% endif %}
   <span>Сформирован: {{ r.context.generated_at.strftime("%d.%m.%Y %H:%M UTC") }}</span>
 </div>
+</div>
 
+{% set sc = r.summary.severity_counts %}
+{% set t = r.combined.trend %}
 <h2>1. Резюме для руководства</h2>
-<div class="risk risk-{{ r.summary.risk_level or 'none' }}">
-  Общий уровень риска: <b>{{ r.summary.risk_label }}</b>.
-  Хостов с находками: {{ r.summary.hosts }}, всего находок: {{ r.summary.total }}.
+<div class="dashboard">
+<div class="kpis">
+  <div class="kpi kpi-risk risk-{{ r.summary.risk_level or 'none' }}">
+    <small>Общий уровень риска</small><b>{{ r.summary.risk_label }}</b>
+    <span class="sub">по наиболее опасной находке</span>
+  </div>
+  <div class="kpi"><small>Всего находок</small><b>{{ r.summary.total }}</b>
+    {% if t %}{% set prev_total = t.severity|sum(attribute="previous") %}{% set dlt = r.summary.total - prev_total %}
+    <span class="sub {% if dlt > 0 %}up{% elif dlt < 0 %}down{% endif %}">{{ "%+d"|format(dlt) if dlt else "±0" }} к прошлому прогону</span>
+    {% else %}<span class="sub">первый прогон</span>{% endif %}
+  </div>
+  <div class="kpi"><small>Критических и высоких</small><b>{{ sc.critical + sc.high }}</b>
+    <span class="sub">требуют первоочередного устранения</span></div>
+  <div class="kpi"><small>Хостов с находками</small><b>{{ r.summary.hosts }}</b>
+    <span class="sub">мер в плане устранения: {{ r.plan|length }}</span></div>
+  {% if t %}
+  <div class="kpi"><small>Новые / повторные</small><b>{{ t.counts.new }} / {{ t.counts.regression }}</b>
+    <span class="sub">устранено: <span class="down">{{ t.counts.fixed }}</span></span></div>
+  {% endif %}
 </div>
-<div class="tiles">
-  {% for s in SEVERITY_ORDER %}
-  <div class="tile"><small>{{ SEVERITY_LABELS[s] }}</small><b>{{ r.summary.severity_counts[s] }}</b></div>
-  {% endfor %}
+
+<div class="cards">
+  <div class="card">
+    <h4>Распределение по уровню опасности</h4>
+    {{ charts.severity }}
+  </div>
+  {% if charts.hosts %}
+  <div class="card">
+    <h4>Наиболее уязвимые хосты</h4>
+    {{ charts.hosts }}
+  </div>
+  {% endif %}
 </div>
+</div>
+
 <ul>
   {% for p in r.summary.key_points %}<li>{{ p }}</li>{% endfor %}
 </ul>
@@ -101,6 +167,7 @@
 </table></div>
 {% endif %}
 <h3>Находки по модулям</h3>
+{% if charts.modules %}<div class="card">{{ charts.modules }}</div>{% endif %}
 <div class="wrap"><table>
   <tr><th>Модуль</th>{% for s in SEVERITY_ORDER %}<th class="num">{{ SEVERITY_LABELS[s] }}</th>{% endfor %}<th class="num">Всего</th></tr>
   {% for m in r.modules %}
@@ -115,7 +182,7 @@
 <div class="wrap"><table>
   <tr><th>№</th><th>Опасность</th><th>Что сделать</th><th>Где</th><th>Срок</th></tr>
   {% for p in r.plan %}
-  <tr>
+  <tr class="p-{{ p.severity }}">
     <td class="num">{{ loop.index }}</td>
     <td>{{ sev(p.severity) }}</td>
     <td>{{ p.action }}<br><span class="muted">Источник: {{ p.source_label }}. Находки: {{ p.titles|join("; ") }}</span></td>
@@ -128,8 +195,20 @@
 <p>Мер устранения не требуется.</p>
 {% endif %}
 
-{% macro trend_block(t) %}
+{% macro trend_block(t, charts_for_trend=none) %}
 <p><b>{{ t.verdict }}</b></p>
+{% if charts_for_trend %}
+<div class="cards">
+  <div class="card">
+    <h4>Что изменилось с прошлого прогона</h4>
+    {{ charts_for_trend.waterfall }}
+  </div>
+  <div class="card">
+    <h4>Число находок по прогонам</h4>
+    {{ charts_for_trend.trend }}
+  </div>
+</div>
+{% endif %}
 <div class="tiles">
   {% for st in STATUS_ORDER %}
   <div class="tile"><small>{{ STATUS_LABELS[st] }}</small><b>{{ t.counts[st] }}</b></div>
@@ -155,7 +234,7 @@
 
 <h2>3. Сравнение с предыдущим прогоном</h2>
 {% if r.has_trend %}
-{{ trend_block(r.combined.trend) }}
+{{ trend_block(r.combined.trend, charts) }}
 <h3>Динамика по модулям</h3>
 <div class="wrap"><table>
   <tr><th>Модуль</th>{% for st in STATUS_ORDER %}<th class="num">{{ STATUS_LABELS[st] }}</th>{% endfor %}</tr>
@@ -174,7 +253,7 @@
 {% for s, label, group in m.by_severity %}
   {% for v in group %}
   {% set f = v.finding %}
-  <div class="finding">
+  <div class="finding f-{{ f.severity }}">
     <h4>{{ sev(f.severity) }} {{ f.title }}
       {% if v.status %}<span class="status status-{{ v.status }}">· {{ v.status_label }}</span>{% endif %}</h4>
     <div class="kv">
