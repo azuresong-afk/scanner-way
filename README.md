@@ -15,6 +15,8 @@ PostgreSQL и отчётами (HTML/PDF/DOCX/JSON).
 4. Credential audit — контролируемая проверка слабых/дефолтных учёток.
 5. Reporting — хранение прогонов, сравнение и тренды (open/fixed/new/regression).
 
+Установка и первый запуск по шагам: [`docs/INSTALL.md`](docs/INSTALL.md).
+Чек-лист приёмочного тестирования: [`docs/TESTING.md`](docs/TESTING.md).
 Архитектура и обоснования: [`docs/architecture.md`](docs/architecture.md).
 Дорожная карта и промты для параллельной разработки: [`docs/roadmap.md`](docs/roadmap.md).
 
