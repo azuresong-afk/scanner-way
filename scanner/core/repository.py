@@ -192,6 +192,58 @@ def get_services(session: Session, scan_run_id: int) -> list[ServiceInfo]:
             for host, s in rows]
 
 
+def engagement_hosts(session: Session, engagement_id: int) -> list[dict]:
+    """Инвентарь договора: все хосты, встречавшиеся в любом прогоне.
+
+    Хост попадает в инвентарь по результатам discovery (host_results) или по
+    находкам. Сервисы и ОС — из последнего прогона, где они были. Для каждого
+    хоста — список прогонов, в которых он встречался (`run_ids`, по возрастанию).
+    """
+    run_ids = list(session.scalars(
+        select(ScanRun.id).where(ScanRun.engagement_id == engagement_id)))
+    if not run_ids:
+        return []
+    hosts: dict[str, dict] = {}
+
+    def get(host: object) -> dict:
+        key = str(ipaddress.ip_address(str(host).split("/")[0]))
+        if key not in hosts:
+            hosts[key] = {"host": key, "os_guess": None, "run_ids": set(),
+                          "services": [], "services_run_id": None}
+        return hosts[key]
+
+    for h in session.scalars(select(HostResult).where(HostResult.scan_run_id.in_(run_ids))
+                             .order_by(HostResult.scan_run_id)):
+        row = get(h.host)
+        row["run_ids"].add(h.scan_run_id)
+        if h.os_guess:
+            row["os_guess"] = h.os_guess
+    for host, rid in session.execute(
+            select(FindingRow.host, FindingRow.scan_run_id).distinct()
+            .where(FindingRow.scan_run_id.in_(run_ids))):
+        get(host)["run_ids"].add(rid)
+    rows = session.execute(
+        select(HostResult.host, HostResult.scan_run_id, ServiceResult)
+        .join(ServiceResult, ServiceResult.host_id == HostResult.id)
+        .where(HostResult.scan_run_id.in_(run_ids))
+        .order_by(HostResult.scan_run_id.desc(), ServiceResult.id))
+    for host, rid, s in rows:
+        row = get(host)
+        if row["services_run_id"] is None:
+            row["services_run_id"] = rid
+        if row["services_run_id"] == rid:
+            row["services"].append(ServiceInfo(
+                host=row["host"], port=s.port, protocol=s.protocol, service=s.service,
+                product=s.product, version=s.version, cpe=s.cpe))
+    out = []
+    for row in hosts.values():
+        row["run_ids"] = sorted(row["run_ids"])
+        row["services"].sort(key=lambda s: (s.port, s.protocol))
+        out.append(row)
+    return sorted(out, key=lambda r: (ipaddress.ip_address(r["host"]).version,
+                                      int(ipaddress.ip_address(r["host"]))))
+
+
 # ========== Находки ==========
 def save_findings(session: Session, *, engagement_id: int, scan_run_id: int,
                   findings: Iterable[Finding],

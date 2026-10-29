@@ -555,3 +555,28 @@ def test_tokens_and_passwords():
     assert th.locked("a")
     t[0] = 31
     assert not th.locked("a")
+
+
+def test_engagement_hosts_inventory_spans_all_runs(api):
+    eid = api.engagement("10.0.0.0/24")
+    op = api.user("op", "operator")
+    first = _run(api, eid, op, ["10.0.0.1", "10.0.0.2"]).json()["id"]
+    second = _run(api, eid, op, ["10.0.0.2", "10.0.0.10"]).json()["id"]
+
+    r = api.c.get(f"/engagements/{eid}/hosts", headers=op)
+    assert r.status_code == 200, r.text
+    hosts = r.json()
+    # список один и тот же, какой бы прогон ни был выбран; сортировка по IP
+    assert [h["host"] for h in hosts] == ["10.0.0.1", "10.0.0.2", "10.0.0.10"]
+    by = {h["host"]: h for h in hosts}
+    assert by["10.0.0.1"]["run_ids"] == [first]
+    assert by["10.0.0.2"]["run_ids"] == [first, second]
+    assert by["10.0.0.10"]["run_ids"] == [second]
+    # сервисы — из последнего прогона, где хост был
+    assert by["10.0.0.1"]["services_run_id"] == first
+    assert by["10.0.0.2"]["services_run_id"] == second
+    assert [s["port"] for s in by["10.0.0.2"]["services"]] == [22]
+
+    aud = api.user("aud", "auditor")
+    assert api.c.get(f"/engagements/{eid}/hosts", headers=aud).status_code == 200
+    assert api.c.get("/engagements/999/hosts", headers=op).status_code == 404

@@ -140,6 +140,44 @@ it("сводка показывает открытые уязвимости и �
   expect(within(tile("Регрессии")).getByText("0")).toBeInTheDocument();
 });
 
+it("вкладка «Хосты»: список постоянный, от прогона меняются только счётчики", async () => {
+  setToken("t");
+  const run = (id: number) => ({
+    id, engagement_id: 1, modules: ["discovery", "vuln"], rate_profile: "gentle", status: "done",
+    started_by: 1, started_at: "2026-10-27T10:00:00", finished_at: "2026-10-27T11:00:00", created_at: "2026-10-27T10:00:00",
+  });
+  const ssh = { port: 22, protocol: "tcp", service: "ssh", product: "OpenSSH", version: "7.4", cpe: null };
+  mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [run(1), run(2)],
+    "GET /engagements/1/hosts": [
+      { host: "10.0.0.1", os_guess: null, run_ids: [1, 2], services_run_id: 2, services: [{ host: "10.0.0.1", ...ssh }] },
+      { host: "10.0.0.2", os_guess: null, run_ids: [1], services_run_id: 1, services: [{ host: "10.0.0.2", ...ssh }] },
+    ],
+    "GET /runs/1/findings": [
+      finding({ host: "10.0.0.1", severity: "critical", vuln_id: "A" }),
+      finding({ host: "10.0.0.1", severity: "high", vuln_id: "B" }),
+      finding({ host: "10.0.0.2", severity: "medium" }),
+    ],
+    "GET /runs/2/findings": [finding({ host: "10.0.0.1", severity: "high", vuln_id: "B" })],
+  });
+  renderApp("/hosts");
+  const row = async (host: string) => (await screen.findByRole("link", { name: host })).closest("tr") as HTMLElement;
+  const vulns = async (host: string) => (await row(host)).lastElementChild?.textContent;
+
+  // по умолчанию — последний прогон (№2): 10.0.0.2 в нём не было, но он остаётся в списке
+  await screen.findByText(/в прогоне №2: 1/);
+  expect(await vulns("10.0.0.1")).toBe("1");
+  expect(within(await row("10.0.0.2")).getByText("не в прогоне №2")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByRole("combobox", { name: "Прогон" }), { target: { value: "1" } });
+  await screen.findByText(/в прогоне №1: 2/);
+  await waitFor(async () => expect(await vulns("10.0.0.1")).toBe("2"));
+  expect(await vulns("10.0.0.2")).toBe("1");
+  expect(screen.getAllByRole("link").filter((a) => a.closest("tbody"))).toHaveLength(2);
+});
+
 it("переключает светлую и тёмную тему и запоминает выбор", async () => {
   setToken("t");
   mockApi({ "GET /me": me(["operator"], OPERATOR), "GET /engagements": [ENG], "GET /engagements/1/runs": [] });

@@ -1,6 +1,6 @@
 // Агрегаты для дашборда, таблиц и раздела по хостам (считаются на клиенте).
 
-import type { FindingOut, FindingStatus, ServiceOut, Severity } from "../api/types";
+import type { FindingOut, FindingStatus, InventoryHostOut, ServiceOut, Severity } from "../api/types";
 import { SEVERITIES } from "./labels";
 
 export const SEVERITY_RANK: Record<Severity, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
@@ -119,6 +119,37 @@ export function byHost(findings: FindingOut[], services: ServiceOut[] = []): Hos
     row.summary = [...new Set(names)].slice(0, 3).join(", ");
   }
   return [...map.values()].sort((a, b) => compareRisk(a.counts, b.counts) || compareIp(a.host, b.host));
+}
+
+export interface InventoryRow extends HostRow {
+  /** Хост был в выбранном прогоне (иначе счётчики не применимы). */
+  inRun: boolean;
+  lastRunId: number | null;
+}
+
+/**
+ * Строки вкладки «Хосты»: постоянный список инвентаря (порядок по IP),
+ * а счётчики уязвимостей — из находок выбранного прогона.
+ */
+export function inventoryRows(inventory: InventoryHostOut[], findings: FindingOut[], runId: number | null): InventoryRow[] {
+  const perHost = new Map(byHost(findings.filter(isIssue)).map((r) => [r.host, r]));
+  return [...inventory]
+    .sort((a, b) => compareIp(a.host, b.host))
+    .map((h) => {
+      const r = perHost.get(h.host);
+      const base = byHost([], h.services)[0];
+      return {
+        host: h.host,
+        counts: r?.counts ?? emptyCounts(),
+        total: r?.total ?? 0,
+        maxSeverity: r?.maxSeverity ?? "info",
+        findings: r?.findings ?? [],
+        services: base?.services ?? [],
+        summary: base?.summary ?? "",
+        inRun: runId !== null && (h.run_ids.includes(runId) || !!r),
+        lastRunId: h.run_ids.length ? h.run_ids[h.run_ids.length - 1] : null,
+      };
+    });
 }
 
 export function compareFindings(a: FindingOut, b: FindingOut): number {

@@ -150,6 +150,14 @@ class ServiceOut(BaseModel):
     cpe: str | None
 
 
+class InventoryHostOut(BaseModel):
+    host: str
+    os_guess: str | None
+    run_ids: list[int]
+    services_run_id: int | None
+    services: list[ServiceOut]
+
+
 # ---- audit ----
 class AuditOut(_Orm):
     id: int
