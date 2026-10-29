@@ -64,7 +64,7 @@ export function ReportMenu({
 
   return (
     <div className="stack" style={{ gap: 6 }}>
-      <div className="inline" style={{ gap: small ? 6 : 10 }}>
+      <div className="inline" style={{ gap: small ? 6 : 13 }}>
         {!compact && (
           <button type="button" className={`${btn} btn-report-view`} disabled={disabled || !!busy} onClick={preview}>
             {busy === "view" ? <span className="spinner" style={{ width: icon, height: icon }} /> : <Eye size={icon} />}

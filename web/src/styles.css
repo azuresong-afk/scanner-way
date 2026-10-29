@@ -53,10 +53,17 @@
   --radius-sm: 8px;
   --font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  /* Рабочая колонка: на широких мониторах (27" и больше) контент и верхняя
-     панель центрируются в ней, а не прижимаются к левому краю. */
-  --content-max: 1680px;
-  --gutter: 32px;
+  /* Пропорции по золотому сечению (φ ≈ 1,618). Отступы — ряд Фибоначчи:
+     каждый следующий ≈ предыдущий × φ. */
+  --s1: 8px;
+  --s2: 13px;
+  --s3: 21px;
+  --s4: 34px;
+  --s5: 55px;
+  /* Рабочая колонка 1618 px = 1000 × φ: на широких мониторах (27" и больше)
+     контент и верхняя панель центрируются в ней, а не прижимаются к левому краю. */
+  --content-max: 1618px;
+  --gutter: var(--s4);
   --gutter-x: max(var(--gutter), calc((100% - var(--content-max)) / 2 + var(--gutter)));
 }
 
@@ -121,7 +128,8 @@ body {
 a { color: var(--accent-text); text-decoration: none; }
 a:hover { text-decoration: underline; }
 h1, h2, h3 { margin: 0; letter-spacing: -0.01em; }
-h1 { font-size: 24px; font-weight: 600; }
+/* Шкала шрифтов с шагом ≈ √φ: 13 → 16 → 21 → 26 → 34 → 55. */
+h1 { font-size: 26px; font-weight: 600; }
 h2 { font-size: 15px; font-weight: 600; }
 h3 { font-size: 14px; font-weight: 600; }
 code, .mono { font-family: var(--mono); font-size: 12.5px; }
@@ -175,11 +183,11 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .topbar .spacer { flex: 1; }
 /* .btn.menu-btn, а не .menu-btn: правило .btn ниже иначе перебивает display и бургер виден на десктопе. */
 .btn.menu-btn { display: none; }
-.content { padding: 24px var(--gutter-x) 48px; display: flex; flex-direction: column; gap: 20px; width: 100%; }
+.content { padding: var(--s4) var(--gutter-x) var(--s5); display: flex; flex-direction: column; gap: var(--s3); width: 100%; }
 
 .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; }
 .page-head > div:first-child { flex: 1 1 320px; display: flex; flex-direction: column; gap: 4px; }
-.page-head .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.page-head .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
 .crumbs { font-size: 13px; color: var(--text-3); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
 @media (max-width: 960px) {
@@ -192,19 +200,26 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 
 /* ---------- элементы ---------- */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-.card-pad { padding: 18px 20px; }
+.card-pad { padding: var(--s3); }
 .card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px 20px; }
 .card-head h2 { flex: 1 1 auto; }
-.row { display: flex; flex-wrap: wrap; gap: 16px; }
+.row { display: flex; flex-wrap: wrap; gap: var(--s3); }
 .row > * { min-width: 0; }
 .grow-2 { flex: 2 1 480px; }
 .grow-3 { flex: 3 1 520px; }
 .grow-1 { flex: 1 1 300px; }
+/* На широком экране главный и второстепенный блоки делят ширину как φ : 1
+   (61,8 % / 38,2 %); блоки в ряду растягиваются на одну высоту. */
+@media (min-width: 1200px) {
+  .row:has(> .grow-3 + .grow-2) { display: grid; grid-template-columns: minmax(0, 1.618fr) minmax(0, 1fr); }
+  .row:has(> .grow-2 + .grow-3),
+  .row:has(> .grow-1 + .grow-2) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.618fr); }
+}
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 .btn {
-  height: 38px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  height: 34px; padding: 0 var(--s3); border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
   background: transparent; color: var(--text); font: inherit; font-weight: 500; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap;
 }
@@ -216,20 +231,21 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .btn-danger:hover:not(:disabled) { background: var(--danger-soft); }
 .btn-sm { height: 30px; padding: 0 10px; font-size: 13px; }
 .btn-ghost { border-color: transparent; }
-.btn-report { min-width: 96px; }
+/* Ширина кнопок форматов 89 px ≈ 55 × φ. */
+.btn-report { min-width: 89px; }
 @media (max-width: 600px) {
   /* На телефоне: форматы отчёта — одной строкой на всю ширину, «Новый прогон» — под ними. */
   .page-head .actions, .page-head .actions > * { width: 100%; }
   .btn-report { flex: 1 1 64px; min-width: 0; padding: 0 8px; }
   .btn-report.btn-report-view { flex-basis: 100%; }
 }
-.icon-btn { width: 38px; padding: 0; }
+.icon-btn { width: 34px; padding: 0; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span { font-size: 13px; color: var(--text-2); font-weight: 500; }
 .field small { color: var(--text-3); font-size: 12px; }
 .input, .select, .textarea {
-  height: 38px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  height: 34px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
   background: var(--surface-2); color: var(--text); font: inherit; width: 100%;
 }
 .textarea { height: auto; min-height: 110px; padding: 10px 12px; font-family: var(--mono); font-size: 13px; resize: vertical; }
@@ -320,10 +336,10 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .count { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--surface-3); color: var(--text-2); }
 
 /* ---------- KPI ---------- */
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
-.kpi { padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s3); }
+.kpi { padding: var(--s3); display: flex; flex-direction: column; gap: 6px; }
 .kpi-label { font-size: 12px; color: var(--text-2); }
-.kpi-value { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+.kpi-value { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
 .kpi-delta { font-size: 12px; color: var(--text-3); }
 .kpi-delta.good { color: var(--ok); }
 .kpi-delta.bad { color: var(--danger); }
@@ -435,8 +451,8 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 @media (max-width: 600px) { .engagement-picker > span { display: none; } }
 
 /* ---------- сводка: герой-блок и плитки изменений ---------- */
-.hero { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
-.hero-number { font-size: 46px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
+.hero { padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); }
+.hero-number { font-size: 55px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
 .hero .stackbar { height: 14px; }
 .hero .stackbar span { height: 14px !important; }
 .sev-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -448,8 +464,8 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .sev-tile:hover { background: var(--surface-3); }
 .sev-tile:focus-visible { outline: 2px solid var(--accent); }
 .sev-tile b { font-size: 24px; font-weight: 600; }
-.change-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.change-tile { padding: 18px; display: flex; flex-direction: column; gap: 8px; }
+.change-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+.change-tile { padding: var(--s3); display: flex; flex-direction: column; gap: 8px; }
 .change-tile .ic { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; }
 .change-tile b { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
 .delta-badge { font-size: 13px; padding: 4px 10px; border-radius: 20px; }
