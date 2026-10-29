@@ -352,7 +352,8 @@ docker exec -i lab-ssh sh -c 'mkdir -p /home/audit/.ssh && cat > /home/audit/.ss
 | 14.1 | `docker compose down && docker compose up -d` (затем снова `docker network connect lab-net …`) | Пользователи, договоры, прогоны и справочники на месте |
 | 14.2 | Резервная копия: `docker compose exec -T db pg_dump -U scanner scanner \| gzip > backup.sql.gz` | Файл создан, ненулевой размер |
 | 14.3 | Остановить `db` во время работы (`docker compose stop db`), открыть веб | Понятная ошибка, после `docker compose start db` всё работает |
-| 14.4 | Обновить код сканера: `git pull`, затем `docker compose restart app` | Правки Python подхватываются без пересборки — каталог кода примонтирован в `app` (`./:/app`). Полная пересборка `docker compose up --build` нужна только при смене зависимостей, Dockerfile или версии Nuclei |
+| 14.4 | Обновить до свежей версии: `git pull`, затем `docker compose up --build -d` | Образы пересобираются, контейнеры пересоздаются, миграции применяются сами; пользователи, договоры, прогоны и справочники на месте. Так обновляются и новые функции: зависимости Python ставятся в образ, а веб-интерфейс компилируется в образ `web` (простой `restart app` его не обновит) |
+| 14.5 | Точечная правка только Python-кода (без новых зависимостей и правок веба): `git pull`, затем `docker compose restart app` | Изменения подхватываются без пересборки — код `app` примонтирован как `./:/app` |
 
 - [ ] Шаг 14 пройден
 
