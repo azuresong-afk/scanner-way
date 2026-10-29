@@ -119,6 +119,16 @@ export interface ServiceOut {
   cpe: string | null;
 }
 
+export type AuditExportFormat = "csv" | "json";
+
+/** Фильтр журнала: since/until — ISO 8601 с зоной, полуинтервал [since, until). */
+export interface AuditFilters {
+  subject?: string;
+  actions?: string[];
+  since?: string;
+  until?: string;
+}
+
 export interface AuditOut {
   id: number;
   ts: string;

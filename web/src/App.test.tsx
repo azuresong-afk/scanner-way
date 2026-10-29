@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "./App";
@@ -154,4 +154,61 @@ it("переключает светлую и тёмную тему и запом
 
   await userEvent.click(screen.getByRole("button", { name: "Включить тёмную тему" }));
   expect(html.dataset.theme).toBe("dark");
+});
+
+describe("журнал аудита", () => {
+  const ROW = { id: 7, ts: "2026-10-02T08:30:00+00:00", subject: "scanner", action: "deny", target: "10.9.9.9", result: "not_in_allowlist", details: null };
+
+  it("выгружает CSV с выбранными действиями и периодом", async () => {
+    setToken("t");
+    const urls: URL[] = [];
+    const created = vi.fn(() => "blob:x");
+    URL.createObjectURL = created;
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    mockApi({
+      "GET /me": me(["auditor"], ["view_engagements", "view_report", "view_audit"]),
+      "GET /engagements": [ENG],
+      "GET /audit": [ROW],
+      "GET /audit/actions": ["deny", "custom_action"],
+      "GET /audit/export": (_init: RequestInit | undefined, url: URL) => {
+        urls.push(url);
+        return new Response("id,ts\r\n", { status: 200, headers: { "Content-Type": "text/csv" } });
+      },
+    });
+    renderApp("/audit");
+    expect(await screen.findByText("Цель отклонена (вне allowlist)", { selector: "td" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText(/Действия: все/));
+    const group = screen.getByRole("group", { name: "Действия" });
+    await userEvent.click(within(group).getByRole("button", { name: "Цель отклонена (вне allowlist)" }));
+    await userEvent.click(await within(group).findByRole("button", { name: "custom_action" }));
+    expect(screen.getByText(/Действия: выбрано 2/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("С"), { target: { value: "2026-10-01T10:00" } });
+
+    await userEvent.click(screen.getByRole("button", { name: "Выгрузить журнал CSV" }));
+    await waitFor(() => expect(urls).toHaveLength(1));
+    const q = urls[0].searchParams;
+    expect(q.get("format")).toBe("csv");
+    expect(q.getAll("action")).toEqual(["deny", "custom_action"]);
+    expect(q.get("since")).toBe(new Date("2026-10-01T10:00").toISOString());
+    expect(q.has("until")).toBe(false);
+    await waitFor(() => expect(created).toHaveBeenCalled());
+  });
+
+  it("не даёт выгрузить при перевёрнутом периоде", async () => {
+    setToken("t");
+    mockApi({
+      "GET /me": me(["auditor"], ["view_engagements", "view_report", "view_audit"]),
+      "GET /engagements": [ENG],
+      "GET /audit": [],
+      "GET /audit/actions": [],
+    });
+    renderApp("/audit");
+    await screen.findByText("Записей нет");
+    fireEvent.change(screen.getByLabelText("С"), { target: { value: "2026-10-05T10:00" } });
+    fireEvent.change(screen.getByLabelText("По"), { target: { value: "2026-10-01T10:00" } });
+    expect(screen.getByText("Начало периода должно быть раньше конца.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Выгрузить журнал JSON" })).toBeDisabled();
+  });
 });

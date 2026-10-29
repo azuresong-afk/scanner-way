@@ -3,6 +3,8 @@
 import type {
   AllowlistIn,
   AllowlistOut,
+  AuditExportFormat,
+  AuditFilters,
   AuditOut,
   EngagementIn,
   EngagementOut,
@@ -106,6 +108,17 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Query-строка: массивы — повтором параметра (?action=a&action=b), пустое опускается. */
+export function auditQuery(params: object): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (k === "actions") for (const a of (v as string[] | undefined) ?? []) q.append("action", a);
+    else if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+  }
+  const qs = q.toString();
+  return qs ? `?${qs}` : "";
+}
+
 const body = (data: unknown): RequestInit => ({ body: JSON.stringify(data) });
 
 export const api = {
@@ -148,10 +161,12 @@ export const api = {
     return res.blob();
   },
 
-  audit: (params: { limit?: number; before_id?: number; subject?: string; action?: string } = {}) => {
-    const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
-    const qs = q.toString();
-    return json<AuditOut[]>(`/audit${qs ? `?${qs}` : ""}`);
+  audit: (params: { limit?: number; before_id?: number } & AuditFilters = {}) =>
+    json<AuditOut[]>(`/audit${auditQuery(params)}`),
+  auditActions: () => json<string[]>("/audit/actions"),
+  /** Выгрузка журнала: файл через fetch с Bearer, как и отчёты. */
+  auditExport: async (format: AuditExportFormat, filters: AuditFilters): Promise<Blob> => {
+    const res = await request(`/audit/export${auditQuery({ format, ...filters })}`);
+    return res.blob();
   },
 };

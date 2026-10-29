@@ -119,7 +119,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list,
                            allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
                            allow_headers=["Authorization", "Content-Type"],
-                           expose_headers=["Content-Disposition"], max_age=600)
+                           expose_headers=["Content-Disposition", "X-Audit-Count"], max_age=600)
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:
