@@ -10,8 +10,10 @@ from scanner.modules.vuln import (
     VulnModule,
     VulnOptions,
     VulnScanError,
+    VulnScanTimeout,
     build_inputs,
     build_nuclei_command,
+    nuclei_timeout,
     parse_nuclei_jsonl,
     service_to_input,
     validate_targets,
@@ -233,3 +235,43 @@ def test_subprocess_runner_passes_targets_as_file(monkeypatch):
     assert seen["argv"][:len(cmd)] == cmd
     assert seen["kw"]["stdin"] is subprocess.DEVNULL
     assert not os.path.exists(seen["path"])   # временный файл убран
+
+
+def test_timeout_scales_with_profile_and_targets():
+    opts = VulnOptions()
+    gentle, normal = get_profile("gentle"), get_profile("normal")
+    # одна цель на gentle — дольше прежних фиксированных 30 минут
+    assert nuclei_timeout(gentle, 1, opts) > 1800
+    assert nuclei_timeout(gentle, 10, opts) == 10 * nuclei_timeout(gentle, 1, opts)
+    assert nuclei_timeout(normal, 1, opts) < nuclei_timeout(gentle, 1, opts)
+    assert nuclei_timeout(get_profile("aggressive"), 1, opts) == 1800   # нижняя граница
+    assert nuclei_timeout(gentle, 5, VulnOptions(overall_timeout_sec=60)) == 60
+
+
+def test_run_keeps_partial_findings_on_timeout():
+    def slow(cmd, stdin, timeout):
+        raise VulnScanTimeout(timeout, SAMPLE)
+
+    services = [ServiceInfo(host="10.0.0.5", port=8080, protocol="tcp", service="http")]
+    ctx = _ctx(services=services)
+    findings = VulnModule(runner=slow).run(ctx)
+    assert any(f.vuln_id == "CVE-2021-44228" for f in findings)
+    marker = [f for f in findings if f.vuln_id == "INFO:vuln-scan-timeout"]
+    assert len(marker) == 1 and marker[0].host == "10.0.0.5"
+    assert any(r["action"] == "nuclei_exec" and r["result"] == "timeout"
+               for r in ctx.audit.records)
+
+
+def test_subprocess_runner_turns_timeout_into_partial_result(monkeypatch):
+    from scanner.modules import vuln as vuln_mod
+
+    def fake_run(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, kw["timeout"], output=SAMPLE)
+
+    monkeypatch.setattr(vuln_mod.subprocess, "run", fake_run)
+    cmd = build_nuclei_command(get_profile("gentle"), VulnOptions())
+    try:
+        vuln_mod._subprocess_runner(cmd, "10.0.0.5:8080\n", 10.0)
+        assert False, "ожидался VulnScanTimeout"
+    except VulnScanTimeout as e:
+        assert e.partial_output == SAMPLE
