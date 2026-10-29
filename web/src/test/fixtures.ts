@@ -2,6 +2,8 @@ import type { FindingOut, MeOut } from "../api/types";
 
 export function finding(p: Partial<FindingOut> = {}): FindingOut {
   return {
+    id: 1,
+    dedup_key: "k1",
     module: "vuln",
     host: "10.0.0.1",
     port: 443,
@@ -15,6 +17,7 @@ export function finding(p: Partial<FindingOut> = {}): FindingOut {
     evidence: null,
     status: "open",
     detected_at: "2026-10-28T09:00:00",
+    false_positive: null,
     ...p,
   };
 }
@@ -23,7 +26,7 @@ export function me(roles: string[], permissions: string[]): MeOut {
   return { id: 1, username: "tester", display_name: "Тест Тестов", is_active: true, roles, permissions };
 }
 
-export const OPERATOR = ["view_engagements", "run_scan", "view_report"];
+export const OPERATOR = ["view_engagements", "run_scan", "view_report", "triage_findings"];
 export const ADMIN = ["manage_users", "manage_engagements", "manage_allowlist", "view_engagements", "view_report", "view_audit"];
 
 type Handler = (init: RequestInit | undefined, url: URL) => unknown | Response;

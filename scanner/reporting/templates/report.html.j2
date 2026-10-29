@@ -399,6 +399,22 @@
 {% endfor %}
 {% endfor %}
 
+{% if r.false_positives %}
+<h2><span class="n">{{ "%02d"|format(num.details + 1) }}</span>Ложные срабатывания</h2>
+<p class="lead">Находки, которые специалист отметил как ложные срабатывания. В подсчёты, план устранения и сравнение прогонов они не входят.</p>
+<table>
+  <colgroup><col style="width: 16%"><col style="width: 30%"><col style="width: 16%"><col style="width: 24%"><col style="width: 14%"></colgroup>
+  <tr><th>Опасность</th><th>Находка</th><th>Хост</th><th>Обоснование</th><th>Отметил</th></tr>
+  {% for v in r.false_positives %}
+  <tr><td>{{ sev(v.finding.severity) }}</td>
+    <td>{{ v.finding.title }}<div class="ids">{{ v.module_label }}{% if v.finding.vuln_id %} · {{ v.finding.vuln_id }}{% endif %}</div></td>
+    <td class="mono">{{ v.target }}</td>
+    <td>{{ v.mark.reason or "—" }}</td>
+    <td>{{ v.mark.marked_by or "—" }}{% if v.mark.marked_at %}<div class="ids">{{ v.mark.marked_at.strftime("%d.%m.%Y") }}</div>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
 <p class="footer-note">Отчёт сформирован по результатам авторизованного тестирования в рамках договора.
 Порядок и сроки устранения определяются политикой заказчика.</p>
 </body>

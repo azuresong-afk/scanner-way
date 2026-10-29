@@ -63,6 +63,19 @@ class Finding:
 
 
 @dataclass(slots=True)
+class FalsePositiveMark:
+    """Отметка «ложное срабатывание» на находке хоста.
+
+    Действует на уровне договора по dedup_key (хост+порт+vuln_id+модуль): та же
+    находка в следующих прогонах тоже считается ложной, пока отметку не снимут.
+    """
+    dedup_key: str
+    reason: str | None = None
+    marked_by: str | None = None         # имя пользователя
+    marked_at: datetime | None = None
+
+
+@dataclass(slots=True)
 class InstalledPackage:
     """Пакет, установленный на хосте (по данным менеджера пакетов)."""
     name: str

@@ -168,7 +168,7 @@ class RunOut(_Orm):
 
     @model_validator(mode="after")
     def _default_name(self) -> RunOut:
-        # Прогоны до миграции 0005 без имени — подпись по модулям.
+        # Прогоны до миграции 0006 без имени — подпись по модулям.
         if not self.name:
             self.name = run_title(self.modules, self.targets or ())
         return self
@@ -235,7 +235,35 @@ class ScheduleOut(_Orm):
         return self
 
 
+class FalsePositiveIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def _strip(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        return v or None
+
+
+class FalsePositiveMarkOut(BaseModel):
+    reason: str | None
+    marked_by: str | None
+    marked_at: datetime | None
+
+
+class FalsePositiveOut(FalsePositiveMarkOut):
+    """Действующая отметка договора (без привязки к прогону)."""
+    dedup_key: str
+    host: str
+    port: int | None
+    vuln_id: str | None
+    module: str
+    title: str
+
+
 class FindingOut(BaseModel):
+    id: int
+    dedup_key: str
     module: str
     host: str
     port: int | None
@@ -249,6 +277,7 @@ class FindingOut(BaseModel):
     evidence: str | None
     status: str | None
     detected_at: datetime
+    false_positive: FalsePositiveMarkOut | None = None
 
 
 class ServiceOut(BaseModel):

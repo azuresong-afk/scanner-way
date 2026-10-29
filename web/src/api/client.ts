@@ -177,6 +177,10 @@ export const api = {
     json<ReachabilityOut>(`/engagements/${engagementId}/reachability`, { method: "POST", ...body(data) }),
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),
   findings: (runId: number) => json<FindingOut[]>(`/runs/${runId}/findings`),
+  /** Отметить находку хоста как ложное срабатывание (действует и в следующих прогонах). */
+  markFalsePositive: (findingId: number, reason: string | null) =>
+    json<FindingOut>(`/findings/${findingId}/false-positive`, { method: "PUT", ...body({ reason }) }),
+  unmarkFalsePositive: (findingId: number) => json<FindingOut>(`/findings/${findingId}/false-positive`, { method: "DELETE" }),
   services: (runId: number) => json<ServiceOut[]>(`/runs/${runId}/services`),
   /** Пакеты, собранные инвентаризацией по учётной записи. */
   packages: (runId: number, host?: string) =>

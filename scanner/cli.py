@@ -389,9 +389,11 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
                 if prev_id is not None else None)
         context = ReportContext(customer=eng.client, engagement=eng.contract_ref or eng.name,
                                 run_id=args.run_id, previous_run_id=prev_id)
+        marks = repo.false_positive_marks(s, eng.id)
 
     report = build_report(current, previous=previous, historically_fixed=hist,
-                          resolver=_resolver(env, current), context=context)
+                          resolver=_resolver(env, current), context=context,
+                          false_positives=marks)
     variant = "brief" if args.brief else "full"
     try:
         body = ReportRenderer().render(report, args.format, variant=variant)

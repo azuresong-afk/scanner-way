@@ -375,7 +375,15 @@ export function DashboardPage() {
         <StartRunModal engagement={current} onClose={() => setStarting(false)} onStarted={(run) => navigate(`/runs/${run.id}`, { state: { created: run } })} onScheduled={() => navigate("/schedules")} />
       )}
       {open && (
-        <FindingDrawer finding={open} onClose={() => setOpen(null)} onHost={latest ? (h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${latest.id}`) : undefined} />
+        <FindingDrawer
+          finding={open}
+          onClose={() => setOpen(null)}
+          onHost={latest ? (h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${latest.id}`) : undefined}
+          onChanged={(u) => {
+            setOpen(u);
+            void data.reload();
+          }}
+        />
       )}
     </>
   );

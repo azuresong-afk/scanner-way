@@ -43,6 +43,7 @@ def test_migrations_create_schema(pg_factory):
     assert {"engagements", "targets_allowlist", "scan_runs", "host_results",
             "service_results", "findings", "audit_log", "reference_bdu_entry",
             "reference_nvd_cve", "reference_nvd_cpe_match", "scan_schedules",
+            "false_positives",
             "alembic_version"} <= tables
     engine.dispose()
 

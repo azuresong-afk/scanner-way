@@ -144,7 +144,7 @@ def test_legacy_run_without_name_gets_label(api, sqlite_factory):
     eid = api.engagement("10.0.0.0/24")
     op = api.user("op", "operator")
     rid = _run(api, eid, op, ["10.0.0.1"]).json()["id"]
-    with sqlite_factory() as s:     # как прогон до миграции 0005
+    with sqlite_factory() as s:     # как прогон до миграции 0006
         run = s.get(ScanRun, rid)
         run.name, run.targets = None, []
         s.commit()

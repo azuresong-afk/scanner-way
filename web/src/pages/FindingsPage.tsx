@@ -9,7 +9,7 @@ import { FindingsTable } from "../components/FindingsTable";
 import { RunPicker } from "../components/RunPicker";
 import { Empty, ErrorAlert, Loading } from "../components/ui";
 import { MODULE_LABEL, SEVERITIES, SEVERITY_LABEL, STATUS_LABEL } from "../lib/labels";
-import { applyFilter, byHost, emptyFilter, type FindingFilter } from "../lib/stats";
+import { applyFilter, byHost, emptyFilter, isFalsePositive, replaceFinding, type FindingFilter } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
 import { useRunSelection } from "../lib/useRunSelection";
 
@@ -33,15 +33,20 @@ export function FindingsPage() {
     return f;
   });
   const [includeInfo, setIncludeInfo] = useState(false);
+  const [includeFp, setIncludeFp] = useState(false);
   const [grouped, setGrouped] = useState(false);
   const [open, setOpen] = useState<FindingOut | null>(null);
 
-  const all = useMemo(() => (findings.data ?? []).filter((f) => includeInfo || f.severity !== "info"), [findings.data, includeInfo]);
+  const all = useMemo(
+    () => (findings.data ?? []).filter((f) => (includeInfo || f.severity !== "info") && (includeFp || !isFalsePositive(f))),
+    [findings.data, includeInfo, includeFp],
+  );
+  const fpCount = useMemo(() => (findings.data ?? []).filter(isFalsePositive).length, [findings.data]);
   const shown = useMemo(() => applyFilter(all, filter), [all, filter]);
   const groups = useMemo(() => (grouped ? byHost(shown) : []), [grouped, shown]);
   const sevCounts = useMemo(() => {
     const c: Record<string, number> = {};
-    for (const f of all) c[f.severity] = (c[f.severity] ?? 0) + 1;
+    for (const f of all) if (!isFalsePositive(f)) c[f.severity] = (c[f.severity] ?? 0) + 1;
     return c;
   }, [all]);
   const modules = useMemo(() => [...new Set(all.map((f) => f.module))].sort(), [all]);
@@ -89,6 +94,10 @@ export function FindingsPage() {
               <label className="check" style={{ alignItems: "center" }}>
                 <input type="checkbox" checked={includeInfo} onChange={(e) => setIncludeInfo(e.target.checked)} />
                 Информационные
+              </label>
+              <label className="check" style={{ alignItems: "center" }}>
+                <input type="checkbox" checked={includeFp} onChange={(e) => setIncludeFp(e.target.checked)} />
+                Ложные срабатывания <span className="faint">{fpCount}</span>
               </label>
               <label className="check" style={{ alignItems: "center" }}>
                 <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
@@ -176,7 +185,15 @@ export function FindingsPage() {
         </>
       )}
       {open && run && (
-        <FindingDrawer finding={open} onClose={() => setOpen(null)} onHost={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${run.id}`)} />
+        <FindingDrawer
+          finding={open}
+          onClose={() => setOpen(null)}
+          onHost={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${run.id}`)}
+          onChanged={(u) => {
+            findings.setData(replaceFinding(findings.data ?? [], u));
+            setOpen(u);
+          }}
+        />
       )}
     </>
   );
