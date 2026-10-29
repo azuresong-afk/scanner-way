@@ -94,11 +94,52 @@ class AllowlistOut(_Orm):
         return str(v)      # psycopg отдаёт CIDR как ipaddress.IPv4Network
 
 
+# ---- учётные записи активов ----
+class CredentialIn(BaseModel):
+    """Учётка для инвентаризации по SSH. Секреты только на вход — API их не отдаёт."""
+    name: str = Field(min_length=1, max_length=128)
+    username: str = Field(min_length=1, max_length=128)
+    auth: str = Field(pattern="^(password|key)$")
+    port: int = Field(default=22, ge=1, le=65535)
+    password: str | None = Field(default=None, min_length=1, max_length=1024)
+    private_key: str | None = Field(default=None, min_length=1, max_length=16384)
+    passphrase: str | None = Field(default=None, max_length=1024)
+    # IP/подсети из allowlist договора; пусто — все цели прогона
+    targets: list[str] = Field(default_factory=list, max_length=256)
+
+    def __repr__(self) -> str:      # секреты не должны попасть в логи
+        return f"CredentialIn(name={self.name!r}, username={self.username!r}, auth={self.auth!r})"
+
+    __str__ = __repr__
+
+
+class CredentialOut(_Orm):
+    id: int
+    engagement_id: int
+    name: str
+    username: str
+    auth: str
+    port: int
+    targets: list[str]
+    key_fingerprint: str | None
+    created_by: int | None
+    created_at: datetime | None
+
+    @field_validator("targets", mode="before")
+    @classmethod
+    def _targets_str(cls, v: object) -> list[str]:
+        return [str(x) for x in (v or [])]
+
+
 # ---- runs ----
 class RunCreate(BaseModel):
     targets: list[str] = Field(min_length=1, max_length=1024)
     modules: list[str] = Field(min_length=1)
     rate_profile: str = "gentle"
+    # Движок поиска уязвимостей: nuclei (сеть, без учётки) | credentialed (пакеты
+    # по учётной записи) | both. Если задан — заменяет vuln/auth_inventory в modules.
+    vuln_engine: str | None = Field(default=None, pattern="^(nuclei|credentialed|both)$")
+    credential_ids: list[int] = Field(default_factory=list, max_length=32)
 
 
 class DeniedTargetOut(BaseModel):
@@ -112,6 +153,7 @@ class RunOut(_Orm):
     engagement_id: int
     modules: list[str]
     rate_profile: str
+    credential_ids: list[int] = Field(default_factory=list)
     status: str
     started_by: int | None
     started_at: datetime | None
@@ -156,6 +198,17 @@ class InventoryHostOut(BaseModel):
     run_ids: list[int]
     services_run_id: int | None
     services: list[ServiceOut]
+    # Последний прогон, где хост инвентаризирован по учётной записи, и число пакетов
+    packages_run_id: int | None = None
+    package_count: int = 0
+
+
+class PackageOut(BaseModel):
+    host: str
+    manager: str
+    name: str
+    version: str
+    arch: str | None
 
 
 # ---- audit ----

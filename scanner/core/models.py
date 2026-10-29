@@ -60,3 +60,29 @@ class Finding:
         """Стабильный ключ для сравнения прогонов: host+port+vuln_id+module."""
         raw = f"{self.host}|{self.port}|{self.vuln_id}|{self.module}"
         return hashlib.sha256(raw.encode()).hexdigest()
+
+
+@dataclass(slots=True)
+class InstalledPackage:
+    """Пакет, установленный на хосте (по данным менеджера пакетов)."""
+    name: str
+    version: str             # как отдаёт менеджер: с эпохой и ревизией дистрибутива
+    manager: str             # dpkg | rpm | apk
+    arch: str | None = None
+
+
+@dataclass(slots=True)
+class HostInventory:
+    """Результат аутентифицированной инвентаризации одного хоста."""
+    host: str
+    os_id: str | None = None             # ID из /etc/os-release (debian, rhel, astra…)
+    os_name: str | None = None           # PRETTY_NAME
+    os_version: str | None = None        # VERSION_ID
+    kernel: str | None = None            # uname -srm
+    hostname: str | None = None
+    packages: list[InstalledPackage] = field(default_factory=list)
+    credential_id: int | None = None     # какой учёткой собрано (без секретов)
+
+    @property
+    def os_label(self) -> str | None:
+        return self.os_name or " ".join(p for p in (self.os_id, self.os_version) if p) or None

@@ -66,7 +66,7 @@ def test_api_end_to_end_on_postgres(pg_factory):  # noqa: F811
 
     with pg_factory() as s:
         roles = set(s.scalars(text("SELECT name FROM roles")))
-        assert roles == {"admin", "operator", "auditor", "cred_audit"}
+        assert roles == {"admin", "operator", "auditor", "cred_audit", "host_credentials"}
         actions = set(s.scalars(text("SELECT action FROM audit_log")))
         assert {"login", "user_create", "allowlist_add", "scan_queue", "deny",
                 "scan_finish", "export", "access_denied"} <= actions

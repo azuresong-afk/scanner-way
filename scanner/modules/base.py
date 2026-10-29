@@ -1,16 +1,17 @@
 """Общий интерфейс сканирующего модуля.
 
-Все модули (discovery, vuln, config_audit, cred_audit) реализуют ScanModule.
+Все модули (discovery, vuln, auth_inventory, config_audit, cred_audit) реализуют ScanModule.
 Оркестратор передаёт им ТОЛЬКО отфильтрованные allowlist-ом цели и профиль
 лимитов; модуль возвращает список нормализованных Finding.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from scanner.core.audit import AuditSink
-from scanner.core.models import Finding, ServiceInfo
+from scanner.core.credentials import HostCredential
+from scanner.core.models import Finding, HostInventory, ServiceInfo
 from scanner.core.ratelimit import RateProfile
 
 
@@ -22,6 +23,12 @@ class ScanContext:
     rate: RateProfile
     audit: AuditSink
     services: list[ServiceInfo] | None = None  # результат discovery для след. модулей
+    # Учётные записи активов, выбранные для прогона (расшифрованы оркестратором).
+    credentials: list[HostCredential] = field(default_factory=list)
+    # Результат аутентифицированной инвентаризации: хост -> ОС и пакеты.
+    inventory: dict[str, HostInventory] = field(default_factory=dict)
+    # Модули, уже отработавшие без ошибки (оркестратор дополняет по ходу прогона).
+    completed: set[str] = field(default_factory=set)
 
 
 class ScanModule(ABC):

@@ -75,6 +75,25 @@ class AllowlistEntry(Base):
     added_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
 
 
+# ========== Учётные записи активов ==========
+class HostCredentialRow(Base):
+    """Учётка для аутентифицированной инвентаризации. Секреты — только в
+    secret_enc (зашифрованы CredentialVault), наружу не отдаются."""
+    __tablename__ = "host_credentials"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    auth: Mapped[str] = mapped_column(Text)              # password | key
+    username: Mapped[str] = mapped_column(Text)
+    port: Mapped[int] = mapped_column(Integer, default=22)
+    targets: Mapped[list[str]] = mapped_column(TextArray, default=list)
+    secret_enc: Mapped[str] = mapped_column(Text)
+    key_fingerprint: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+
+
 # ========== Прогоны ==========
 class ScanRun(Base):
     __tablename__ = "scan_runs"
@@ -84,6 +103,8 @@ class ScanRun(Base):
     started_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     modules: Mapped[list[str]] = mapped_column(TextArray)
     rate_profile: Mapped[str] = mapped_column(Text, default="gentle")
+    # Учётные записи активов, выбранные для прогона (host_credentials.id).
+    credential_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
     status: Mapped[str] = mapped_column(Text, default="pending")
     started_at: Mapped[datetime | None] = mapped_column(TsTz)
     finished_at: Mapped[datetime | None] = mapped_column(TsTz)
@@ -112,6 +133,19 @@ class ServiceResult(Base):
     product: Mapped[str | None] = mapped_column(Text)
     version: Mapped[str | None] = mapped_column(Text)
     cpe: Mapped[str | None] = mapped_column(Text)
+
+
+class HostPackageRow(Base):
+    """Установленный пакет хоста (аутентифицированная инвентаризация)."""
+    __tablename__ = "host_packages"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    scan_run_id: Mapped[int] = mapped_column(
+        ForeignKey("scan_runs.id", ondelete="CASCADE"), index=True)
+    host: Mapped[str] = mapped_column(Inet)
+    manager: Mapped[str] = mapped_column(Text)            # dpkg | rpm | apk
+    name: Mapped[str] = mapped_column(Text)
+    version: Mapped[str] = mapped_column(Text)
+    arch: Mapped[str | None] = mapped_column(Text)
 
 
 # ========== Находки ==========

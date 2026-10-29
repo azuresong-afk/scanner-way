@@ -66,10 +66,51 @@ export interface AllowlistOut {
   added_at: string | null;
 }
 
+/** Движок поиска уязвимостей: сетевые проверки Nuclei и/или пакеты по учётной записи. */
+export type VulnEngine = "nuclei" | "credentialed" | "both";
+
 export interface RunCreate {
   targets: string[];
   modules: string[];
   rate_profile: string;
+  vuln_engine?: VulnEngine;
+  credential_ids?: number[];
+}
+
+export type CredentialAuth = "password" | "key";
+
+/** Учётка актива на вход. Секреты API принимает, но никогда не отдаёт. */
+export interface CredentialIn {
+  name: string;
+  username: string;
+  auth: CredentialAuth;
+  port?: number;
+  password?: string;
+  private_key?: string;
+  passphrase?: string;
+  targets?: string[];
+}
+
+export interface CredentialOut {
+  id: number;
+  engagement_id: number;
+  name: string;
+  username: string;
+  auth: CredentialAuth;
+  port: number;
+  /** CIDR области действия; пусто — все цели прогона. */
+  targets: string[];
+  key_fingerprint: string | null;
+  created_by: number | null;
+  created_at: string | null;
+}
+
+export interface PackageOut {
+  host: string;
+  manager: string;
+  name: string;
+  version: string;
+  arch: string | null;
 }
 
 export interface DeniedTarget {
@@ -83,6 +124,7 @@ export interface RunOut {
   engagement_id: number;
   modules: string[];
   rate_profile: string;
+  credential_ids: number[];
   status: RunStatus;
   started_by: number | null;
   started_at: string | null;
@@ -130,6 +172,9 @@ export interface InventoryHostOut {
   /** Прогон, из которого взяты сервисы (последний, где они были). */
   services_run_id: number | null;
   services: ServiceOut[];
+  /** Последний прогон с инвентаризацией по учётной записи и число пакетов хоста. */
+  packages_run_id: number | null;
+  package_count: number;
 }
 
 export type AuditExportFormat = "csv" | "json";

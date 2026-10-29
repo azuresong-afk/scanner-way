@@ -241,4 +241,24 @@ def parse_bdu_versions(versions: str | None) -> list[BduVersionSpec]:
                 end_inclusive=bool(m.group("incl"))))
         else:
             specs.append(BduVersionSpec(software, exact=expr))
-    return specs
+    return _join_split_ranges(specs)
+
+
+def _join_split_ranges(specs: list[BduVersionSpec]) -> list[BduVersionSpec]:
+    """«от 7.62.0 (Libcurl), до 7.64.1 включительно (Libcurl)» — один диапазон.
+
+    В выгрузке БДУ границы диапазона нередко записаны двумя соседними
+    позициями. По отдельности «от 7.62.0» означало бы «все версии начиная с
+    7.62.0» — и любая новая версия ложно попадала бы в уязвимые.
+    """
+    out: list[BduVersionSpec] = []
+    for spec in specs:
+        prev = out[-1] if out else None
+        if (prev is not None and prev.software == spec.software
+                and prev.start and not prev.end and not prev.exact
+                and spec.end and not spec.start and not spec.exact):
+            out[-1] = BduVersionSpec(spec.software, start=prev.start, end=spec.end,
+                                     end_inclusive=spec.end_inclusive)
+        else:
+            out.append(spec)
+    return out

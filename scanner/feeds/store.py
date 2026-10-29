@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -44,6 +45,7 @@ class ReferenceStore(Protocol):
     def bdu_by_cve(self, cve_id: str) -> list[BduRecord]: ...
     def cpe_matches(self, product: str) -> list[CpeMatch]: ...
     def bdu_by_software(self, name: str) -> list[BduRecord]: ...
+    def bdu_software_names(self) -> set[str]: ...
 
 
 # ---------- In-memory ----------
@@ -98,6 +100,9 @@ class InMemoryReferenceStore:
 
     def bdu_by_software(self, name: str) -> list[BduRecord]:
         return [self.bdu[i] for i in sorted(self._bdu_by_soft.get(normalize_name(name), ()))]
+
+    def bdu_software_names(self) -> set[str]:
+        return {n for n, ids in self._bdu_by_soft.items() if ids}
 
 
 # ---------- SQL (PostgreSQL / SQLite) ----------
@@ -369,3 +374,67 @@ class SqlReferenceStore:
             if any(normalize_name(s.software) == norm for s in parse_bdu_versions(rec.versions)):
                 out.append(rec)
         return out
+
+    def bdu_software_names(self) -> set[str]:
+        """Нормализованные названия ПО из «Версия ПО» всех записей БДУ.
+
+        Полный проход по справочнику (~100 тыс. записей — секунды): вызывать
+        один раз на прогон (см. CachingReferenceStore).
+        """
+        names: set[str] = set()
+        with self.engine.connect() as conn:
+            for (versions,) in conn.execute(select(bdu_entry.c.versions)):
+                names.update(normalize_name(s.software) for s in parse_bdu_versions(versions))
+        names.discard("")
+        return names
+
+
+# ---------- Кэш на время прогона ----------
+
+class CachingReferenceStore:
+    """Только чтение с запоминанием ответов — для одного прогона.
+
+    Инвентаризация сотен хостов спрашивает справочник об одних и тех же
+    пакетах (OpenSSH, OpenSSL…), а поиск БДУ по названию ПО — это LIKE по всей
+    таблице. Кэш живёт столько же, сколько модуль прогона, поэтому свежая
+    загрузка справочников видна со следующего прогона.
+    """
+
+    def __init__(self, store: ReferenceStore):
+        self.store = store
+        self._cache: dict[tuple, Any] = {}
+        self._names: set[str] | None = None
+        self._lock = threading.Lock()      # хосты инвентаризуются параллельно
+
+    def _get(self, method: str, key: str):
+        k = (method, key.upper())
+        if k not in self._cache:
+            self._cache[k] = getattr(self.store, method)(key)
+        return self._cache[k]
+
+    def upsert_bdu(self, records: Iterable[BduRecord]) -> int:  # pragma: no cover
+        raise TypeError("CachingReferenceStore is read-only")
+
+    def upsert_nvd(self, records: Iterable[NvdRecord]) -> int:  # pragma: no cover
+        raise TypeError("CachingReferenceStore is read-only")
+
+    def get_nvd(self, cve_id: str) -> NvdRecord | None:
+        return self._get("get_nvd", cve_id)
+
+    def get_bdu(self, bdu_id: str) -> BduRecord | None:
+        return self._get("get_bdu", bdu_id)
+
+    def bdu_by_cve(self, cve_id: str) -> list[BduRecord]:
+        return self._get("bdu_by_cve", cve_id)
+
+    def cpe_matches(self, product: str) -> list[CpeMatch]:
+        return self._get("cpe_matches", product)
+
+    def bdu_by_software(self, name: str) -> list[BduRecord]:
+        return self._get("bdu_by_software", name)
+
+    def bdu_software_names(self) -> set[str]:
+        with self._lock:
+            if self._names is None:
+                self._names = set(self.store.bdu_software_names())
+        return self._names

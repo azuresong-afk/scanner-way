@@ -10,7 +10,10 @@
   * operator — запуск/остановка прогонов, просмотр;
   * auditor  — только просмотр и экспорт отчётов, журнал аудита;
   * cred_audit — отдельное право на модуль аудита учётных данных. Не входит ни
-    в одну базовую роль (включая admin) и выдаётся явно, вдобавок к operator.
+    в одну базовую роль (включая admin) и выдаётся явно, вдобавок к operator;
+  * host_credentials — отдельное право на учётные записи активов: заводить и
+    удалять учётки договора и запускать с ними инвентаризацию по учётной
+    записи (модуль auth_inventory). Тоже выдаётся только явно.
 """
 from __future__ import annotations
 
@@ -31,6 +34,7 @@ class Perm(enum.StrEnum):
     VIEW_REPORT = "view_report"
     VIEW_AUDIT = "view_audit"
     CRED_AUDIT = "cred_audit"
+    HOST_CREDENTIALS = "host_credentials"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Perm]] = {
@@ -40,10 +44,12 @@ ROLE_PERMISSIONS: dict[str, frozenset[Perm]] = {
     "operator": frozenset({Perm.VIEW_ENGAGEMENTS, Perm.RUN_SCAN, Perm.VIEW_REPORT}),
     "auditor": frozenset({Perm.VIEW_ENGAGEMENTS, Perm.VIEW_REPORT, Perm.VIEW_AUDIT}),
     "cred_audit": frozenset({Perm.CRED_AUDIT}),
+    "host_credentials": frozenset({Perm.HOST_CREDENTIALS}),
 }
 
 # Модуль -> дополнительное право сверх run_scan.
-MODULE_PERMISSIONS: dict[str, Perm] = {"cred_audit": Perm.CRED_AUDIT}
+MODULE_PERMISSIONS: dict[str, Perm] = {"cred_audit": Perm.CRED_AUDIT,
+                                       "auth_inventory": Perm.HOST_CREDENTIALS}
 
 
 user_roles = Table(

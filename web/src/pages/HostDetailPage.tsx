@@ -4,7 +4,7 @@ import { Radar } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
-import type { FindingOut } from "../api/types";
+import type { FindingOut, PackageOut } from "../api/types";
 import { SeverityBars } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { FindingsTable } from "../components/FindingsTable";
@@ -22,8 +22,13 @@ export function HostDetailPage() {
   const { runs, run, setRun, loading, error } = useRunSelection();
   const data = useAsync(
     async () => {
-      const [findings, services] = await Promise.all([api.findings(run!.id), api.services(run!.id)]);
-      return { findings: findings.filter((f) => f.host === host), services: services.filter((s) => s.host === host) };
+      const withPackages = run!.modules.includes("auth_inventory");
+      const [findings, services, packages] = await Promise.all([
+        api.findings(run!.id),
+        api.services(run!.id),
+        withPackages ? api.packages(run!.id, host) : Promise.resolve([]),
+      ]);
+      return { findings: findings.filter((f) => f.host === host), services: services.filter((s) => s.host === host), packages };
     },
     [run?.id, host],
     !!run,
@@ -95,6 +100,7 @@ export function HostDetailPage() {
             </div>
             {row.findings.length ? <FindingsTable findings={row.findings} onOpen={setOpen} selected={open} hideHost /> : <Empty title="Уязвимостей не найдено" />}
           </section>
+          {data.data!.packages.length > 0 && <PackagesCard packages={data.data!.packages} />}
           {info.length > 0 && (
             <details className="card">
               <summary style={{ padding: "14px 20px", cursor: "pointer", fontWeight: 600 }}>Информационные находки ({info.length})</summary>
@@ -110,5 +116,44 @@ export function HostDetailPage() {
         </Modal>
       )}
     </>
+  );
+}
+
+/** Установленные пакеты хоста (инвентаризация по учётной записи), с поиском. */
+function PackagesCard({ packages }: { packages: PackageOut[] }) {
+  const [q, setQ] = useState("");
+  const needle = q.trim().toLowerCase();
+  const shown = needle ? packages.filter((p) => p.name.toLowerCase().includes(needle) || p.version.toLowerCase().includes(needle)) : packages;
+  return (
+    <details className="card">
+      <summary style={{ padding: "14px 20px", cursor: "pointer", fontWeight: 600 }}>
+        Установленные пакеты ({packages.length}) — по учётной записи
+      </summary>
+      <div style={{ padding: "0 20px 12px" }}>
+        <input className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск по имени или версии" aria-label="Поиск пакета" />
+      </div>
+      <div className="table-wrap" style={{ maxHeight: 480, overflowY: "auto" }}>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Пакет</th>
+              <th>Версия</th>
+              <th>Архитектура</th>
+              <th>Менеджер</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.slice(0, 2000).map((p) => (
+              <tr key={`${p.manager}:${p.name}:${p.version}`}>
+                <td className="mono">{p.name}</td>
+                <td className="mono muted">{p.version}</td>
+                <td className="muted">{p.arch ?? "—"}</td>
+                <td className="muted">{p.manager}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }

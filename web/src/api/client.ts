@@ -6,11 +6,14 @@ import type {
   AuditExportFormat,
   AuditFilters,
   AuditOut,
+  CredentialIn,
+  CredentialOut,
   EngagementIn,
   EngagementOut,
   FindingOut,
   InventoryHostOut,
   MeOut,
+  PackageOut,
   ReachabilityIn,
   ReachabilityOut,
   ReportFormat,
@@ -151,6 +154,12 @@ export const api = {
   removeAllowlist: (engagementId: number, entryId: number) =>
     request(`/engagements/${engagementId}/allowlist/${entryId}`, { method: "DELETE" }).then(() => undefined),
 
+  credentials: (engagementId: number) => json<CredentialOut[]>(`/engagements/${engagementId}/credentials`),
+  createCredential: (engagementId: number, data: CredentialIn) =>
+    json<CredentialOut>(`/engagements/${engagementId}/credentials`, { method: "POST", ...body(data) }),
+  deleteCredential: (engagementId: number, credentialId: number) =>
+    request(`/engagements/${engagementId}/credentials/${credentialId}`, { method: "DELETE" }).then(() => undefined),
+
   runs: (engagementId: number) => json<RunOut[]>(`/engagements/${engagementId}/runs`),
   run: (id: number) => json<RunOut>(`/runs/${id}`),
   startRun: (engagementId: number, data: RunCreate) =>
@@ -160,6 +169,9 @@ export const api = {
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),
   findings: (runId: number) => json<FindingOut[]>(`/runs/${runId}/findings`),
   services: (runId: number) => json<ServiceOut[]>(`/runs/${runId}/services`),
+  /** Пакеты, собранные инвентаризацией по учётной записи. */
+  packages: (runId: number, host?: string) =>
+    json<PackageOut[]>(`/runs/${runId}/packages${host ? `?host=${encodeURIComponent(host)}` : ""}`),
   /** Инвентарь договора — не зависит от прогона. */
   hosts: (engagementId: number) => json<InventoryHostOut[]>(`/engagements/${engagementId}/hosts`),
 

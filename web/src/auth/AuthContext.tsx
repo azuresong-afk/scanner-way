@@ -10,7 +10,8 @@ export type Perm =
   | "run_scan"
   | "view_report"
   | "view_audit"
-  | "cred_audit";
+  | "cred_audit"
+  | "host_credentials";
 
 interface AuthValue {
   me: MeOut | null;

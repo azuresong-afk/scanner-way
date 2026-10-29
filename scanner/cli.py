@@ -5,6 +5,10 @@
     scanner run --engagement 1 --targets 10.0.0.0/28 10.0.0.50 --modules discovery vuln \\
                 --confirm-authorized
     scanner report --run 7 --format pdf [--out report.pdf] [--brief]
+    scanner credentials add --engagement 1 --name "root на 10.0.0.0/24" --user audit \
+                --key-file ~/.ssh/id_ed25519 [--targets 10.0.0.0/24]
+    scanner run --engagement 1 --targets 10.0.0.0/24 --engine credentialed --credential 1 \
+                --confirm-authorized --allow-credentials
 
 БД — `--db-url` / `SCANNER_DATABASE_URL`, иначе Postgres из настроек окружения.
 Перед каждой командой схема поднимается миграциями Alembic (`alembic upgrade
@@ -15,7 +19,10 @@ head`); SQLite (офлайн-стенд, тесты) Alembic не поддерж
 него отбрасываются и пишутся в аудит. CLI сам по себе не расширяет права:
 договор и allowlist заводит admin (API), а запуск требует явного
 подтверждения, что работы проводятся в рамках договора; модуль cred_audit —
-отдельного флага. Все действия CLI пишутся в `audit_log` от имени `--actor`.
+отдельного флага, как и использование учётных записей активов
+(`--allow-credentials`). Пароль учётки CLI не принимает в аргументах (он попал
+бы в историю shell и в список процессов) — только из запроса или переменной
+окружения. Все действия CLI пишутся в `audit_log` от имени `--actor`.
 """
 from __future__ import annotations
 
@@ -29,7 +36,7 @@ from pathlib import Path
 
 from sqlalchemy.engine import Engine
 
-from scanner.core.orchestrator import MODULE_ORDER
+from scanner.core.orchestrator import MODULE_ORDER, VULN_ENGINES
 from scanner.core.ratelimit import PROFILES
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
@@ -107,7 +114,45 @@ def build_parser() -> argparse.ArgumentParser:
                      help="подтверждаю: работы по целям разрешены договором")
     run.add_argument("--allow-cred-audit", action="store_true",
                      help="подтверждаю: проверка учётных данных согласована с заказчиком")
+    run.add_argument("--engine", choices=sorted(VULN_ENGINES),
+                     help="движок поиска уязвимостей: nuclei — сетевые проверки, "
+                          "credentialed — пакеты по учётной записи, both — оба "
+                          "(заменяет vuln/auth_inventory в --modules)")
+    run.add_argument("--credential", type=int, action="append", default=[],
+                     dest="credentials", metavar="ID",
+                     help="учётная запись актива для auth_inventory (можно несколько)")
+    run.add_argument("--allow-credentials", action="store_true",
+                     help="подтверждаю: вход на активы по учётным записям согласован "
+                          "с заказчиком")
     run.set_defaults(handler=cmd_run)
+
+    # --- credentials ---
+    cred = sub.add_parser("credentials", help="учётные записи активов договора")
+    csub = cred.add_subparsers(dest="credentials_command", required=True, metavar="action")
+    cadd = csub.add_parser("add", help="завести учётку (SSH: пароль или ключ)")
+    cadd.add_argument("--engagement", required=True, type=int, help="id договора")
+    cadd.add_argument("--name", required=True, help="название учётки")
+    cadd.add_argument("--user", required=True, dest="username", help="логин на активе")
+    cadd.add_argument("--port", type=int, default=22, help="порт SSH (по умолчанию 22)")
+    auth = cadd.add_mutually_exclusive_group(required=True)
+    auth.add_argument("--key-file", type=Path, help="закрытый ключ SSH (OpenSSH/PEM)")
+    auth.add_argument("--password-env", metavar="VAR",
+                      help="взять пароль из переменной окружения VAR")
+    auth.add_argument("--ask-password", action="store_true",
+                      help="запросить пароль с терминала")
+    cadd.add_argument("--passphrase-env", metavar="VAR",
+                      help="парольная фраза ключа из переменной окружения VAR")
+    cadd.add_argument("--targets", nargs="+", default=[],
+                      help="область действия: IP/подсети из allowlist договора "
+                           "(по умолчанию — все цели прогона)")
+    cadd.set_defaults(handler=cmd_credentials_add)
+    clist = csub.add_parser("list", help="учётки договора (без секретов)")
+    clist.add_argument("--engagement", required=True, type=int, help="id договора")
+    clist.set_defaults(handler=cmd_credentials_list)
+    cdel = csub.add_parser("delete", help="удалить учётку")
+    cdel.add_argument("--engagement", required=True, type=int, help="id договора")
+    cdel.add_argument("--id", required=True, type=int, dest="credential_id")
+    cdel.set_defaults(handler=cmd_credentials_delete)
 
     # --- report ---
     rep = sub.add_parser("report", help="выгрузить отчёт по завершённому прогону")
@@ -230,19 +275,13 @@ def cmd_sync_nvd(args: argparse.Namespace, env: _Env) -> int:
 
 
 def _registry(env: _Env):
-    """Реестр модулей; находки vuln обогащаются CVE/БДУ из справочника в БД."""
+    """Реестр модулей; находки vuln и пакеты auth_inventory сопоставляются
+    с CVE/БДУ из справочника в БД."""
     from scanner.core.orchestrator import default_module_registry
     from scanner.feeds.matcher import VulnMatcher
     from scanner.feeds.store import SqlReferenceStore
 
-    registry = default_module_registry()
-
-    def vuln():
-        from scanner.modules.vuln import VulnModule
-        return VulnModule(matcher=VulnMatcher(SqlReferenceStore(env.engine)))
-
-    registry["vuln"] = vuln
-    return registry
+    return default_module_registry(matcher=VulnMatcher(SqlReferenceStore(env.engine)))
 
 
 def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
@@ -253,9 +292,16 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
     if not args.confirm_authorized:
         raise CliError("запуск только по целям из договора: подтвердите флагом "
                        "--confirm-authorized")
+    if args.engine:
+        engine_modules = {m for ms in VULN_ENGINES.values() for m in ms}
+        args.modules = [*(m for m in args.modules if m not in engine_modules),
+                        *VULN_ENGINES[args.engine]]
     if "cred_audit" in args.modules and not args.allow_cred_audit:
         raise CliError("cred_audit требует отдельного согласования: добавьте "
                        "--allow-cred-audit")
+    if ("auth_inventory" in args.modules or args.credentials) and not args.allow_credentials:
+        raise CliError("вход на активы по учётным записям требует отдельного "
+                       "согласования: добавьте --allow-credentials")
 
     with session_scope(env.sessions) as s:
         eng = s.get(Engagement, args.engagement)
@@ -279,11 +325,15 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
                                   "reason": "no_allowed_targets"})
         raise CliError("ни одна цель не входит в allowlist договора — прогон не запущен")
 
+    try:
+        svc.check_credentials(args.engagement, args.modules, args.credentials)
+    except ValueError as e:
+        raise CliError(str(e)) from e
     print(f"Договор: {eng_label}. Целей к проверке: {len(plan.allowed)}, "
           f"модули: {' '.join(args.modules)}, профиль: {args.rate}")
     run_id = svc.submit(engagement_id=args.engagement, modules=args.modules,
                         rate_profile=args.rate, requested_targets=args.targets,
-                        actor=env.actor)
+                        actor=env.actor, credential_ids=args.credentials)
     with session_scope(env.sessions) as s:
         status = repo.get_scan_run(s, run_id).status
         findings = len(repo.get_findings(s, run_id))
@@ -353,6 +403,94 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
                                            "previous_run_id": prev_id,
                                            "findings": len(current), "file": out.name})
     print(f"Отчёт: {out} ({len(body)} байт, находок — {len(current)})")
+    return 0
+
+
+def _vault():
+    from scanner.core.credentials import load_vault
+    vault = load_vault()
+    if vault is None:
+        raise CliError("не задан ключ шифрования учётных записей: SCANNER_CREDENTIALS_KEY "
+                       "(или SCANNER_API_SECRET), не короче 16 символов")
+    return vault
+
+
+def _engagement_or_fail(env: _Env, engagement_id: int) -> None:
+    from scanner.core.db import Engagement, session_scope
+    with session_scope(env.sessions) as s:
+        if s.get(Engagement, engagement_id) is None:
+            raise CliError(f"договор {engagement_id} не найден")
+
+
+def cmd_credentials_add(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.core import repository as repo
+    from scanner.core.credentials import AUTH_KEY, AUTH_PASSWORD, CredentialError
+    from scanner.core.db import session_scope
+
+    vault = _vault()
+    _engagement_or_fail(env, args.engagement)
+    password = private_key = passphrase = None
+    if args.key_file:
+        if not args.key_file.is_file():
+            raise CliError(f"файл ключа не найден: {args.key_file}")
+        auth, private_key = AUTH_KEY, args.key_file.read_text()
+        if args.passphrase_env:
+            passphrase = os.environ.get(args.passphrase_env) or None
+    else:
+        auth = AUTH_PASSWORD
+        password = (os.environ.get(args.password_env) if args.password_env
+                    else getpass.getpass(f"Пароль {args.username}: "))
+        if not password:
+            raise CliError("пустой пароль")
+    try:
+        with session_scope(env.sessions) as s:
+            cid = repo.create_host_credential(
+                s, vault, engagement_id=args.engagement, name=args.name, auth=auth,
+                username=args.username, port=args.port, targets=args.targets,
+                password=password, private_key=private_key, passphrase=passphrase)
+            row = repo.list_host_credentials(s, args.engagement)[-1]
+            fingerprint, targets = row.key_fingerprint, list(row.targets or [])
+    except CredentialError as e:
+        raise CliError(str(e)) from e
+    env.audit.record(subject=env.actor, action="credential_create",
+                     target=f"engagement:{args.engagement}", result="ok",
+                     details={"credential_id": cid, "name": args.name,
+                              "user": args.username, "port": args.port, "auth": auth,
+                              "targets": targets, "key_fingerprint": fingerprint})
+    print(f"Учётная запись {cid} заведена: {args.username}, порт {args.port}, {auth}"
+          + (f", {fingerprint}" if fingerprint else ""))
+    return 0
+
+
+def cmd_credentials_list(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.core import repository as repo
+    from scanner.core.db import session_scope
+
+    _engagement_or_fail(env, args.engagement)
+    with session_scope(env.sessions) as s:
+        rows = repo.list_host_credentials(s, args.engagement)
+        for r in rows:
+            scope = ", ".join(str(t) for t in r.targets or []) or "все цели прогона"
+            print(f"{r.id}\t{r.name}\t{r.username}:{r.port}\t{r.auth}\t{scope}"
+                  + (f"\t{r.key_fingerprint}" if r.key_fingerprint else ""))
+    if not rows:
+        print("У договора нет учётных записей.")
+    return 0
+
+
+def cmd_credentials_delete(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.core.db import HostCredentialRow, session_scope
+
+    with session_scope(env.sessions) as s:
+        row = s.get(HostCredentialRow, args.credential_id)
+        if row is None or row.engagement_id != args.engagement:
+            raise CliError(f"учётная запись {args.credential_id} не найдена в договоре")
+        name = row.name
+        s.delete(row)
+    env.audit.record(subject=env.actor, action="credential_delete",
+                     target=f"engagement:{args.engagement}", result="ok",
+                     details={"credential_id": args.credential_id, "name": name})
+    print(f"Учётная запись {args.credential_id} удалена")
     return 0
 
 

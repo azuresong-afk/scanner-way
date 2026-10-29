@@ -66,6 +66,15 @@ def test_parse_bdu_versions():
     assert specs[3].unknown
 
 
+def test_parse_bdu_versions_joins_range_split_in_two_items():
+    # так в реальной выгрузке (BDU:2019-02100): границы — отдельными позициями
+    specs = parse_bdu_versions("от 7.62.0 (Libcurl), до 7.64.1 включительно (Libcurl), "
+                               "от 1.0 (Other), до 2.0 (Libcurl)")
+    assert [(s.software, s.start, s.end, s.end_inclusive) for s in specs] == [
+        ("Libcurl", "7.62.0", "7.64.1", True), ("Other", "1.0", None, False),
+        ("Libcurl", None, "2.0", False)]
+
+
 # ---------- severity ----------
 
 def test_severity_scale():

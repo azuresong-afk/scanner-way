@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from scanner.api import (
     routes_audit,
     routes_auth,
+    routes_credentials,
     routes_engagements,
     routes_reachability,
     routes_runs,
@@ -32,6 +33,7 @@ from scanner.api.rbac import seed_rbac, set_user_roles
 from scanner.api.security import LoginThrottle, TokenSigner, hash_password
 from scanner.api.settings import ApiSettings
 from scanner.core.audit import AuditSink, DbAuditSink
+from scanner.core.credentials import CredentialVault, load_vault
 from scanner.core.db import User, make_engine, make_session_factory, session_scope
 from scanner.core.models import Finding
 from scanner.core.orchestrator import ModuleFactory, RunService
@@ -88,7 +90,8 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
                registry: Mapping[str, ModuleFactory] | None = None,
                executor: Executor | None = None,
                resolver_factory: ResolverFactory | None = None,
-               reachability: ReachabilityCheck | None = None) -> FastAPI:
+               reachability: ReachabilityCheck | None = None,
+               vault: CredentialVault | None = None) -> FastAPI:
     settings = settings or ApiSettings()
     if session_factory is None:
         session_factory = make_session_factory(make_engine())
@@ -118,8 +121,10 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.state.signer = TokenSigner(secret, settings.token_ttl_minutes * 60)
     app.state.throttle = LoginThrottle(settings.login_max_failures,
                                        settings.login_lockout_minutes * 60)
+    if vault is None:
+        vault = load_vault(settings.credentials_key or settings.secret or None)
     app.state.runs = RunService(session_factory, audit, registry=registry,
-                                executor=executor)
+                                executor=executor, vault=vault)
     app.state.resolver_factory = resolver_factory
     app.state.reach_check = reachability or check_host
     app.state.reach_throttle = CheckThrottle(settings.reachability_per_minute, 60.0)
@@ -138,6 +143,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
 
     app.include_router(routes_auth.router)
     app.include_router(routes_engagements.router)
+    app.include_router(routes_credentials.router)
     app.include_router(routes_runs.router)
     app.include_router(routes_reachability.router)
     app.include_router(routes_audit.router)
