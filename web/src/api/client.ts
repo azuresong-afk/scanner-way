@@ -9,6 +9,7 @@ import type {
   EngagementIn,
   EngagementOut,
   FindingOut,
+  InventoryHostOut,
   MeOut,
   ReportFormat,
   ReportVariant,
@@ -155,6 +156,8 @@ export const api = {
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),
   findings: (runId: number) => json<FindingOut[]>(`/runs/${runId}/findings`),
   services: (runId: number) => json<ServiceOut[]>(`/runs/${runId}/services`),
+  /** Инвентарь договора — не зависит от прогона. */
+  hosts: (engagementId: number) => json<InventoryHostOut[]>(`/engagements/${engagementId}/hosts`),
 
   /** Отчёт как Blob: эндпоинт требует Bearer, поэтому обычная ссылка не подходит. */
   report: async (

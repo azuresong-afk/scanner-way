@@ -13,6 +13,7 @@ from scanner.api.routes_engagements import get_engagement
 from scanner.api.schemas import (
     DeniedTargetOut,
     FindingOut,
+    InventoryHostOut,
     RunCreate,
     RunCreated,
     RunOut,
@@ -90,6 +91,21 @@ def list_runs(engagement_id: int, _: Annotated[Principal, Depends(require(Perm.V
     get_engagement(session, engagement_id)
     return list(session.scalars(select(ScanRun).where(ScanRun.engagement_id == engagement_id)
                                 .order_by(ScanRun.id)))
+
+
+@router.get("/engagements/{engagement_id}/hosts", response_model=list[InventoryHostOut])
+def list_hosts(engagement_id: int, _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+               session: SessionDep) -> list[InventoryHostOut]:
+    """Инвентарь договора — не зависит от выбранного прогона."""
+    get_engagement(session, engagement_id)
+    return [InventoryHostOut(
+                host=h["host"], os_guess=h["os_guess"], run_ids=h["run_ids"],
+                services_run_id=h["services_run_id"],
+                services=[ServiceOut(host=s.host, port=s.port, protocol=s.protocol,
+                                     service=s.service, product=s.product,
+                                     version=s.version, cpe=s.cpe)
+                          for s in h["services"]])
+            for h in repo.engagement_hosts(session, engagement_id)]
 
 
 @router.get("/runs/{run_id}", response_model=RunOut)

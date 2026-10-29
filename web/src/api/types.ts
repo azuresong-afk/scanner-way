@@ -121,6 +121,17 @@ export interface ServiceOut {
   cpe: string | null;
 }
 
+/** Хост инвентаря договора (по всем прогонам). */
+export interface InventoryHostOut {
+  host: string;
+  os_guess: string | null;
+  /** Прогоны, в которых хост встречался, по возрастанию. */
+  run_ids: number[];
+  /** Прогон, из которого взяты сервисы (последний, где они были). */
+  services_run_id: number | null;
+  services: ServiceOut[];
+}
+
 export type AuditExportFormat = "csv" | "json";
 
 /** Фильтр журнала: since/until — ISO 8601 с зоной, полуинтервал [since, until). */

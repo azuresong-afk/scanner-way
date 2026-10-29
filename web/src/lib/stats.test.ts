@@ -1,5 +1,5 @@
 import { finding } from "../test/fixtures";
-import { applyFilter, byHost, emptyFilter, findingKey, heatLevel, summarize } from "./stats";
+import { applyFilter, byHost, emptyFilter, findingKey, heatLevel, inventoryRows, summarize } from "./stats";
 
 describe("summarize", () => {
   it("считает открытые, новые, регрессии, закрытые и долю БДУ", () => {
@@ -52,6 +52,28 @@ describe("byHost", () => {
   it("сортирует IP численно", () => {
     const rows = byHost([finding({ host: "10.0.0.10", severity: "low" }), finding({ host: "10.0.0.9", severity: "low" })]);
     expect(rows.map((r) => r.host)).toEqual(["10.0.0.9", "10.0.0.10"]);
+  });
+});
+
+describe("inventoryRows", () => {
+  const inv = [
+    { host: "10.0.0.10", os_guess: null, run_ids: [1], services_run_id: 1, services: [] },
+    { host: "10.0.0.9", os_guess: null, run_ids: [1, 2], services_run_id: 2, services: [] },
+  ];
+
+  it("сохраняет порядок по IP и берёт счётчики из прогона", () => {
+    const rows = inventoryRows(inv, [finding({ host: "10.0.0.10", severity: "critical" }), finding({ host: "10.0.0.10", severity: "info", vuln_id: "I" })], 1);
+    expect(rows.map((r) => r.host)).toEqual(["10.0.0.9", "10.0.0.10"]);
+    expect(rows[1].total).toBe(1);
+    expect(rows[1].maxSeverity).toBe("critical");
+    expect(rows[0].total).toBe(0);
+    expect(rows.every((r) => r.inRun)).toBe(true);
+  });
+
+  it("отмечает хосты, которых не было в прогоне", () => {
+    const rows = inventoryRows(inv, [], 2);
+    expect(rows.find((r) => r.host === "10.0.0.10")).toMatchObject({ inRun: false, lastRunId: 1 });
+    expect(rows.find((r) => r.host === "10.0.0.9")?.inRun).toBe(true);
   });
 });
 
