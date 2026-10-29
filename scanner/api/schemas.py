@@ -166,7 +166,35 @@ class RunCreated(RunOut):
     denied_targets: list[DeniedTargetOut]
 
 
+class FalsePositiveIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def _strip(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        return v or None
+
+
+class FalsePositiveMarkOut(BaseModel):
+    reason: str | None
+    marked_by: str | None
+    marked_at: datetime | None
+
+
+class FalsePositiveOut(FalsePositiveMarkOut):
+    """Действующая отметка договора (без привязки к прогону)."""
+    dedup_key: str
+    host: str
+    port: int | None
+    vuln_id: str | None
+    module: str
+    title: str
+
+
 class FindingOut(BaseModel):
+    id: int
+    dedup_key: str
     module: str
     host: str
     port: int | None
@@ -180,6 +208,7 @@ class FindingOut(BaseModel):
     evidence: str | None
     status: str | None
     detected_at: datetime
+    false_positive: FalsePositiveMarkOut | None = None
 
 
 class ServiceOut(BaseModel):

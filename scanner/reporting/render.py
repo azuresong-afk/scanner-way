@@ -614,6 +614,20 @@ class ReportRenderer:
                             small(rp, f"\n{link.label}: ", INK_2, 8, bold=True)
                             hyperlink(rp, link.url)
 
+        if report.false_positives:
+            heading(num["details"] + 1, "Ложные срабатывания")
+            small(doc.add_paragraph(), "Находки, которые специалист отметил как ложные "
+                  "срабатывания. В подсчёты, план устранения и сравнение прогонов они "
+                  "не входят.", MUTED, 9)
+            table(["Опасность", "Находка", "Хост", "Обоснование", "Отметил"],
+                  [[v.finding.severity, v.finding.title, v.target, v.mark.reason or "—",
+                    " ".join(x for x in (
+                        v.mark.marked_by,
+                        v.mark.marked_at.strftime("%d.%m.%Y") if v.mark.marked_at else None)
+                        if x) or "—"]
+                   for v in report.false_positives],
+                  widths=[2.8, 5.0, 3.0, 3.8, 2.4])
+
         spacer(10)
         small(doc.add_paragraph(), "Отчёт сформирован по результатам авторизованного "
               "тестирования в рамках договора. Порядок и сроки устранения определяются "

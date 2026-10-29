@@ -1,5 +1,5 @@
 import { finding } from "../test/fixtures";
-import { applyFilter, byHost, emptyFilter, findingKey, heatLevel, inventoryRows, summarize } from "./stats";
+import { applyFilter, byHost, emptyFilter, findingKey, heatLevel, inventoryRows, replaceFinding, summarize } from "./stats";
 
 describe("summarize", () => {
   it("считает открытые, новые, регрессии, закрытые и долю БДУ", () => {
@@ -99,4 +99,25 @@ it("findingKey совпадает для одной находки в разны
 
 it("heatLevel ступени", () => {
   expect([0, 1, 2, 3, 4, 6, 7, 50].map(heatLevel)).toEqual([0, 1, 2, 2, 3, 3, 4, 4]);
+});
+
+describe("ложные срабатывания", () => {
+  const fp = { reason: null, marked_by: "op", marked_at: null };
+
+  it("не входят в счётчики, хосты и закрытые", () => {
+    const prev = [finding({ id: 1, vuln_id: "CVE-1", false_positive: fp }), finding({ id: 2, vuln_id: "CVE-2" })];
+    const cur = [finding({ id: 3, vuln_id: "CVE-1", false_positive: fp, severity: "critical" }), finding({ id: 4, vuln_id: "CVE-2" })];
+    const s = summarize(cur, prev);
+    expect(s.open).toBe(1);
+    expect(s.counts.critical).toBe(0);
+    expect(s.fixed).toBe(0);
+    expect(s.prevOpen).toBe(1);
+    expect(byHost(cur)[0].total).toBe(1);
+  });
+
+  it("replaceFinding подменяет находку по id", () => {
+    const list = [finding({ id: 1 }), finding({ id: 2 })];
+    const out = replaceFinding(list, finding({ id: 2, false_positive: fp }));
+    expect(out.map((f) => !!f.false_positive)).toEqual([false, true]);
+  });
 });

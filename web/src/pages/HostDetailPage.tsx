@@ -12,7 +12,7 @@ import { ReachabilityCheck } from "../components/ReachabilityCheck";
 import { RunPicker } from "../components/RunPicker";
 import { ServicesTable } from "../components/ServicesTable";
 import { Empty, ErrorAlert, Kpi, Loading, Modal } from "../components/ui";
-import { byHost, isIssue } from "../lib/stats";
+import { byHost, isFalsePositive, isIssue, replaceFinding } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
 import { useRunSelection } from "../lib/useRunSelection";
 
@@ -38,7 +38,8 @@ export function HostDetailPage() {
   const { has } = useAuth();
   const { current } = useEngagement();
   const row = useMemo(() => (data.data ? byHost(data.data.findings.filter(isIssue), data.data.services)[0] : undefined), [data.data]);
-  const info = data.data?.findings.filter((f) => !isIssue(f)) ?? [];
+  const info = data.data?.findings.filter((f) => f.severity === "info" && !isFalsePositive(f)) ?? [];
+  const falsePositives = data.data?.findings.filter(isFalsePositive) ?? [];
 
   return (
     <>
@@ -100,6 +101,12 @@ export function HostDetailPage() {
             </div>
             {row.findings.length ? <FindingsTable findings={row.findings} onOpen={setOpen} selected={open} hideHost /> : <Empty title="Уязвимостей не найдено" />}
           </section>
+          {falsePositives.length > 0 && (
+            <details className="card">
+              <summary style={{ padding: "14px 20px", cursor: "pointer", fontWeight: 600 }}>Ложные срабатывания ({falsePositives.length})</summary>
+              <FindingsTable findings={falsePositives} onOpen={setOpen} selected={open} hideHost />
+            </details>
+          )}
           {data.data!.packages.length > 0 && <PackagesCard packages={data.data!.packages} />}
           {info.length > 0 && (
             <details className="card">
@@ -109,7 +116,16 @@ export function HostDetailPage() {
           )}
         </>
       )}
-      {open && <FindingDrawer finding={open} onClose={() => setOpen(null)} />}
+      {open && (
+        <FindingDrawer
+          finding={open}
+          onClose={() => setOpen(null)}
+          onChanged={(u) => {
+            if (data.data) data.setData({ ...data.data, findings: replaceFinding(data.data.findings, u) });
+            setOpen(u);
+          }}
+        />
+      )}
       {checking && current && (
         <Modal title="Проверка доступности хоста" onClose={() => setChecking(false)} wide>
           <ReachabilityCheck engagementId={current.id} initialTarget={host} />

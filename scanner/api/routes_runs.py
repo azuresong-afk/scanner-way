@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from scanner.api.deps import AuditDep, Principal, SessionDep, deny, require
 from scanner.api.rbac import MODULE_PERMISSIONS, Perm
 from scanner.api.routes_engagements import get_engagement
+from scanner.api.routes_findings import finding_out
 from scanner.api.schemas import (
     DeniedTargetOut,
     FindingOut,
@@ -148,14 +149,10 @@ def stop_run(run_id: int, user: Annotated[Principal, Depends(require(Perm.RUN_SC
 def list_findings(run_id: int,
                   _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
                   session: SessionDep, module: str | None = None) -> list[FindingOut]:
-    _get_run(session, run_id)
-    statuses = repo.get_finding_statuses(session, run_id)
-    return [FindingOut(module=f.module, host=f.host, port=f.port,
-                       finding_type=str(f.finding_type), title=f.title,
-                       severity=str(f.severity), vuln_id=f.vuln_id, cve_ids=f.cve_ids,
-                       bdu_ids=f.bdu_ids, cvss=f.cvss, evidence=f.evidence,
-                       status=statuses.get(f.dedup_key()), detected_at=f.detected_at)
-            for f in repo.get_findings(session, run_id, module)]
+    """Находки прогона; отмеченные как ложные срабатывания — с полем false_positive."""
+    run = _get_run(session, run_id)
+    marks = repo.false_positive_marks(session, run.engagement_id)
+    return [finding_out(r, marks) for r in repo.get_finding_rows(session, run_id, module)]
 
 
 @router.get("/runs/{run_id}/services", response_model=list[ServiceOut])
@@ -220,7 +217,8 @@ def get_report(run_id: int, request: Request,
         resolver=request.app.state.resolver_factory(current),
         context=ReportContext(customer=eng.client,
                               engagement=eng.contract_ref or eng.name,
-                              run_id=run_id, previous_run_id=prev_id))
+                              run_id=run_id, previous_run_id=prev_id),
+        false_positives=repo.false_positive_marks(session, eng.id))
     fmt, var = ReportFormat(format), ReportVariant(variant)
     body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",

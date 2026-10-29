@@ -29,14 +29,17 @@ from scanner.core.credentials import (
 from scanner.core.db import (
     AllowlistEntry,
     Engagement,
+    FalsePositiveRow,
     FindingRow,
     HostCredentialRow,
     HostPackageRow,
     HostResult,
     ScanRun,
     ServiceResult,
+    User,
 )
 from scanner.core.models import (
+    FalsePositiveMark,
     Finding,
     FindingStatus,
     FindingType,
@@ -424,7 +427,7 @@ def save_findings(session: Session, *, engagement_id: int, scan_run_id: int,
     return n
 
 
-def _row_to_finding(r: FindingRow) -> Finding:
+def row_to_finding(r: FindingRow) -> Finding:
     return Finding(
         module=r.module, host=str(r.host), finding_type=FindingType(r.finding_type),
         title=r.title, severity=Severity(r.severity), port=r.port, vuln_id=r.vuln_id,
@@ -436,10 +439,16 @@ def _row_to_finding(r: FindingRow) -> Finding:
 def get_findings(session: Session, scan_run_id: int,
                  module: str | None = None) -> list[Finding]:
     """Находки прогона (опционально — одного модуля) для diff/отчётов."""
+    return [row_to_finding(r) for r in get_finding_rows(session, scan_run_id, module)]
+
+
+def get_finding_rows(session: Session, scan_run_id: int,
+                     module: str | None = None) -> list[FindingRow]:
+    """Строки находок прогона (с id и dedup_key — для API)."""
     q = select(FindingRow).where(FindingRow.scan_run_id == scan_run_id)
     if module is not None:
         q = q.where(FindingRow.module == module)
-    return [_row_to_finding(r) for r in session.scalars(q.order_by(FindingRow.id))]
+    return list(session.scalars(q.order_by(FindingRow.id)))
 
 
 def get_finding_statuses(session: Session, scan_run_id: int) -> dict[str, str]:
@@ -468,3 +477,54 @@ def historically_fixed_keys(session: Session, engagement_id: int,
 def _aware(dt: datetime) -> datetime:
     # Finding.detected_at создаётся через datetime.utcnow() (naive UTC).
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+# ========== Ложные срабатывания ==========
+def false_positive_marks(session: Session,
+                         engagement_id: int) -> dict[str, FalsePositiveMark]:
+    """{dedup_key: отметка} — действующие отметки «ложное срабатывание» договора."""
+    rows = session.execute(
+        select(FalsePositiveRow, User.username)
+        .outerjoin(User, User.id == FalsePositiveRow.marked_by)
+        .where(FalsePositiveRow.engagement_id == engagement_id))
+    return {r.dedup_key: FalsePositiveMark(dedup_key=r.dedup_key, reason=r.reason,
+                                           marked_by=username,
+                                           marked_at=r.marked_at)
+            for r, username in rows}
+
+
+def list_false_positives(session: Session, engagement_id: int) -> list[FalsePositiveRow]:
+    return list(session.scalars(
+        select(FalsePositiveRow).where(FalsePositiveRow.engagement_id == engagement_id)
+        .order_by(FalsePositiveRow.id)))
+
+
+def mark_false_positive(session: Session, finding: FindingRow, *,
+                        reason: str | None, marked_by: int | None) -> FalsePositiveRow:
+    """Отметить находку как ложное срабатывание (повторная отметка обновляет
+    причину и автора)."""
+    row = session.scalar(select(FalsePositiveRow).where(
+        FalsePositiveRow.engagement_id == finding.engagement_id,
+        FalsePositiveRow.dedup_key == finding.dedup_key))
+    if row is None:
+        row = FalsePositiveRow(engagement_id=finding.engagement_id,
+                               dedup_key=finding.dedup_key)
+        session.add(row)
+    row.host, row.port, row.vuln_id = finding.host, finding.port, finding.vuln_id
+    row.module, row.title = finding.module, finding.title
+    row.reason, row.marked_by = reason, marked_by
+    row.marked_at = datetime.now(UTC)
+    session.flush()
+    return row
+
+
+def unmark_false_positive(session: Session, engagement_id: int,
+                          dedup_key: str) -> FalsePositiveRow | None:
+    """Снять отметку. Возвращает удалённую отметку или None, если её не было."""
+    row = session.scalar(select(FalsePositiveRow).where(
+        FalsePositiveRow.engagement_id == engagement_id,
+        FalsePositiveRow.dedup_key == dedup_key))
+    if row is not None:
+        session.delete(row)
+        session.flush()
+    return row

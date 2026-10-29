@@ -22,6 +22,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
     func,
 )
@@ -170,6 +171,26 @@ class FindingRow(Base):
     status: Mapped[str] = mapped_column(Text, default="open")
     dedup_key: Mapped[str] = mapped_column(Text)
     detected_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+
+
+class FalsePositiveRow(Base):
+    """Отметка «ложное срабатывание»: действует на находку с этим dedup_key
+    во всех прогонах договора, пока её не снимут (тогда строка удаляется,
+    история остаётся в журнале аудита)."""
+    __tablename__ = "false_positives"
+    __table_args__ = (UniqueConstraint("engagement_id", "dedup_key"),)
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    dedup_key: Mapped[str] = mapped_column(Text)
+    host: Mapped[str] = mapped_column(Inet)
+    port: Mapped[int | None] = mapped_column(Integer)
+    vuln_id: Mapped[str | None] = mapped_column(Text)
+    module: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    marked_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    marked_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
 
 
 # ========== Аудит (append-only) ==========

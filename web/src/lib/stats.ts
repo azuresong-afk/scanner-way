@@ -14,13 +14,22 @@ export function findingKey(f: Pick<FindingOut, "host" | "port" | "vuln_id" | "ti
   return [f.host, f.port ?? "", f.vuln_id ?? f.title, f.module].join("|");
 }
 
-/** Информационные находки (host up, баннеры) не считаются уязвимостями. */
-export const isIssue = (f: FindingOut) => f.severity !== "info";
+/** Находка отмечена специалистом как ложное срабатывание. */
+export const isFalsePositive = (f: FindingOut) => !!f.false_positive;
 
+/** Информационные находки (host up, баннеры) и ложные срабатывания не считаются уязвимостями. */
+export const isIssue = (f: FindingOut) => f.severity !== "info" && !isFalsePositive(f);
+
+/** Счётчики по уровням; ложные срабатывания не считаются. */
 export function severityCounts(findings: FindingOut[]): SeverityCounts {
   const c = emptyCounts();
-  for (const f of findings) c[f.severity] += 1;
+  for (const f of findings) if (!isFalsePositive(f)) c[f.severity] += 1;
   return c;
+}
+
+/** Заменить находку в списке её обновлённой версией (после отметки/снятия). */
+export function replaceFinding(list: FindingOut[], updated: FindingOut): FindingOut[] {
+  return list.map((f) => (f.id === updated.id ? updated : f));
 }
 
 export const issueTotal = (c: SeverityCounts) => c.critical + c.high + c.medium + c.low;
@@ -105,6 +114,7 @@ export function byHost(findings: FindingOut[], services: ServiceOut[] = []): Hos
   for (const f of findings) {
     const row = get(f.host);
     row.findings.push(f);
+    if (isFalsePositive(f)) continue; // показывается, но не считается
     row.counts[f.severity] += 1;
     if (f.severity !== "info") row.total += 1;
     if (SEVERITY_RANK[f.severity] > SEVERITY_RANK[row.maxSeverity]) row.maxSeverity = f.severity;
