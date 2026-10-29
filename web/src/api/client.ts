@@ -168,9 +168,10 @@ export const api = {
     runId: number,
     format: ReportFormat,
     variant: ReportVariant = "full",
-    compare = true,
+    compareTo: number | null = null,
   ): Promise<Blob> => {
-    const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}&compare=${compare}`);
+    const cmp = compareTo === null ? "" : `&compare_to=${compareTo}`;
+    const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}${cmp}`);
     return res.blob();
   },
 

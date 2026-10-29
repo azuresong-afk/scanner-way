@@ -154,8 +154,10 @@ def get_report(run_id: int, request: Request,
                session: SessionDep, audit: AuditDep,
                format: Annotated[str, Query(pattern="^(html|pdf|docx|json)$")] = "html",
                variant: Annotated[str, Query(pattern="^(full|brief)$")] = "full",
-               compare: bool = True) -> Response:
-    """Отчёт по прогону. variant=brief — краткая версия: без плана устранения,
+               compare_to: int | None = None) -> Response:
+    """Отчёт по прогону. По умолчанию — только по этому прогону, без сравнения;
+    compare_to=<id> — сравнить с выбранным более ранним прогоном договора.
+    variant=brief — краткая версия: без плана устранения,
     по находкам вместо рекомендаций только ссылки на устранение."""
     from scanner.reporting.model import ReportContext, build_report
     from scanner.reporting.render import (
@@ -171,9 +173,15 @@ def get_report(run_id: int, request: Request,
                             f"scan run is {run.status}; report is available after it ends")
     eng = get_engagement(session, run.engagement_id)
     current = repo.get_findings(session, run_id)
-    prev_id = repo.previous_scan_run_id(session, run_id) if compare else None
+    prev_id = None
+    if compare_to is not None:
+        try:
+            prev_id = repo.comparison_baseline(session, run, compare_to).id
+        except ValueError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e)) from e
     previous = repo.get_findings(session, prev_id) if prev_id is not None else None
-    hist = (repo.historically_fixed_keys(session, eng.id, run_id)
+    # regression — ключ был до базового прогона, в нём исчез и вернулся сейчас
+    hist = (repo.historically_fixed_keys(session, eng.id, prev_id)
             if prev_id is not None else None)
     report = build_report(
         current, previous=previous, historically_fixed=hist,
@@ -186,7 +194,8 @@ def get_report(run_id: int, request: Request,
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",
                  result="ok", details={"format": fmt.value, "variant": var.value,
                                        "previous_run_id": prev_id, "findings": len(current)})
-    suffix = "-brief" if var is ReportVariant.BRIEF else ""
+    suffix = ("-brief" if var is ReportVariant.BRIEF else "") + (
+        f"-vs-{prev_id}" if prev_id is not None else "")
     return Response(content=body, media_type=CONTENT_TYPES[fmt], headers={
         "Content-Disposition":
             f'attachment; filename="report-run-{run_id}{suffix}.{fmt.value}"'})

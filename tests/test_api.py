@@ -464,8 +464,20 @@ def test_second_run_statuses_and_report_export(api, sqlite_factory, cves):
     assert r.headers["content-type"].startswith("application/json")
     assert f"report-run-{second}.json" in r.headers["content-disposition"]
     report = r.json()
-    assert report["meta"]["previous_run_id"] == first
+    # по умолчанию отчёт только по этому прогону — без раздела сравнения
+    assert report["meta"]["previous_run_id"] is None
     assert report["meta"]["customer"] == "Ромашка"
+    cmp = api.c.get(f"/runs/{second}/report", headers=aud,
+                    params={"format": "json", "compare_to": first})
+    assert cmp.status_code == 200, cmp.text
+    assert cmp.json()["meta"]["previous_run_id"] == first
+    assert f"report-run-{second}-vs-{first}.json" in cmp.headers["content-disposition"]
+    assert report["combined"]["trend"] is None and cmp.json()["combined"]["trend"] is not None
+    for bad in (second, first + 999):         # не более ранний / чужой прогон
+        assert api.c.get(f"/runs/{second}/report", headers=aud,
+                         params={"compare_to": bad}).status_code == 422
+    assert api.c.get(f"/runs/{first}/report", headers=aud,
+                     params={"compare_to": second}).status_code == 422
     html = api.c.get(f"/runs/{second}/report", headers=aud, params={"format": "html"})
     assert html.status_code == 200 and "Ромашка" in html.text
     assert api.c.get(f"/runs/{second}/report", headers=aud,

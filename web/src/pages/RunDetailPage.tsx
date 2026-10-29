@@ -27,6 +27,9 @@ export function RunDetailPage() {
   const finished = run.data ? isFinished(run.data.status) : false;
   const findings = useAsync(() => api.findings(id), [id, finished], finished);
   const services = useAsync(() => api.services(id), [id, finished], finished);
+  // Прогоны договора — для выбора «Сравнить с» в меню отчёта.
+  const engagementId = run.data?.engagement_id;
+  const engRuns = useAsync(() => api.runs(engagementId!), [engagementId, finished], finished && engagementId !== undefined);
   const [tab, setTab] = useState<Tab>("findings");
   const [open, setOpen] = useState<FindingOut | null>(null);
   const [stopError, setStopError] = useState<string | null>(null);
@@ -70,7 +73,7 @@ export function RunDetailPage() {
               <Square size={14} /> Остановить
             </button>
           )}
-          {finished && has("view_report") && <ReportMenu runId={r.id} />}
+          {finished && has("view_report") && <ReportMenu runId={r.id} runs={engRuns.data ?? []} />}
         </div>
       </div>
 

@@ -22,8 +22,8 @@ export function ReportsPage() {
           <span className="crumbs">{current.client ? `${current.client} · ${current.name}` : current.name}</span>
           <h1>Отчёты</h1>
           <span className="muted">
-            Отчёт включает рекомендации по устранению, ссылки на БДУ ФСТЭК, NVD и бюллетени производителей, раздел по каждому хосту и
-            сравнение с предыдущим прогоном.
+            Отчёт включает рекомендации по устранению, ссылки на БДУ ФСТЭК, NVD и бюллетени производителей, раздел по каждому хосту. По
+            умолчанию отчёт строится по одному прогону; сравнение — по выбору «Сравнить с».
           </span>
         </div>
       </div>
@@ -57,7 +57,7 @@ export function ReportsPage() {
                     </td>
                     <td className="muted nowrap">{fmtDate(r.finished_at)}</td>
                     <td>
-                      <ReportMenu runId={r.id} small />
+                      <ReportMenu runId={r.id} runs={runs.data ?? []} small />
                     </td>
                   </tr>
                 ))}

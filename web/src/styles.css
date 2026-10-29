@@ -257,9 +257,14 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .seg button:disabled { opacity: 0.5; cursor: not-allowed; }
 .seg.seg-sm { height: 30px; font-size: 13px; }
 .seg.seg-sm button { min-width: 0; padding: 0 8px; }
+/* «Сравнить с» в меню отчёта — по высоте как кнопки рядом. */
+.report-compare .select { width: auto; max-width: 233px; height: 34px; }
+.report-compare.sm .select { height: 30px; font-size: 13px; }
 @media (max-width: 600px) {
   .seg { flex-basis: 100%; }
   .seg button { flex: 1 1 0; }
+  .report-compare { flex-basis: 100%; }
+  .report-compare .select { flex: 1 1 auto; max-width: none; }
 }
 
 .field { display: flex; flex-direction: column; gap: 6px; }

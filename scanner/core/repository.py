@@ -149,6 +149,23 @@ def previous_scan_run_id(session: Session, scan_run_id: int) -> int | None:
         .limit(1))
 
 
+def comparison_baseline(session: Session, run: ScanRun, baseline_id: int) -> ScanRun:
+    """Прогон, выбранный для сравнения в отчёте.
+
+    Годится только успешно завершённый (done) более ранний прогон того же договора:
+    остановленный или упавший прогон неполон, и «закрытые» в нём были бы ложными.
+    """
+    base = session.get(ScanRun, baseline_id)
+    if base is None or base.engagement_id != run.engagement_id:
+        raise ValueError(f"прогон {baseline_id} не найден в договоре")
+    if base.id >= run.id:
+        raise ValueError("сравнивать можно только с более ранним прогоном")
+    if base.status != "done":
+        raise ValueError(f"прогон {baseline_id} в статусе {base.status}; "
+                         "для сравнения нужен успешно завершённый прогон")
+    return base
+
+
 # ========== Инвентарь ==========
 def save_host(session: Session, *, scan_run_id: int, host: str, state: str | None = "up",
               os_guess: str | None = None, os_accuracy: int | None = None) -> int:
