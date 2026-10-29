@@ -30,6 +30,7 @@ import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from scanner.core.models import Finding, FindingType, ServiceInfo, Severity
 from scanner.core.ratelimit import RateProfile
@@ -60,6 +61,22 @@ class VulnScanError(RuntimeError):
     """Nuclei завершился с ошибкой или вернул неразбираемый вывод."""
 
 
+class VulnScanTimeout(VulnScanError):
+    """Nuclei не уложился в таймаут; ``partial_output`` — что он успел вывести."""
+
+    def __init__(self, timeout: float, partial_output: str):
+        super().__init__(f"nuclei не уложился в {timeout:.0f} с")
+        self.partial_output = partial_output
+
+
+# Оценка сверху числа запросов полного набора шаблонов Nuclei на одну цель
+# (host:port/URL). Время прогона ≈ цели × запросы / rate-limit, поэтому
+# таймаут считается от профиля: на gentle (5 запросов/с) одна цель — это
+# десятки минут, и фиксированные 30 минут обрывали даже учебный стенд.
+NUCLEI_REQUESTS_PER_INPUT = 15000
+MIN_NUCLEI_TIMEOUT_SEC = 1800
+
+
 @dataclass(slots=True)
 class VulnOptions:
     nuclei_path: str = "nuclei"
@@ -70,7 +87,9 @@ class VulnOptions:
     exclude_tags: list[str] = field(default_factory=lambda: ["dos", "fuzz"])
     batch_size: int = 128                                    # целей на один вызов
     timeout_per_target_sec: int = 20                         # -timeout
-    overall_timeout_sec: int = 1800                          # жёсткий таймаут процесса
+    # Жёсткий таймаут одного вызова. None — по профилю и числу целей
+    # (nuclei_timeout); явное значение — как есть.
+    overall_timeout_sec: int | None = None
 
 
 def validate_targets(targets: Sequence[str]) -> tuple[list[str], list[str]]:
@@ -168,14 +187,35 @@ def build_nuclei_command(rate: RateProfile, opts: VulnOptions) -> list[str]:
     return cmd
 
 
+def nuclei_timeout(rate: RateProfile, n_inputs: int, opts: VulnOptions) -> float:
+    """Таймаут вызова Nuclei на ``n_inputs`` целей при лимите скорости профиля."""
+    if opts.overall_timeout_sec is not None:
+        return float(opts.overall_timeout_sec)
+    rps = max(1.0, rate.max_requests_per_sec)
+    return max(float(MIN_NUCLEI_TIMEOUT_SEC), n_inputs * NUCLEI_REQUESTS_PER_INPUT / rps)
+
+
+def _input_host(line: str) -> str:
+    """Хост из строки-цели Nuclei (``http://h:p``, ``h:p``, ``[v6]:p``)."""
+    return urlsplit(line if "://" in line else f"//{line}").hostname or line
+
+
 def _subprocess_runner(cmd: list[str], targets: str, timeout: float) -> str:
     # Nuclei 3.x не понимает «-l -» (ищет файл с именем «-»), поэтому цели
     # передаются временным файлом. Цели в argv так и не попадают.
     with tempfile.TemporaryDirectory(prefix="nuclei-") as tmp:
         targets_file = Path(tmp) / "targets.txt"
         targets_file.write_text(targets)
-        proc = subprocess.run([*cmd, "-l", str(targets_file)], stdin=subprocess.DEVNULL,
-                              capture_output=True, text=True, timeout=timeout, check=False)
+        try:
+            proc = subprocess.run([*cmd, "-l", str(targets_file)],
+                                  stdin=subprocess.DEVNULL, capture_output=True,
+                                  text=True, timeout=timeout, check=False)
+        except subprocess.TimeoutExpired as e:
+            # run() уже убил процесс и дочитал вывод: находки до обрыва не теряем.
+            out = e.stdout or ""
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", "replace")
+            raise VulnScanTimeout(timeout, out) from e
     # Nuclei отдаёт rc=0 даже когда ничего не найдено; ненулевой — ошибка запуска.
     if proc.returncode != 0:
         raise VulnScanError(f"nuclei rc={proc.returncode}: {proc.stderr.strip()[:500]}")
@@ -341,9 +381,26 @@ class VulnModule(ScanModule):
             ctx.audit.record(subject="scanner", action="nuclei_exec",
                              target=f"{len(batch)} targets", result="started",
                              details=shlex.join(cmd))
+            timeout = nuclei_timeout(ctx.rate, len(batch), opts)
             try:
-                output = self._runner(cmd, targets, float(opts.overall_timeout_sec))
+                output = self._runner(cmd, targets, timeout)
                 batch_findings = parse_nuclei_jsonl(output, self.name)
+            except VulnScanTimeout as e:
+                # Частичный результат лучше никакого: сохраняем найденное и
+                # помечаем каждый хост пачки, что проверка не завершена.
+                batch_findings = parse_nuclei_jsonl(e.partial_output, self.name)
+                ctx.audit.record(subject="scanner", action="nuclei_exec",
+                                 target=f"{len(batch)} targets", result="timeout",
+                                 details=f"{e}; findings={len(batch_findings)}")
+                findings.extend(self._enrich(batch_findings, ctx.services))
+                for host in dict.fromkeys(_input_host(line) for line in batch):
+                    findings.append(Finding(
+                        module=self.name, host=host, finding_type=FindingType.INFO,
+                        title="Поиск уязвимостей прерван по таймауту — результаты неполные",
+                        severity=Severity.INFO, vuln_id="INFO:vuln-scan-timeout",
+                        evidence=f"{e}. Повторите прогон с профилем выше или "
+                                 "с меньшим числом целей."))
+                continue
             except (VulnScanError, subprocess.TimeoutExpired, OSError) as e:
                 ctx.audit.record(subject="scanner", action="nuclei_exec",
                                  target=f"{len(batch)} targets", result="error",
