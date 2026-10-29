@@ -282,6 +282,39 @@ def test_allowlist_crud_validates_and_audits(api, sqlite_factory):
     assert "allowlist_add" in actions and "allowlist_remove" in actions
 
 
+def test_allowlist_rejects_duplicates_after_normalization(api):
+    eid = api.engagement()
+    url = f"/engagements/{eid}/allowlist"
+
+    def add(cidr):
+        return api.c.post(url, headers=api.admin, json={"cidr": cidr})
+
+    first = add("10.0.0.7/24")
+    assert first.status_code == 201
+    net_id = first.json()["id"]
+    # та же подсеть в другой записи, адрес и подсеть внутри неё — дубли
+    for cidr, exact in [("10.0.0.0/24", True), (" 10.0.0.0/24 ", True),
+                        ("10.0.0.5", False), ("10.0.0.5/32", False),
+                        ("10.0.0.128/25", False)]:
+        r = add(cidr)
+        assert r.status_code == 409, (cidr, r.text)
+        d = r.json()["detail"]
+        assert d["code"] == "allowlist_duplicate"
+        assert d["existing_id"] == net_id and d["existing_cidr"] == "10.0.0.0/24"
+        assert ("уже есть в allowlist" in d["message"]) is exact
+    # IPv6: разная запись одного адреса
+    assert add("2001:DB8::1").status_code == 201
+    r = add("2001:0db8:0:0::1/128")
+    assert r.status_code == 409 and r.json()["detail"]["existing_cidr"] == "2001:db8::1/128"
+    # соседняя и более широкая подсети — новые цели, их добавить можно
+    assert add("10.0.1.0/24").status_code == 201
+    assert add("10.0.0.0/16").status_code == 201
+    # точное совпадение важнее покрытия широкой подсетью
+    assert add("10.0.0.0/24").json()["detail"]["existing_id"] == net_id
+    cidrs = [e["cidr"] for e in api.c.get(url, headers=api.admin).json()]
+    assert cidrs == ["10.0.0.0/24", "2001:db8::1/128", "10.0.1.0/24", "10.0.0.0/16"]
+
+
 # ---------- прогоны и allowlist ----------
 def test_run_drops_targets_outside_allowlist(api, sqlite_factory, rec):
     eid = api.engagement("10.0.0.0/24")

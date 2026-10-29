@@ -113,6 +113,14 @@ def add_allowlist(engagement_id: int, body: AllowlistIn,
         entry_id = repo.add_allowlist_entry(session, engagement_id=engagement_id,
                                             cidr=body.cidr, note=body.note,
                                             added_by=user.id)
+    except repo.AllowlistDuplicate as dup:
+        message = (f"{dup.cidr} уже есть в allowlist" if dup.exact else
+                   f"{dup.cidr} уже входит в подсеть {dup.existing_cidr} из allowlist")
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "message": message, "code": "allowlist_duplicate",
+            "cidr": dup.cidr, "existing_id": dup.existing_id,
+            "existing_cidr": dup.existing_cidr,
+        }) from dup
     except ValueError as e:
         raise HTTPException(422,
                             f"invalid CIDR: {body.cidr}") from e
