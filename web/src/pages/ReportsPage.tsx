@@ -57,7 +57,7 @@ export function ReportsPage() {
                     </td>
                     <td className="muted nowrap">{fmtDate(r.finished_at)}</td>
                     <td>
-                      <ReportMenu runId={r.id} />
+                      <ReportMenu runId={r.id} small />
                     </td>
                   </tr>
                 ))}

@@ -12,8 +12,22 @@ const FORMATS: { id: ReportFormat; label: string }[] = [
   { id: "json", label: "JSON" },
 ];
 
-/** Кнопки выгрузки отчёта: файл скачивается через fetch с Bearer-токеном. */
-export function ReportMenu({ runId, disabled, compact }: { runId: number; disabled?: boolean; compact?: boolean }) {
+/**
+ * Кнопки выгрузки отчёта: файл скачивается через fetch с Bearer-токеном.
+ * По умолчанию кнопки полного размера — как соседние «Новый прогон» и «Остановить»
+ * в шапке страницы; `small` — для строк таблицы.
+ */
+export function ReportMenu({
+  runId,
+  disabled,
+  compact,
+  small,
+}: {
+  runId: number;
+  disabled?: boolean;
+  compact?: boolean;
+  small?: boolean;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [html, setHtml] = useState<string | null>(null);
@@ -44,12 +58,16 @@ export function ReportMenu({ runId, disabled, compact }: { runId: number; disabl
     }
   };
 
+  // Кнопки форматов одной ширины, чтобы ряд PDF/Word/HTML/JSON не «гулял».
+  const btn = small ? "btn btn-sm" : "btn btn-report";
+  const icon = small ? 14 : 16;
+
   return (
     <div className="stack" style={{ gap: 6 }}>
-      <div className="inline" style={{ gap: 6 }}>
+      <div className="inline" style={{ gap: small ? 6 : 10 }}>
         {!compact && (
-          <button type="button" className="btn btn-sm" disabled={disabled || !!busy} onClick={preview}>
-            {busy === "view" ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Eye size={14} />}
+          <button type="button" className={`${btn} btn-report-view`} disabled={disabled || !!busy} onClick={preview}>
+            {busy === "view" ? <span className="spinner" style={{ width: icon, height: icon }} /> : <Eye size={icon} />}
             Просмотр
           </button>
         )}
@@ -57,12 +75,12 @@ export function ReportMenu({ runId, disabled, compact }: { runId: number; disabl
           <button
             key={f.id}
             type="button"
-            className="btn btn-sm"
+            className={btn}
             disabled={disabled || !!busy}
             onClick={() => download(f.id)}
             aria-label={`Скачать отчёт ${f.label}`}
           >
-            {busy === f.id ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Download size={14} />}
+            {busy === f.id ? <span className="spinner" style={{ width: icon, height: icon }} /> : <Download size={icon} />}
             {f.label}
           </button>
         ))}
