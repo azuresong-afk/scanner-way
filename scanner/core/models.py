@@ -76,6 +76,16 @@ class FalsePositiveMark:
 
 
 @dataclass(slots=True)
+class HostOs:
+    """ОС хоста, определённая сканированием (см. scanner.core.osfamily)."""
+    host: str
+    name: str | None = None              # «Linux 4.15 - 5.8», PRETTY_NAME из os-release
+    family: str | None = None            # astra, redos, ubuntu, debian, windows…
+    accuracy: int | None = None          # точность nmap, %; 100 — прочитано на хосте
+    source: str | None = None            # nmap | banner | ssh
+
+
+@dataclass(slots=True)
 class InstalledPackage:
     """Пакет, установленный на хосте (по данным менеджера пакетов)."""
     name: str
@@ -91,6 +101,7 @@ class HostInventory:
     os_id: str | None = None             # ID из /etc/os-release (debian, rhel, astra…)
     os_name: str | None = None           # PRETTY_NAME
     os_version: str | None = None        # VERSION_ID
+    os_like: str | None = None           # ID_LIKE («debian», «rhel fedora»)
     kernel: str | None = None            # uname -srm
     hostname: str | None = None
     packages: list[InstalledPackage] = field(default_factory=list)
@@ -99,3 +110,8 @@ class HostInventory:
     @property
     def os_label(self) -> str | None:
         return self.os_name or " ".join(p for p in (self.os_id, self.os_version) if p) or None
+
+    @property
+    def os_family(self) -> str | None:
+        from scanner.core.osfamily import classify
+        return classify(self.os_name, self.os_id, self.os_like)

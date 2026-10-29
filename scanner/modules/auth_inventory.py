@@ -109,7 +109,7 @@ def parse_inventory(text: str, host: str) -> HostInventory:
     inv = HostInventory(
         host=host, os_id=osr.get("ID") or None,
         os_name=osr.get("PRETTY_NAME") or osr.get("NAME") or None,
-        os_version=osr.get("VERSION_ID") or None,
+        os_version=osr.get("VERSION_ID") or None, os_like=osr.get("ID_LIKE") or None,
         kernel=next((x.strip()[:200] for x in sections.get("uname", []) if x.strip()), None),
         hostname=next((x.strip()[:255] for x in sections.get("hostname", []) if x.strip()),
                       None))

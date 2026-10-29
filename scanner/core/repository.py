@@ -44,10 +44,14 @@ from scanner.core.models import (
     FindingStatus,
     FindingType,
     HostInventory,
+    HostOs,
     InstalledPackage,
     ServiceInfo,
     Severity,
 )
+from scanner.core.osfamily import GENERIC_LINUX, SOURCE_RANK, family_label, is_distro
+from scanner.core.osfamily import UNKNOWN as UNKNOWN_OS
+from scanner.core.osfamily import classify as classify_os
 
 RUN_STATUSES = {"pending", "running", "done", "failed", "stopped"}
 
@@ -262,12 +266,24 @@ def comparison_baseline(session: Session, run: ScanRun, baseline_id: int) -> Sca
 
 # ========== Инвентарь ==========
 def save_host(session: Session, *, scan_run_id: int, host: str, state: str | None = "up",
-              os_guess: str | None = None, os_accuracy: int | None = None) -> int:
+              os_guess: str | None = None, os_accuracy: int | None = None,
+              os_family: str | None = None, os_source: str | None = None) -> int:
     h = HostResult(scan_run_id=scan_run_id, host=str(ipaddress.ip_address(host)),
-                   state=state, os_guess=os_guess, os_accuracy=os_accuracy)
+                   state=state, os_guess=os_guess, os_accuracy=os_accuracy,
+                   os_family=os_family, os_source=os_source)
     session.add(h)
     session.flush()
     return h.id
+
+
+def save_hosts(session: Session, *, scan_run_id: int, hosts: Iterable[HostOs]) -> int:
+    """Сохранить живые хосты discovery с их ОС (до сервисов и инвентаризации)."""
+    n = 0
+    for h in hosts:
+        save_host(session, scan_run_id=scan_run_id, host=h.host, os_guess=h.name,
+                  os_accuracy=h.accuracy, os_family=h.family, os_source=h.source)
+        n += 1
+    return n
 
 
 def save_services(session: Session, *, scan_run_id: int,
@@ -310,6 +326,7 @@ def save_inventory(session: Session, *, scan_run_id: int,
             hosts[host] = h
         if inv.os_label:
             h.os_guess, h.os_accuracy = inv.os_label, 100
+            h.os_family, h.os_source = inv.os_family, "ssh"
         for p in inv.packages:
             session.add(HostPackageRow(scan_run_id=scan_run_id, host=host,
                                        manager=p.manager, name=p.name,
@@ -343,12 +360,40 @@ def get_services(session: Session, scan_run_id: int) -> list[ServiceInfo]:
             for host, s in rows]
 
 
-def engagement_hosts(session: Session, engagement_id: int) -> list[dict]:
+def _host_os(h: HostResult) -> dict:
+    """ОС из строки host_results; у строк до миграции 0007 — выводится из os_guess."""
+    source = h.os_source or ("ssh" if h.os_accuracy == 100 else "nmap")
+    family = h.os_family or classify_os(h.os_guess)
+    return {"name": h.os_guess, "family": family, "source": source,
+            "accuracy": h.os_accuracy, "run_id": h.scan_run_id}
+
+
+def _replaces_os(cur: dict | None, new: dict) -> bool:
+    """Заменяет ли ОС из более позднего прогона уже известную.
+
+    Новые данные побеждают, если они не менее точны по источнику. Менее точные
+    (nmap после SSH) не затирают дистрибутив, если ничем им не противоречат:
+    «Linux 4.15» после «Astra Linux 1.7» оставляет Astra. Если же nmap увидел
+    другое семейство (хост переустановили под Windows) — берётся новое.
+    """
+    if cur is None:
+        return True
+    if SOURCE_RANK.get(new["source"], 0) >= SOURCE_RANK.get(cur["source"], 0):
+        return True
+    return new["family"] not in (None, cur["family"]) and not (
+        new["family"] == GENERIC_LINUX and is_distro(cur["family"]))
+
+
+def engagement_hosts(session: Session, engagement_id: int,
+                     os_family: str | None = None) -> list[dict]:
     """Инвентарь договора: все хосты, встречавшиеся в любом прогоне.
 
     Хост попадает в инвентарь по результатам discovery (host_results) или по
     находкам. Сервисы и ОС — из последнего прогона, где они были. Для каждого
     хоста — список прогонов, в которых он встречался (`run_ids`, по возрастанию).
+    ОС — самая точная из известных (см. `_replaces_os`), с семейством `os_family`;
+    `os_family` в аргументах оставляет только хосты этого семейства
+    («unknown» — хосты без определённой ОС).
     """
     run_ids = list(session.scalars(
         select(ScanRun.id).where(ScanRun.engagement_id == engagement_id)))
@@ -360,15 +405,17 @@ def engagement_hosts(session: Session, engagement_id: int) -> list[dict]:
         key = str(ipaddress.ip_address(str(host).split("/")[0]))
         if key not in hosts:
             hosts[key] = {"host": key, "os_guess": None, "run_ids": set(),
-                          "services": [], "services_run_id": None}
+                          "services": [], "services_run_id": None, "os": None}
         return hosts[key]
 
     for h in session.scalars(select(HostResult).where(HostResult.scan_run_id.in_(run_ids))
-                             .order_by(HostResult.scan_run_id)):
+                             .order_by(HostResult.scan_run_id, HostResult.id)):
         row = get(h.host)
         row["run_ids"].add(h.scan_run_id)
-        if h.os_guess:
-            row["os_guess"] = h.os_guess
+        if h.os_guess or h.os_family:
+            new = _host_os(h)
+            if _replaces_os(row["os"], new):
+                row["os"] = new
     for host, rid in session.execute(
             select(FindingRow.host, FindingRow.scan_run_id).distinct()
             .where(FindingRow.scan_run_id.in_(run_ids))):
@@ -397,11 +444,19 @@ def engagement_hosts(session: Session, engagement_id: int) -> list[dict]:
             row["packages_run_id"], row["package_count"] = rid, count
     out = []
     for row in hosts.values():
+        os_ = row.pop("os") or {}
+        row["os_guess"] = os_.get("name")
+        row["os_family"] = os_.get("family")
+        row["os_family_label"] = family_label(os_.get("family"))
+        row["os_source"] = os_.get("source")
+        row["os_accuracy"] = os_.get("accuracy")
+        row["os_run_id"] = os_.get("run_id")
         row.setdefault("packages_run_id", None)
         row.setdefault("package_count", 0)
         row["run_ids"] = sorted(row["run_ids"])
         row["services"].sort(key=lambda s: (s.port, s.protocol))
-        out.append(row)
+        if os_family is None or (row["os_family"] or UNKNOWN_OS) == os_family:
+            out.append(row)
     return sorted(out, key=lambda r: (ipaddress.ip_address(r["host"]).version,
                                       int(ipaddress.ip_address(r["host"]))))
 

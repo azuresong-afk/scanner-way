@@ -212,6 +212,48 @@ it("вкладка «Хосты»: список постоянный, от пр�
   expect(screen.getAllByRole("link").filter((a) => a.closest("tbody"))).toHaveLength(2);
 });
 
+it("показывает ОС хостов, фильтрует и группирует по семейству ОС", async () => {
+  setToken("t");
+  const run = {
+    id: 1, engagement_id: 1, modules: ["discovery"], rate_profile: "gentle", status: "done",
+    started_by: 1, started_at: "2026-10-27T10:00:00", finished_at: "2026-10-27T11:00:00", created_at: "2026-10-27T10:00:00",
+  };
+  const host = (ip: string, family: string | null, label: string, guess: string | null, source: string | null) => ({
+    host: ip, os_guess: guess, os_family: family, os_family_label: label, os_source: source, os_accuracy: source === "ssh" ? 100 : 95,
+    run_ids: [1], services_run_id: 1, services: [],
+  });
+  mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [run],
+    "GET /engagements/1/hosts": [
+      host("10.0.0.1", "astra", "Astra Linux", "Astra Linux SE 1.7", "ssh"),
+      host("10.0.0.2", "windows", "Windows", "Microsoft Windows Server 2016", "nmap"),
+      host("10.0.0.3", "astra", "Astra Linux", "Astra Linux CE 2.12", "ssh"),
+      host("10.0.0.4", null, "ОС не определена", null, null),
+    ],
+    "GET /runs/1/findings": [finding({ host: "10.0.0.2", severity: "high" })],
+  });
+  renderApp("/hosts");
+  const links = () => screen.getAllByRole("link").filter((a) => a.closest("tbody")).map((a) => a.textContent);
+  await screen.findByRole("link", { name: "10.0.0.1" });
+  expect(screen.getByText("Astra Linux SE 1.7")).toBeInTheDocument();
+
+  const filter = screen.getByRole("group", { name: "Фильтр по ОС" });
+  // чипы — в порядке групп: Astra первой, «не определена» последней
+  expect(within(filter).getAllByRole("button").map((b) => b.textContent)).toEqual(["Astra Linux 2", "Windows 1", "ОС не определена 1"]);
+  fireEvent.click(within(filter).getByRole("button", { name: /Astra Linux/ }));
+  expect(links()).toEqual(["10.0.0.1", "10.0.0.3"]);
+  fireEvent.click(within(filter).getByRole("button", { name: "Все ОС" }));
+  expect(links()).toHaveLength(4);
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "По ОС" }));
+  const groups = screen.getAllByRole("rowgroup").filter((g) => g.tagName === "TBODY");
+  expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["Astra Linux", "Windows", "ОС не определена"]);
+  expect(within(groups[0]).getByText("2 хоста")).toBeInTheDocument();
+  expect(localStorage.getItem("scanner.hosts.byOs")).toBe("1");
+});
+
 it("переключает светлую и тёмную тему и запоминает выбор", async () => {
   setToken("t");
   mockApi({ "GET /me": me(["operator"], OPERATOR), "GET /engagements": [ENG], "GET /engagements/1/runs": [] });
