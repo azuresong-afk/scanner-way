@@ -137,9 +137,17 @@ def get_report(run_id: int, request: Request,
                user: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
                session: SessionDep, audit: AuditDep,
                format: Annotated[str, Query(pattern="^(html|pdf|docx|json)$")] = "html",
+               variant: Annotated[str, Query(pattern="^(full|brief)$")] = "full",
                compare: bool = True) -> Response:
+    """Отчёт по прогону. variant=brief — краткая версия: без плана устранения,
+    по находкам вместо рекомендаций только ссылки на устранение."""
     from scanner.reporting.model import ReportContext, build_report
-    from scanner.reporting.render import CONTENT_TYPES, ReportFormat, ReportRenderer
+    from scanner.reporting.render import (
+        CONTENT_TYPES,
+        ReportFormat,
+        ReportRenderer,
+        ReportVariant,
+    )
 
     run = _get_run(session, run_id)
     if run.status not in FINISHED:
@@ -157,10 +165,12 @@ def get_report(run_id: int, request: Request,
         context=ReportContext(customer=eng.client,
                               engagement=eng.contract_ref or eng.name,
                               run_id=run_id, previous_run_id=prev_id))
-    fmt = ReportFormat(format)
-    body = ReportRenderer().render(report, fmt)
+    fmt, var = ReportFormat(format), ReportVariant(variant)
+    body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",
-                 result="ok", details={"format": fmt.value, "previous_run_id": prev_id,
-                                       "findings": len(current)})
+                 result="ok", details={"format": fmt.value, "variant": var.value,
+                                       "previous_run_id": prev_id, "findings": len(current)})
+    suffix = "-brief" if var is ReportVariant.BRIEF else ""
     return Response(content=body, media_type=CONTENT_TYPES[fmt], headers={
-        "Content-Disposition": f'attachment; filename="report-run-{run_id}.{fmt.value}"'})
+        "Content-Disposition":
+            f'attachment; filename="report-run-{run_id}{suffix}.{fmt.value}"'})

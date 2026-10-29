@@ -4,6 +4,8 @@ export type Severity = "info" | "low" | "medium" | "high" | "critical";
 export type FindingStatus = "open" | "fixed" | "new" | "regression";
 export type RunStatus = "pending" | "running" | "done" | "failed" | "stopped";
 export type ReportFormat = "html" | "pdf" | "docx" | "json";
+/** full — полный отчёт; brief — без плана устранения, по находкам только ссылки на устранение. */
+export type ReportVariant = "full" | "brief";
 
 export interface TokenOut {
   access_token: string;

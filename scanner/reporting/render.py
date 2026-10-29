@@ -5,6 +5,10 @@
 строятся из одной модели (`reporting.model.Report`), в каждой находке —
 рекомендация по устранению.
 
+Варианты: полный (по умолчанию) и краткий (`ReportVariant.BRIEF`) — без
+раздела «План устранения», а вместо текста рекомендации по каждой находке
+только ссылки на устранение (БДУ, NVD, бюллетени производителя/ОС, CWE).
+
 Графика (дашборд руководителя, распределение по опасности, топ хостов, модули,
 каскад изменений и тренд по прогонам) строится в `reporting.charts`: одна
 геометрия — inline-SVG в HTML/PDF (без JS и внешних ресурсов) и PNG в DOCX.
@@ -36,6 +40,7 @@ from scanner.reporting.model import (
     STATUS_LABELS,
     FindingView,
     Report,
+    brief_report,
 )
 from scanner.reporting.remediation import RefLink, describe_ref
 
@@ -62,6 +67,11 @@ class ReportFormat(StrEnum):
     PDF = "pdf"
     DOCX = "docx"
     JSON = "json"
+
+
+class ReportVariant(StrEnum):
+    FULL = "full"
+    BRIEF = "brief"
 
 
 CONTENT_TYPES: dict[ReportFormat, str] = {
@@ -142,6 +152,14 @@ def host_blocks(report: Report) -> list[HostBlock]:
     return blocks
 
 
+def section_numbers(brief: bool) -> dict[str, int]:
+    """Номера разделов: в краткой версии раздела «План устранения» нет."""
+    keys = ["summary", "plan", "trend", "hosts", "details"]
+    if brief:
+        keys.remove("plan")
+    return {k: i for i, k in enumerate(keys, 1)}
+
+
 def _run_label(run_id: object, fallback: str) -> str:
     return fallback if run_id is None else f"Прогон {run_id}"
 
@@ -189,8 +207,11 @@ def build_charts(report: Report, history: Sequence[RunPoint] | None = None
 
 class ReportRenderer:
     def render(self, report: Report, fmt: ReportFormat | str,
-               history: Sequence[RunPoint] | None = None) -> bytes:
+               history: Sequence[RunPoint] | None = None,
+               variant: ReportVariant | str = ReportVariant.FULL) -> bytes:
         fmt = ReportFormat(fmt)
+        if ReportVariant(variant) is ReportVariant.BRIEF and not report.brief:
+            report = brief_report(report)
         if fmt is ReportFormat.HTML:
             return self.render_html(report, history).encode("utf-8")
         if fmt is ReportFormat.PDF:
@@ -208,7 +229,8 @@ class ReportRenderer:
         # SVG собран из экранированных строк (charts.py) — помечаем как безопасный
         charts = {k: Markup(v.to_svg()) for k, v in build_charts(report, history).items()}
         return _env().get_template("report.html.j2").render(
-            r=report, charts=charts, hosts=host_blocks(report))
+            r=report, charts=charts, hosts=host_blocks(report),
+            num=section_numbers(report.brief))
 
     def render_pdf(self, report: Report, history: Sequence[RunPoint] | None = None) -> bytes:
         try:
@@ -384,11 +406,12 @@ class ReportRenderer:
         c = report.context
         s = report.summary
         t = report.combined.trend
+        num = section_numbers(report.brief)
 
         # Обложка
         spacer(60)
-        small(doc.add_paragraph(), "АНАЛИЗ ЗАЩИЩЁННОСТИ · РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ",
-              ACCENT_2, 8, bold=True)
+        small(doc.add_paragraph(), "АНАЛИЗ ЗАЩИЩЁННОСТИ · РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ"
+              + (" · КРАТКАЯ ВЕРСИЯ" if report.brief else ""), ACCENT_2, 8, bold=True)
         title = doc.add_paragraph(style="Title")
         title.add_run(_x(c.title)).font.color.rgb = _rgb(ACCENT)
         if c.customer:
@@ -421,7 +444,7 @@ class ReportRenderer:
               FAINT, 8)
 
         # 1. Резюме
-        heading(1, "Резюме для руководства")
+        heading(num["summary"], "Резюме для руководства")
         kp = [("Общий уровень риска", s.risk_label,
                SEVERITY_HEX[s.risk_level] if s.risk_level else GOOD),
               ("Всего находок", str(s.total), None),
@@ -442,30 +465,31 @@ class ReportRenderer:
               [[m.label] + [m.severity_counts[x] for x in SEVERITY_ORDER]
                + [len(m.findings)] for m in report.modules], first_cm=4.0, num_from=1)
 
-        # 2. План устранения
-        heading(2, "План устранения")
-        if report.plan:
-            small(doc.add_paragraph(), "Одинаковые меры объединены: одна строка — одно "
-                  "действие и все хосты, где его нужно выполнить. Порядок — по уровню "
-                  "опасности и числу затронутых хостов.", MUTED, 9)
-            pt = table(["№", "Опасность", "Что сделать", "Где"],
-                       [[i, p.severity, p.action, ", ".join(p.targets)]
-                        for i, p in enumerate(report.plan, 1)],
-                       widths=[0.8, 2.8, 9.6, 3.8])
-            for row, p in zip(pt.rows[1:], report.plan):
-                cell = row.cells[2]
-                cell.paragraphs[0].runs[0].bold = True
-                small(cell.add_paragraph(),
-                      f"Источник: {p.source_label} · {'; '.join(p.titles)}", MUTED, 8)
-                for link in _links(p.references, 4):
-                    lp = cell.add_paragraph()
-                    small(lp, f"{link.label}: ", INK_2, 8)
-                    hyperlink(lp, link.url)
-        else:
-            doc.add_paragraph("Мер устранения не требуется.")
+        # План устранения (только в полной версии)
+        if not report.brief:
+            heading(num["plan"], "План устранения")
+            if report.plan:
+                small(doc.add_paragraph(), "Одинаковые меры объединены: одна строка — одно "
+                      "действие и все хосты, где его нужно выполнить. Порядок — по уровню "
+                      "опасности и числу затронутых хостов.", MUTED, 9)
+                pt = table(["№", "Опасность", "Что сделать", "Где"],
+                           [[i, p.severity, p.action, ", ".join(p.targets)]
+                            for i, p in enumerate(report.plan, 1)],
+                           widths=[0.8, 2.8, 9.6, 3.8])
+                for row, p in zip(pt.rows[1:], report.plan):
+                    cell = row.cells[2]
+                    cell.paragraphs[0].runs[0].bold = True
+                    small(cell.add_paragraph(),
+                          f"Источник: {p.source_label} · {'; '.join(p.titles)}", MUTED, 8)
+                    for link in _links(p.references, 4):
+                        lp = cell.add_paragraph()
+                        small(lp, f"{link.label}: ", INK_2, 8)
+                        hyperlink(lp, link.url)
+            else:
+                doc.add_paragraph("Мер устранения не требуется.")
 
-        # 3. Сравнение
-        heading(3, "Сравнение с предыдущим прогоном")
+        # Сравнение
+        heading(num["trend"], "Сравнение с предыдущим прогоном")
         if t:
             vp = doc.add_paragraph()
             vr = vp.add_run(_x(t.verdict))
@@ -490,8 +514,8 @@ class ReportRenderer:
             doc.add_paragraph("Предыдущий прогон не задан — это первый прогон, "
                               "сравнение будет доступно со следующего.")
 
-        # 4. По хостам
-        heading(4, "Результаты по хостам")
+        # По хостам
+        heading(num["hosts"], "Результаты по хостам")
         hosts = host_blocks(report)
         if not hosts:
             doc.add_paragraph("Находок нет.")
@@ -527,10 +551,10 @@ class ReportRenderer:
                 rows.append(row)
             table(header, rows, widths=widths)
 
-        # 5. Детально
-        heading(5, "Детальные результаты для инженеров")
+        # Детально
+        heading(num["details"], "Детальные результаты для инженеров")
         for i, m in enumerate(report.modules, 1):
-            doc.add_heading(_x(f"5.{i}. {m.label}"), level=2)
+            doc.add_heading(_x(f"{num['details']}.{i}. {m.label}"), level=2)
             if not m.findings:
                 small(doc.add_paragraph(), "Открытых находок нет.", MUTED, 9)
             for _, _, group in m.by_severity:
@@ -569,6 +593,15 @@ class ReportRenderer:
                     rem = v.remediation
                     rp = doc.add_paragraph()
                     shade(rp._p, GOOD_BG)
+                    if report.brief:
+                        links = _links(rem.references)
+                        small(rp, "Ссылки на устранение", GOOD, 8, bold=True)
+                        if not links:
+                            small(rp, "\nСсылок на устранение нет.", MUTED, 8)
+                        for link in links:
+                            small(rp, f"\n{link.label}: ", INK_2, 8, bold=True)
+                            hyperlink(rp, link.url)
+                        continue
                     small(rp, "Рекомендация по устранению\n", GOOD, 8, bold=True)
                     rp.add_run(_x(rem.text))
                     note = f"Источник: {rem.source_label}."

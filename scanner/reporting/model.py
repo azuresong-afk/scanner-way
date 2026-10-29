@@ -11,11 +11,14 @@
   * modules — разделы по каждому модулю раздельно;
   * trend — сравнение с предыдущим прогоном (open/fixed/new/regression +
     динамика по severity) сводно и в каждом модульном разделе.
+
+Краткая версия (`brief_report`) — та же модель без плана устранения; вместо
+текстовых рекомендаций по каждой находке остаются только ссылки на устранение.
 """
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from scanner.core.models import Finding, FindingStatus, FindingType, Severity
@@ -23,6 +26,9 @@ from scanner.reporting.diff import RunDiff, diff_by_module, diff_runs, severity_
 from scanner.reporting.remediation import Remediation, RemediationResolver
 
 SCHEMA_VERSION = "1.0"
+
+# Отсылка к плану в ключевых выводах — в краткой версии плана нет
+_PLAN_HINT = " (см. план устранения)"
 
 
 def _generator_version() -> str:
@@ -272,26 +278,46 @@ class Report:
     plan: list[PlanItem]
     combined: Section
     modules: list[Section]
+    brief: bool = False   # краткая версия: без плана и текстов рекомендаций
 
     @property
     def has_trend(self) -> bool:
         return self.combined.trend is not None
 
+    @property
+    def variant(self) -> str:
+        return "brief" if self.brief else "full"
+
     def to_dict(self) -> dict:
         c = self.context
-        return {
+        out = {
             "schema_version": SCHEMA_VERSION,
             "generator": {"name": "scanner", "version": _generator_version()},
             "meta": {
                 "title": c.title, "customer": c.customer, "engagement": c.engagement,
                 "run_id": c.run_id, "previous_run_id": c.previous_run_id,
                 "generated_at": c.generated_at.isoformat(),
+                "variant": self.variant,
             },
             "summary": self.summary.to_dict(),
             "remediation_plan": [p.to_dict() for p in self.plan],
             "combined": self.combined.to_dict(),
             "modules": [m.to_dict() for m in self.modules],
         }
+        if self.brief:
+            del out["remediation_plan"]
+            for sec in [out["combined"], *out["modules"]]:
+                views = sec["findings"] + (sec["trend"]["fixed"] if sec["trend"] else [])
+                for f in views:
+                    f["remediation"] = {"references": f["remediation"]["references"]}
+        return out
+
+
+def brief_report(report: Report) -> Report:
+    """Краткая версия отчёта: без плана устранения, по находкам — только ссылки."""
+    points = [p.replace(_PLAN_HINT, "") for p in report.summary.key_points]
+    return replace(report, plan=[], brief=True,
+                   summary=replace(report.summary, key_points=points))
 
 
 # --- построение -------------------------------------------------------------
@@ -359,7 +385,7 @@ def _summary(views: list[FindingView], trend: Trend | None) -> Summary:
                             if f.severity in (Severity.CRITICAL, Severity.HIGH)})
         points.append(
             f"Находок критического и высокого уровня: {urgent} (хостов: {urgent_hosts}). "
-            "Их устранение — первоочередная задача (см. план устранения).")
+            f"Их устранение — первоочередная задача{_PLAN_HINT}.")
     else:
         points.append("Находок критического и высокого уровня не выявлено.")
     creds = [f for f in findings if f.finding_type is FindingType.CRED]
