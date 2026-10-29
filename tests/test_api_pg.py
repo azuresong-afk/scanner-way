@@ -64,9 +64,21 @@ def test_api_end_to_end_on_postgres(pg_factory):  # noqa: F811
                      params={"format": "json"}).status_code == 200
         assert c.post("/engagements", headers=op, json={"name": "x"}).status_code == 403
 
+        # ложное срабатывание: INET-хост и уникальность (договор, dedup_key) на PG
+        fid = c.get(f"/runs/{run_id}/findings", headers=op).json()[0]["id"]
+        for reason in ("первая", "вторая"):
+            r = c.put(f"/findings/{fid}/false-positive", headers=op, json={"reason": reason})
+            assert r.status_code == 200, r.text
+        marks = c.get(f"/engagements/{eid}/false-positives", headers=op).json()
+        assert len(marks) == 1 and marks[0]["reason"] == "вторая"
+        rep = c.get(f"/runs/{run_id}/report", headers=op, params={"format": "json"}).json()
+        assert len(rep["false_positives"]) == 1
+        assert c.delete(f"/findings/{fid}/false-positive", headers=op).status_code == 200
+
     with pg_factory() as s:
         roles = set(s.scalars(text("SELECT name FROM roles")))
         assert roles == {"admin", "operator", "auditor", "cred_audit", "host_credentials"}
         actions = set(s.scalars(text("SELECT action FROM audit_log")))
         assert {"login", "user_create", "allowlist_add", "scan_queue", "deny",
-                "scan_finish", "export", "access_denied"} <= actions
+                "scan_finish", "export", "access_denied", "false_positive_mark",
+                "false_positive_unmark"} <= actions

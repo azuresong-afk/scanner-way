@@ -7,7 +7,8 @@
 
 Роли (docs/architecture.md, раздел 9):
   * admin    — пользователи и роли, договоры, allowlist, журнал аудита;
-  * operator — запуск/остановка прогонов, просмотр;
+  * operator — запуск/остановка прогонов, просмотр, разбор находок (отметка
+    «ложное срабатывание» и её снятие — право triage_findings);
   * auditor  — только просмотр и экспорт отчётов, журнал аудита;
   * cred_audit — отдельное право на модуль аудита учётных данных. Не входит ни
     в одну базовую роль (включая admin) и выдаётся явно, вдобавок к operator;
@@ -35,13 +36,15 @@ class Perm(enum.StrEnum):
     VIEW_AUDIT = "view_audit"
     CRED_AUDIT = "cred_audit"
     HOST_CREDENTIALS = "host_credentials"
+    TRIAGE_FINDINGS = "triage_findings"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Perm]] = {
     "admin": frozenset({Perm.MANAGE_USERS, Perm.MANAGE_ENGAGEMENTS,
                         Perm.MANAGE_ALLOWLIST, Perm.VIEW_ENGAGEMENTS,
                         Perm.VIEW_REPORT, Perm.VIEW_AUDIT}),
-    "operator": frozenset({Perm.VIEW_ENGAGEMENTS, Perm.RUN_SCAN, Perm.VIEW_REPORT}),
+    "operator": frozenset({Perm.VIEW_ENGAGEMENTS, Perm.RUN_SCAN, Perm.VIEW_REPORT,
+                           Perm.TRIAGE_FINDINGS}),
     "auditor": frozenset({Perm.VIEW_ENGAGEMENTS, Perm.VIEW_REPORT, Perm.VIEW_AUDIT}),
     "cred_audit": frozenset({Perm.CRED_AUDIT}),
     "host_credentials": frozenset({Perm.HOST_CREDENTIALS}),

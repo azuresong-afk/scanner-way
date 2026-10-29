@@ -14,14 +14,23 @@
 
 Краткая версия (`brief_report`) — та же модель без плана устранения; вместо
 текстовых рекомендаций по каждой находке остаются только ссылки на устранение.
+
+Находки, отмеченные как ложные срабатывания (`false_positives`), в отчёт и
+сравнение не входят: они перечислены отдельным разделом (`false_positives`).
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
-from scanner.core.models import Finding, FindingStatus, FindingType, Severity
+from scanner.core.models import (
+    FalsePositiveMark,
+    Finding,
+    FindingStatus,
+    FindingType,
+    Severity,
+)
 from scanner.reporting.diff import RunDiff, diff_by_module, diff_runs, severity_counts
 from scanner.reporting.remediation import Remediation, RemediationResolver
 
@@ -211,6 +220,45 @@ class Section:
 
 
 @dataclass(slots=True)
+class FalsePositiveView:
+    """Находка прогона, исключённая из отчёта как ложное срабатывание."""
+    finding: Finding
+    mark: FalsePositiveMark
+
+    @property
+    def severity_label(self) -> str:
+        return SEVERITY_LABELS[self.finding.severity]
+
+    @property
+    def module_label(self) -> str:
+        return module_label(self.finding.module)
+
+    @property
+    def target(self) -> str:
+        f = self.finding
+        return f"{f.host}:{f.port}" if f.port is not None else f.host
+
+    def to_dict(self) -> dict:
+        f, m = self.finding, self.mark
+        return {
+            "id": f.dedup_key(),
+            "module": f.module,
+            "module_label": self.module_label,
+            "title": f.title,
+            "severity": str(f.severity),
+            "severity_label": self.severity_label,
+            "host": f.host,
+            "port": f.port,
+            "vuln_id": f.vuln_id,
+            "cve_ids": list(f.cve_ids),
+            "bdu_ids": list(f.bdu_ids),
+            "reason": m.reason,
+            "marked_by": m.marked_by,
+            "marked_at": m.marked_at.isoformat() if m.marked_at else None,
+        }
+
+
+@dataclass(slots=True)
 class PlanItem:
     """Одна мера устранения, применимая к нескольким находкам/хостам."""
     severity: Severity
@@ -280,6 +328,7 @@ class Report:
     combined: Section
     modules: list[Section]
     brief: bool = False   # краткая версия: без плана и текстов рекомендаций
+    false_positives: list[FalsePositiveView] = field(default_factory=list)
 
     @property
     def has_trend(self) -> bool:
@@ -304,6 +353,7 @@ class Report:
             "remediation_plan": [p.to_dict() for p in self.plan],
             "combined": self.combined.to_dict(),
             "modules": [m.to_dict() for m in self.modules],
+            "false_positives": [v.to_dict() for v in self.false_positives],
         }
         if self.brief:
             del out["remediation_plan"]
@@ -369,7 +419,8 @@ def _plan(views: list[FindingView]) -> list[PlanItem]:
     return items
 
 
-def _summary(views: list[FindingView], trend: Trend | None) -> Summary:
+def _summary(views: list[FindingView], trend: Trend | None,
+             false_positives: int = 0) -> Summary:
     findings = [v.finding for v in views]
     counts = severity_counts(findings)
     risk = next((s for s in SEVERITY_ORDER[:-1] if counts[s]), None)
@@ -402,6 +453,9 @@ def _summary(views: list[FindingView], trend: Trend | None) -> Summary:
         if c[FindingStatus.REGRESSION]:
             points.append("Повторное появление ранее устранённых уязвимостей указывает на "
                           "проблемы в процессе управления изменениями или обновлениями.")
+    if false_positives:
+        points.append(f"Исключено как ложные срабатывания: {false_positives} "
+                      "(перечень — в разделе «Ложные срабатывания»).")
     return Summary(total=len(findings), hosts=len(per_host), severity_counts=counts,
                    risk_level=risk, top_hosts=hosts[:5], key_points=points)
 
@@ -413,17 +467,25 @@ def build_report(
     historically_fixed: set[str] | None = None,
     resolver: RemediationResolver | None = None,
     context: ReportContext | None = None,
+    false_positives: Mapping[str, FalsePositiveMark] | None = None,
 ) -> Report:
     """Строит модель отчёта.
 
     previous=None — первый прогон, раздел сравнения не формируется.
     historically_fixed — ключи, помеченные fixed в более ранних прогонах
     (для определения regression, см. diff_runs).
+    false_positives — {dedup_key: отметка}: такие находки исключаются из обоих
+    прогонов (не считаются ни открытыми, ни устранёнными) и идут в отдельный раздел.
     """
     resolver = resolver or RemediationResolver()
     context = context or ReportContext()
-    cur = sorted(current, key=_sort_key)
-    prev = list(previous) if previous is not None else None
+    fp = false_positives or {}
+    cur_all = sorted(current, key=_sort_key)
+    cur = [f for f in cur_all if f.dedup_key() not in fp]
+    fp_views = [FalsePositiveView(f, fp[f.dedup_key()])
+                for f in cur_all if f.dedup_key() in fp]
+    prev = ([f for f in previous if f.dedup_key() not in fp]
+            if previous is not None else None)
 
     statuses: dict[str, FindingStatus] = {}
     combined_trend = None
@@ -450,8 +512,9 @@ def build_report(
 
     return Report(
         context=context,
-        summary=_summary(views, combined_trend),
+        summary=_summary(views, combined_trend, len(fp_views)),
         plan=_plan(views),
         combined=Section("combined", "Сводно по всем модулям", views, combined_trend),
         modules=modules,
+        false_positives=fp_views,
     )

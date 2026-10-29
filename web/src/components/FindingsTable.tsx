@@ -62,7 +62,7 @@ export function FindingsTable({
             {rows.slice(0, limit).map((f, i) => (
               <tr
                 key={`${f.host}|${f.port}|${f.vuln_id}|${f.module}|${i}`}
-                className={`clickable ${selected === f ? "selected" : ""}`}
+                className={`clickable ${selected === f ? "selected" : ""} ${f.false_positive ? "is-fp" : ""}`}
                 onClick={() => onOpen(f)}
               >
                 <td>
@@ -92,7 +92,13 @@ export function FindingsTable({
                 <td className="right num">{f.cvss !== null ? f.cvss.toFixed(1) : "—"}</td>
                 <td className="muted nowrap">{MODULE_LABEL[f.module] ?? f.module}</td>
                 <td>
-                  <FindingStatusPill status={f.status} />
+                  {f.false_positive ? (
+                    <span className="pill pill-muted" title={f.false_positive.reason ?? undefined}>
+                      Ложное
+                    </span>
+                  ) : (
+                    <FindingStatusPill status={f.status} />
+                  )}
                 </td>
               </tr>
             ))}

@@ -13,7 +13,7 @@ import { ServicesTable } from "../components/ServicesTable";
 import { Empty, ErrorAlert, Kpi, Loading, RunStatusPill } from "../components/ui";
 import { fmtDateFull, fmtDuration } from "../lib/format";
 import { isFinished, MODULE_LABEL, RATE_PROFILES } from "../lib/labels";
-import { byHost, isIssue, summarize } from "../lib/stats";
+import { byHost, isFalsePositive, isIssue, replaceFinding, summarize } from "../lib/stats";
 import { useAsync, useInterval } from "../lib/useAsync";
 
 type Tab = "findings" | "hosts" | "services";
@@ -40,6 +40,7 @@ export function RunDetailPage() {
   useEffect(() => setOpen(null), [id]);
 
   const issues = useMemo(() => (findings.data ?? []).filter(isIssue), [findings.data]);
+  const falsePositives = useMemo(() => (findings.data ?? []).filter(isFalsePositive), [findings.data]);
   const summary = useMemo(() => (findings.data ? summarize(findings.data, null, services.data) : null), [findings.data, services.data]);
   const hosts = useMemo(() => byHost(issues, services.data ?? []), [issues, services.data]);
 
@@ -161,6 +162,12 @@ export function RunDetailPage() {
             </div>
             {tab === "findings" &&
               (issues.length ? <FindingsTable findings={issues} onOpen={setOpen} selected={open} /> : <Empty title="Уязвимостей не найдено" />)}
+            {tab === "findings" && falsePositives.length > 0 && (
+              <details style={{ borderTop: "1px solid var(--border)" }}>
+                <summary style={{ padding: "14px 20px", cursor: "pointer", fontWeight: 600 }}>Ложные срабатывания ({falsePositives.length})</summary>
+                <FindingsTable findings={falsePositives} onOpen={setOpen} selected={open} />
+              </details>
+            )}
             {tab === "hosts" && <HostHeatmap rows={hosts} limit={hosts.length} onPick={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${r.id}`)} />}
             {tab === "services" && <ServicesTable runId={r.id} services={services.data ?? []} />}
           </section>
@@ -168,7 +175,15 @@ export function RunDetailPage() {
       ))}
 
       {open && (
-        <FindingDrawer finding={open} onClose={() => setOpen(null)} onHost={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${r.id}`)} />
+        <FindingDrawer
+          finding={open}
+          onClose={() => setOpen(null)}
+          onHost={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${r.id}`)}
+          onChanged={(u) => {
+            findings.setData(replaceFinding(findings.data ?? [], u));
+            setOpen(u);
+          }}
+        />
       )}
     </>
   );

@@ -137,7 +137,16 @@ export interface RunCreated extends RunOut {
   denied_targets: DeniedTarget[];
 }
 
+/** Отметка «ложное срабатывание» (действует во всех прогонах договора). */
+export interface FalsePositiveMark {
+  reason: string | null;
+  marked_by: string | null;
+  marked_at: string | null;
+}
+
 export interface FindingOut {
+  id: number;
+  dedup_key: string;
   module: string;
   host: string;
   port: number | null;
@@ -151,6 +160,7 @@ export interface FindingOut {
   evidence: string | null;
   status: FindingStatus | null;
   detected_at: string;
+  false_positive: FalsePositiveMark | null;
 }
 
 export interface ServiceOut {

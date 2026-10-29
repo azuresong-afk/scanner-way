@@ -497,3 +497,7 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .delta-badge { font-size: 13px; padding: 4px 10px; border-radius: 20px; }
 .drawer:focus, .modal:focus { outline: none; }
 .input::placeholder, .textarea::placeholder { color: var(--text-3); opacity: 0.8; }
+
+/* Ложное срабатывание: строка приглушена, но остаётся кликабельной */
+.table tr.is-fp td { color: var(--text-3); }
+.table tr.is-fp td .sev, .table tr.is-fp td .tag { opacity: 0.6; }
