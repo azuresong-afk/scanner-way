@@ -21,8 +21,14 @@ from scanner.api.schemas import (
     ServiceOut,
 )
 from scanner.core import repository as repo
+from scanner.core.audit import AuditSink
 from scanner.core.db import ScanRun
-from scanner.core.orchestrator import VULN_ENGINES, RunService, order_modules
+from scanner.core.orchestrator import (
+    VULN_ENGINES,
+    RunService,
+    TargetPlan,
+    order_modules,
+)
 from scanner.core.ratelimit import PROFILES
 
 router = APIRouter(tags=["runs"])
@@ -49,29 +55,63 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
               audit: AuditDep,
               runs: Annotated[RunService, Depends(_runs)]) -> RunCreated:
     get_engagement(session, engagement_id)
-    modules = _with_engine(body.modules, body.vuln_engine)
+    modules = with_engine(body.modules, body.vuln_engine)
+    check_run_options(engagement_id, modules=modules, rate_profile=body.rate_profile,
+                      credential_ids=body.credential_ids, user=user, request=request,
+                      audit=audit, runs=runs)
+    plan, denied = check_targets(engagement_id, body.targets, user=user, audit=audit,
+                                 runs=runs)
+
+    session.commit()   # отпустить транзакцию запроса до работы исполнителя
+    run_id = runs.submit(engagement_id=engagement_id, modules=modules,
+                         rate_profile=body.rate_profile, requested_targets=body.targets,
+                         actor=user.subject, started_by=user.id,
+                         credential_ids=body.credential_ids, name=body.name)
+    session.expire_all()
+    run = _get_run(session, run_id)
+    return RunCreated(**RunOut.model_validate(run).model_dump(),
+                      accepted_targets=len(plan.allowed), denied_targets=denied)
+
+
+def check_run_options(engagement_id: int, *, modules: list[str], rate_profile: str,
+                      credential_ids: list[int], user: Principal, request: Request,
+                      audit: AuditSink, runs: RunService) -> None:
+    """Модули, профиль, права и учётки прогона — до постановки (и сохранения
+    расписания). Ошибки — HTTPException 422/403."""
     unknown = [m for m in modules if m not in runs.registry]
     if unknown:
         raise HTTPException(422,
                             f"unknown modules: {', '.join(unknown)}; "
                             f"available: {', '.join(runs.known_modules())}")
-    if body.rate_profile not in PROFILES:
+    if rate_profile not in PROFILES:
         raise HTTPException(422,
-                            f"unknown rate profile: {body.rate_profile}; "
+                            f"unknown rate profile: {rate_profile}; "
                             f"available: {', '.join(PROFILES)}")
     # Права на отдельные модули — до постановки прогона в очередь.
-    missing = {str(MODULE_PERMISSIONS[m]) for m in modules
-               if m in MODULE_PERMISSIONS and not user.has(MODULE_PERMISSIONS[m])}
-    if body.credential_ids and not user.has(Perm.HOST_CREDENTIALS):
-        missing.add(str(Perm.HOST_CREDENTIALS))
+    missing = missing_permissions(user, modules, credential_ids)
     if missing:
-        deny(audit, user, request, sorted(missing))
+        deny(audit, user, request, missing)
     try:
-        runs.check_credentials(engagement_id, modules, body.credential_ids)
+        runs.check_credentials(engagement_id, modules, credential_ids)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
 
-    plan = runs.preview(engagement_id, body.targets)
+
+def missing_permissions(user: Principal, modules: list[str],
+                        credential_ids: list[int]) -> list[str]:
+    """Права, которых не хватает пользователю для такого прогона (кроме run_scan)."""
+    missing = {str(MODULE_PERMISSIONS[m]) for m in modules
+               if m in MODULE_PERMISSIONS and not user.has(MODULE_PERMISSIONS[m])}
+    if credential_ids and not user.has(Perm.HOST_CREDENTIALS):
+        missing.add(str(Perm.HOST_CREDENTIALS))
+    return sorted(missing)
+
+
+def check_targets(engagement_id: int, targets: list[str], *, user: Principal,
+                  audit: AuditSink, runs: RunService
+                  ) -> tuple[TargetPlan, list[DeniedTargetOut]]:
+    """Цели через allowlist договора; ни одной разрешённой — 422 с перечнем отказов."""
+    plan = runs.preview(engagement_id, targets)
     denied = [DeniedTargetOut(target=d.target, reason=d.reason, count=d.count)
               for d in plan.denied]
     if not plan.allowed:
@@ -82,19 +122,10 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
                             {"message": "no requested target is in the engagement "
                                         "allowlist",
                              "denied_targets": [d.model_dump() for d in denied]})
-
-    session.commit()   # отпустить транзакцию запроса до работы исполнителя
-    run_id = runs.submit(engagement_id=engagement_id, modules=modules,
-                         rate_profile=body.rate_profile, requested_targets=body.targets,
-                         actor=user.subject, started_by=user.id,
-                         credential_ids=body.credential_ids)
-    session.expire_all()
-    run = _get_run(session, run_id)
-    return RunCreated(**RunOut.model_validate(run).model_dump(),
-                      accepted_targets=len(plan.allowed), denied_targets=denied)
+    return plan, denied
 
 
-def _with_engine(modules: list[str], engine: str | None) -> list[str]:
+def with_engine(modules: list[str], engine: str | None) -> list[str]:
     """Модули прогона с учётом выбранного движка поиска уязвимостей."""
     if engine is None:
         return list(modules)

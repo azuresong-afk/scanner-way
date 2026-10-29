@@ -1,11 +1,12 @@
 """Pydantic-схемы запросов и ответов API."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from scanner.api.security import MIN_PASSWORD_LEN
+from scanner.core.naming import run_title
 
 
 class _Orm(BaseModel):
@@ -140,6 +141,8 @@ class RunCreate(BaseModel):
     # по учётной записи) | both. Если задан — заменяет vuln/auth_inventory в modules.
     vuln_engine: str | None = Field(default=None, pattern="^(nuclei|credentialed|both)$")
     credential_ids: list[int] = Field(default_factory=list, max_length=32)
+    # Своё имя прогона; пусто — имя по выбранным опциям (модули и цели).
+    name: str | None = Field(default=None, max_length=200)
 
 
 class DeniedTargetOut(BaseModel):
@@ -154,16 +157,82 @@ class RunOut(_Orm):
     modules: list[str]
     rate_profile: str
     credential_ids: list[int] = Field(default_factory=list)
+    name: str | None = None
+    targets: list[str] = Field(default_factory=list)
+    schedule_id: int | None = None
     status: str
     started_by: int | None
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime | None
 
+    @model_validator(mode="after")
+    def _default_name(self) -> RunOut:
+        # Прогоны до миграции 0005 без имени — подпись по модулям.
+        if not self.name:
+            self.name = run_title(self.modules, self.targets or ())
+        return self
+
 
 class RunCreated(RunOut):
     accepted_targets: int
     denied_targets: list[DeniedTargetOut]
+
+
+# ---- расписания ----
+class ScheduleIn(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    targets: list[str] = Field(min_length=1, max_length=1024)
+    modules: list[str] = Field(min_length=1)
+    rate_profile: str = "gentle"
+    vuln_engine: str | None = Field(default=None, pattern="^(nuclei|credentialed|both)$")
+    credential_ids: list[int] = Field(default_factory=list, max_length=32)
+    kind: str = Field(pattern="^(once|daily|weekly|monthly)$")
+    time_of_day: str | None = None             # ЧЧ:ММ — для daily/weekly/monthly
+    weekdays: list[int] = Field(default_factory=list, max_length=7)  # 0 — пн
+    month_day: int | None = Field(default=None, ge=1, le=31)
+    run_at: datetime | None = None             # для once
+    timezone: str | None = None                # IANA; пусто — пояс сервера
+    enabled: bool = True
+
+
+class ScheduleToggle(BaseModel):
+    enabled: bool
+
+
+class ScheduleOut(_Orm):
+    id: int
+    engagement_id: int
+    name: str | None
+    title: str = ""
+    targets: list[str]
+    modules: list[str]
+    rate_profile: str
+    credential_ids: list[int] = Field(default_factory=list)
+    kind: str
+    time_of_day: str | None
+    weekdays: list[int] = Field(default_factory=list)
+    month_day: int | None
+    run_at: datetime | None
+    timezone: str
+    enabled: bool
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+    last_result: str | None
+    last_run_id: int | None = None
+    owner_id: int | None
+    created_at: datetime | None
+
+    @field_validator("run_at", "next_run_at", "last_run_at", "created_at")
+    @classmethod
+    def _utc(cls, v: datetime | None) -> datetime | None:
+        # SQLite (тесты) отдаёт время без пояса; в БД оно всегда UTC
+        return v.replace(tzinfo=UTC) if v is not None and v.tzinfo is None else v
+
+    @model_validator(mode="after")
+    def _title(self) -> ScheduleOut:
+        self.title = self.name or run_title(self.modules, self.targets)
+        return self
 
 
 class FindingOut(BaseModel):

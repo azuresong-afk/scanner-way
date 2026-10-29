@@ -124,6 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--allow-credentials", action="store_true",
                      help="подтверждаю: вход на активы по учётным записям согласован "
                           "с заказчиком")
+    run.add_argument("--name", help="имя прогона (по умолчанию — по модулям и целям)")
     run.set_defaults(handler=cmd_run)
 
     # --- credentials ---
@@ -333,11 +334,13 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
           f"модули: {' '.join(args.modules)}, профиль: {args.rate}")
     run_id = svc.submit(engagement_id=args.engagement, modules=args.modules,
                         rate_profile=args.rate, requested_targets=args.targets,
-                        actor=env.actor, credential_ids=args.credentials)
+                        actor=env.actor, credential_ids=args.credentials,
+                        name=args.name)
     with session_scope(env.sessions) as s:
-        status = repo.get_scan_run(s, run_id).status
+        run = repo.get_scan_run(s, run_id)
+        status, title = run.status, run.name
         findings = len(repo.get_findings(s, run_id))
-    print(f"Прогон {run_id}: {status}, находок — {findings}")
+    print(f"Прогон {run_id} «{title}»: {status}, находок — {findings}")
     if status != "done":
         print("Подробности ошибок модулей — в журнале аудита (scan_finish).",
               file=sys.stderr)

@@ -32,6 +32,7 @@ from scanner.core.audit import AuditSink
 from scanner.core.credentials import CredentialVault, HostCredential, load_vault
 from scanner.core.db import session_scope
 from scanner.core.models import Finding, HostInventory, ServiceInfo
+from scanner.core.naming import clean_name, run_title
 from scanner.core.ratelimit import PROFILES, RateProfile, get_profile
 from scanner.modules.base import ScanContext, ScanModule
 from scanner.reporting.diff import diff_runs
@@ -328,8 +329,12 @@ class RunService:
     def submit(self, *, engagement_id: int, modules: list[str], rate_profile: str,
                requested_targets: list[str], actor: str,
                started_by: int | None = None,
-               credential_ids: list[int] | None = None) -> int:
-        """Создаёт прогон (pending) и отдаёт его исполнителю. Права проверяет API."""
+               credential_ids: list[int] | None = None,
+               name: str | None = None, schedule_id: int | None = None) -> int:
+        """Создаёт прогон (pending) и отдаёт его исполнителю. Права проверяет API.
+
+        name — имя, заданное оператором; без него имя строится по модулям и целям.
+        """
         unknown = [m for m in modules if m not in self.registry]
         if unknown:
             raise ValueError(f"unknown modules: {', '.join(unknown)}")
@@ -338,13 +343,17 @@ class RunService:
         names = order_modules(modules)
         cred_ids = list(dict.fromkeys(credential_ids or []))
         self.check_credentials(engagement_id, names, cred_ids)
+        title = clean_name(name) or run_title(names, requested_targets)
         with session_scope(self.sessions) as s:
             run_id = repo.create_scan_run(s, engagement_id=engagement_id, modules=names,
                                           rate_profile=rate_profile,
-                                          started_by=started_by, credential_ids=cred_ids)
+                                          started_by=started_by, credential_ids=cred_ids,
+                                          name=title, targets=requested_targets[:1024],
+                                          schedule_id=schedule_id)
         self.audit.record(subject=actor, action="scan_queue", target=f"scan_run:{run_id}",
                           result="ok",
-                          details={"engagement_id": engagement_id, "modules": names,
+                          details={"engagement_id": engagement_id, "name": title,
+                                   "schedule_id": schedule_id, "modules": names,
                                    "rate_profile": rate_profile,
                                    "credential_ids": cred_ids,
                                    "requested_targets": requested_targets[:100]})

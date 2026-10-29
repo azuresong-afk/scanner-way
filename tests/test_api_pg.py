@@ -70,3 +70,39 @@ def test_api_end_to_end_on_postgres(pg_factory):  # noqa: F811
         actions = set(s.scalars(text("SELECT action FROM audit_log")))
         assert {"login", "user_create", "allowlist_add", "scan_queue", "deny",
                 "scan_finish", "export", "access_denied"} <= actions
+
+
+def test_schedule_fires_on_postgres(pg_factory):  # noqa: F811
+    from datetime import datetime, timedelta
+
+    app = create_app(session_factory=pg_factory,
+                     settings=ApiSettings(secret="z" * 40, bootstrap_admin="root",
+                                          bootstrap_password=PASSWORD),
+                     registry={"discovery": Echo}, executor=inline_executor(),
+                     resolver_factory=lambda f: RemediationResolver())
+    with TestClient(app) as c:
+        def login(u):
+            r = c.post("/auth/token", json={"username": u, "password": PASSWORD})
+            return {"Authorization": f"Bearer {r.json()['access_token']}"}
+        admin = login("root")
+        c.post("/users", headers=admin,
+               json={"username": "op", "password": PASSWORD, "roles": ["operator"]})
+        op = login("op")
+        eid = c.post("/engagements", headers=admin, json={"name": "pg"}).json()["id"]
+        c.post(f"/engagements/{eid}/allowlist", headers=admin, json={"cidr": "10.2.0.0/30"})
+        r = c.post(f"/engagements/{eid}/schedules", headers=op,
+                   json={"targets": ["10.2.0.1"], "modules": ["discovery"],
+                         "kind": "weekly", "time_of_day": "02:00", "weekdays": [6],
+                         "timezone": "Europe/Moscow"})
+        assert r.status_code == 201, r.text
+        sid = r.json()["id"]
+        due = datetime.fromisoformat(r.json()["next_run_at"]) + timedelta(seconds=1)
+        sched = app.state.scheduler
+        assert sched.tick(due) == {sid: "queued"}
+        assert sched.tick(due) == {}          # захват по next_run_at работает на PG
+        runs = c.get(f"/engagements/{eid}/runs", headers=op).json()
+        assert [(x["schedule_id"], x["name"], x["status"]) for x in runs] == \
+            [(sid, "Инвентаризация · 10.2.0.1", "done")]
+        nxt = datetime.fromisoformat(c.get(f"/schedules/{sid}", headers=op)
+                                     .json()["next_run_at"])
+        assert nxt - due > timedelta(days=6)
