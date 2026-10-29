@@ -127,11 +127,11 @@ export function RunDetailPage() {
           </section>
 
           <section className="row">
-            <div className="card card-pad grow-1 stack" style={{ gap: 14, alignSelf: "flex-start" }}>
+            <div className="card card-pad grow-1 stack" style={{ gap: 14 }}>
               <h2>По уровню опасности</h2>
               <SeverityBars counts={summary.counts} onPick={(s) => navigate(`/findings?run=${r.id}&sev=${s}`)} />
             </div>
-            <div className="card card-pad grow-2" style={{ alignSelf: "flex-start" }}>
+            <div className="card card-pad grow-2">
               <div className="inline" style={{ justifyContent: "space-between", marginBottom: 10 }}>
                 <h2>Хосты × уровень опасности</h2>
                 <HeatLegend />
