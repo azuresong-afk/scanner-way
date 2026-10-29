@@ -25,6 +25,9 @@ class ApiSettings(BaseSettings):
     # Сколько прогонов исполняется параллельно в процессе API.
     run_workers: int = 2
 
+    # Проверок доступности хоста (без прогона) на пользователя в минуту.
+    reachability_per_minute: int = 10
+
     # Origin'ы веб-интерфейса через запятую (https://scanner.example.local).
     # Пусто — CORS выключен: штатно интерфейс отдаётся с того же origin, что и
     # API (nginx из web/Dockerfile проксирует /api), и CORS не нужен.

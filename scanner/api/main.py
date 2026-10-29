@@ -21,7 +21,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from scanner.api import routes_audit, routes_auth, routes_engagements, routes_runs
+from scanner.api import (
+    routes_audit,
+    routes_auth,
+    routes_engagements,
+    routes_reachability,
+    routes_runs,
+)
 from scanner.api.rbac import seed_rbac, set_user_roles
 from scanner.api.security import LoginThrottle, TokenSigner, hash_password
 from scanner.api.settings import ApiSettings
@@ -29,11 +35,13 @@ from scanner.core.audit import AuditSink, DbAuditSink
 from scanner.core.db import User, make_engine, make_session_factory, session_scope
 from scanner.core.models import Finding
 from scanner.core.orchestrator import ModuleFactory, RunService
+from scanner.core.reachability import CheckThrottle, ReachabilityResult, check_host
 from scanner.reporting.remediation import RemediationResolver
 
 log = logging.getLogger(__name__)
 
 ResolverFactory = Callable[[list[Finding]], RemediationResolver]
+ReachabilityCheck = Callable[[str, list[int]], ReachabilityResult]
 
 
 def bdu_resolver_factory(store) -> ResolverFactory:
@@ -79,7 +87,8 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
                audit: AuditSink | None = None,
                registry: Mapping[str, ModuleFactory] | None = None,
                executor: Executor | None = None,
-               resolver_factory: ResolverFactory | None = None) -> FastAPI:
+               resolver_factory: ResolverFactory | None = None,
+               reachability: ReachabilityCheck | None = None) -> FastAPI:
     settings = settings or ApiSettings()
     if session_factory is None:
         session_factory = make_session_factory(make_engine())
@@ -112,6 +121,8 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.state.runs = RunService(session_factory, audit, registry=registry,
                                 executor=executor)
     app.state.resolver_factory = resolver_factory
+    app.state.reach_check = reachability or check_host
+    app.state.reach_throttle = CheckThrottle(settings.reachability_per_minute, 60.0)
 
     # Только явно перечисленные origin'ы; токен передаётся в заголовке
     # Authorization, cookie не используются — allow_credentials не нужен.
@@ -128,6 +139,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_auth.router)
     app.include_router(routes_engagements.router)
     app.include_router(routes_runs.router)
+    app.include_router(routes_reachability.router)
     app.include_router(routes_audit.router)
     return app
 

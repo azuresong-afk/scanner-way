@@ -212,3 +212,28 @@ describe("журнал аудита", () => {
     expect(screen.getByRole("button", { name: "Выгрузить журнал JSON" })).toBeDisabled();
   });
 });
+
+describe("проверка доступности хоста на странице договора", () => {
+  function open(roles: string[], perms: string[]) {
+    setToken("t");
+    mockApi({
+      "GET /me": me(roles, perms),
+      "GET /engagements": [ENG],
+      "GET /engagements/1": ENG,
+      "GET /engagements/1/runs": [],
+      "GET /engagements/1/allowlist": [{ id: 1, cidr: "10.0.0.0/24", note: null, added_by: 1, added_at: null }],
+    });
+    renderApp("/engagements/1");
+  }
+
+  it("видна оператору", async () => {
+    open(["operator"], OPERATOR);
+    expect(await screen.findByRole("heading", { name: "Проверка доступности хоста" })).toBeInTheDocument();
+  });
+
+  it("скрыта от администратора (не сканирует)", async () => {
+    open(["admin"], ADMIN);
+    expect(await screen.findByRole("heading", { name: "Периметр" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Проверка доступности хоста" })).not.toBeInTheDocument();
+  });
+});

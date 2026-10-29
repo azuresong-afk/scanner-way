@@ -4,6 +4,7 @@ import { Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
+import { ReachabilityCheck } from "../components/ReachabilityCheck";
 import { StartRunModal } from "../components/StartRunModal";
 import { Empty, ErrorAlert, Loading, Modal, RunStatusPill } from "../components/ui";
 import { fmtDate, fmtDuration } from "../lib/format";
@@ -219,6 +220,18 @@ export function EngagementDetailPage() {
           </section>
         )}
       </div>
+
+      {has("run_scan") && (
+        <section className="card card-pad stack" style={{ gap: "var(--s3)" }}>
+          <div className="inline" style={{ justifyContent: "space-between" }}>
+            <h2>Проверка доступности хоста</h2>
+            <span className="faint" style={{ fontSize: 12 }}>
+              Без запуска прогона
+            </span>
+          </div>
+          <ReachabilityCheck engagementId={e.id} />
+        </section>
+      )}
 
       {editing && (
         <EngagementForm
