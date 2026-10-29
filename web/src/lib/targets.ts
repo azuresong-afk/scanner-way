@@ -21,3 +21,16 @@ export function parseTargets(text: string): { targets: string[]; invalid: string
   const uniq = [...new Set(items)];
   return { targets: uniq.filter(isIpOrCidr), invalid: uniq.filter((t) => !isIpOrCidr(t)) };
 }
+
+/** Один адрес (без маски) — для проверки доступности хоста. */
+export function isSingleIp(s: string): boolean {
+  return !s.includes("/") && isIpOrCidr(s);
+}
+
+/** Порты из строки «22, 80 443»: null — если есть мусор или выход за 1..65535. */
+export function parsePorts(text: string): number[] | null {
+  const items = text.split(/[\s,;]+/).filter(Boolean);
+  const ports = items.map(Number);
+  if (ports.some((p) => !Number.isInteger(p) || p < 1 || p > 65535)) return null;
+  return [...new Set(ports)].sort((a, b) => a - b);
+}

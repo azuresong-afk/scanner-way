@@ -140,3 +140,22 @@ export interface AuditOut {
   result: string | null;
   details: Record<string, unknown> | null;
 }
+
+export type PortState = "open" | "closed" | "filtered";
+
+export interface ReachabilityIn {
+  target: string;
+  ports?: number[];
+}
+
+export interface ReachabilityOut {
+  target: string;
+  reachable: boolean;
+  methods: ("icmp" | "tcp")[];
+  icmp_available: boolean;
+  icmp_alive: boolean;
+  icmp_rtt_ms: number | null;
+  ports: { port: number; state: PortState; rtt_ms: number | null }[];
+  elapsed_ms: number;
+  checked_at: string;
+}
