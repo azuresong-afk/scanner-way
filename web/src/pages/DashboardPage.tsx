@@ -324,7 +324,7 @@ export function DashboardPage() {
           <h1>Сводка по договору</h1>
         </div>
         <div className="actions">
-          {latest && has("view_report") && <ReportMenu runId={latest.id} compact />}
+          {latest && has("view_report") && <ReportMenu runId={latest.id} runs={d?.runs} compact />}
           {has("run_scan") && (
             <button type="button" className="btn btn-primary" onClick={() => setStarting(true)}>
               <Play size={16} /> Новый прогон

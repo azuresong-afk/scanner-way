@@ -115,8 +115,9 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--format", default="html", choices=REPORT_FORMATS)
     rep.add_argument("--out", type=Path,
                      help="файл отчёта (по умолчанию report-run-<id>.<формат>)")
-    rep.add_argument("--no-compare", action="store_true",
-                     help="без сравнения с предыдущим прогоном договора")
+    rep.add_argument("--compare-to", type=int, metavar="RUN_ID",
+                     help="сравнить с указанным более ранним прогоном договора "
+                          "(по умолчанию отчёт только по одному прогону)")
     rep.add_argument("--brief", action="store_true",
                      help="краткая версия: без плана устранения, вместо рекомендаций "
                           "только ссылки на устранение")
@@ -324,9 +325,14 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
             raise CliError(f"прогон в статусе {run.status}; отчёт доступен после завершения")
         eng = s.get(Engagement, run.engagement_id)
         current = repo.get_findings(s, args.run_id)
-        prev_id = None if args.no_compare else repo.previous_scan_run_id(s, args.run_id)
+        prev_id = None
+        if args.compare_to is not None:
+            try:
+                prev_id = repo.comparison_baseline(s, run, args.compare_to).id
+            except ValueError as e:
+                raise CliError(str(e)) from e
         previous = repo.get_findings(s, prev_id) if prev_id is not None else None
-        hist = (repo.historically_fixed_keys(s, eng.id, args.run_id)
+        hist = (repo.historically_fixed_keys(s, eng.id, prev_id)
                 if prev_id is not None else None)
         context = ReportContext(customer=eng.client, engagement=eng.contract_ref or eng.name,
                                 run_id=args.run_id, previous_run_id=prev_id)
@@ -338,7 +344,7 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
         body = ReportRenderer().render(report, args.format, variant=variant)
     except RuntimeError as e:   # PDF без Pango
         raise CliError(str(e)) from e
-    suffix = "-brief" if args.brief else ""
+    suffix = ("-brief" if args.brief else "") + (f"-vs-{prev_id}" if prev_id is not None else "")
     out = args.out or Path(f"report-run-{args.run_id}{suffix}.{args.format}")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(body)

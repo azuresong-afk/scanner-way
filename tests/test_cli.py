@@ -114,7 +114,7 @@ def test_parse_run_defaults_and_rejects_unknown():
 def test_parse_report():
     a = cli.build_parser().parse_args(["report", "--run", "7", "--format", "docx"])
     assert a.handler is cli.cmd_report and a.run_id == 7 and a.format == "docx"
-    assert a.out is None and not a.no_compare
+    assert a.out is None and a.compare_to is None
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["report", "--run", "7", "--format", "xls"])
 
@@ -287,6 +287,10 @@ def test_run_and_report(engagement, tmp_path, capsys, monkeypatch):
     brief = json.loads((tmp_path / "report-run-1-brief.json").read_text(encoding="utf-8"))
     assert brief["meta"]["variant"] == "brief" and "remediation_plan" not in brief
     assert {r.details["variant"] for r in _audit(url, "export")} == {"full", "brief"}
+    assert all(r.details["previous_run_id"] is None for r in _audit(url, "export"))
+    # сравнивать можно только с более ранним прогоном
+    assert cli.main(["--db-url", url, "report", "--run", "1", "--compare-to", "1"]) == 2
+    assert "более ранним" in capsys.readouterr().err
 
 
 def test_report_unknown_run(db_url, capsys):
