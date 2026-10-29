@@ -31,9 +31,12 @@ RUN set -eux; \
     nuclei -version || true
 
 WORKDIR /app
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e .
+# Весь исходный код копируется ДО установки пакета: editable-установка
+# setuptools находит пакеты по факту их наличия, и если ставить только по
+# pyproject.toml (без каталога scanner/), консольная команда `scanner` и
+# автозагрузка БДУ в entrypoint падают с ModuleNotFoundError.
 COPY . .
+RUN pip install --no-cache-dir -e .
 RUN chmod +x docker/entrypoint.sh
 
 # Самоподготовка окружения и запуск — см. docker/entrypoint.sh
