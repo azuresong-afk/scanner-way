@@ -10,6 +10,10 @@ services:
       # Выгрузка БДУ ФСТЭК и прочие данные: положите vullist.xlsx сюда и
       # укажите BDU_FSTEC_FEED_PATH — entrypoint загрузит её один раз при старте.
       - ./data:/data
+      # Шаблоны Nuclei и его конфиг — в томах, иначе они пропадают при каждом
+      # пересоздании контейнера (docker compose up после смены .env, --build).
+      - nuclei_templates:/root/nuclei-templates
+      - nuclei_config:/root/.config/nuclei
     # cap_add NET_RAW нужен nmap для SYN/OS-fingerprint; включается осознанно
     cap_add:
       - NET_RAW
@@ -59,3 +63,5 @@ services:
 
 volumes:
   pg_data:
+  nuclei_templates:
+  nuclei_config:
