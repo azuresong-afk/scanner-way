@@ -75,6 +75,51 @@ export interface RunCreate {
   rate_profile: string;
   vuln_engine?: VulnEngine;
   credential_ids?: number[];
+  /** Своё имя; пусто — имя по выбранным опциям. */
+  name?: string;
+}
+
+export type ScheduleKind = "once" | "daily" | "weekly" | "monthly";
+
+/** Прогон по расписанию: параметры прогона + когда запускать. */
+export interface ScheduleIn extends RunCreate {
+  kind: ScheduleKind;
+  /** ЧЧ:ММ в timezone — для daily/weekly/monthly. */
+  time_of_day?: string;
+  /** 0 — понедельник … 6 — воскресенье. */
+  weekdays?: number[];
+  month_day?: number;
+  /** Момент разового запуска (ISO). */
+  run_at?: string;
+  /** IANA-пояс; по умолчанию — пояс браузера. */
+  timezone?: string;
+  enabled?: boolean;
+}
+
+export interface ScheduleOut {
+  id: number;
+  engagement_id: number;
+  name: string | null;
+  /** name или имя по опциям. */
+  title: string;
+  targets: string[];
+  modules: string[];
+  rate_profile: string;
+  credential_ids: number[];
+  kind: ScheduleKind;
+  time_of_day: string | null;
+  weekdays: number[];
+  month_day: number | null;
+  run_at: string | null;
+  timezone: string;
+  enabled: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  /** queued | skipped_overlap | skipped_no_rights | error: … */
+  last_result: string | null;
+  last_run_id: number | null;
+  owner_id: number | null;
+  created_at: string | null;
 }
 
 export type CredentialAuth = "password" | "key";
@@ -125,6 +170,11 @@ export interface RunOut {
   modules: string[];
   rate_profile: string;
   credential_ids: number[];
+  /** Имя по выбранным опциям (модули и цели) или заданное оператором. */
+  name: string;
+  targets: string[];
+  /** Расписание, по которому поставлен прогон. */
+  schedule_id: number | null;
   status: RunStatus;
   started_by: number | null;
   started_at: string | null;

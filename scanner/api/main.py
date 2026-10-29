@@ -29,8 +29,10 @@ from scanner.api import (
     routes_findings,
     routes_reachability,
     routes_runs,
+    routes_schedules,
 )
 from scanner.api.rbac import seed_rbac, set_user_roles
+from scanner.api.scheduler import Scheduler
 from scanner.api.security import LoginThrottle, TokenSigner, hash_password
 from scanner.api.settings import ApiSettings
 from scanner.core.audit import AuditSink, DbAuditSink
@@ -112,7 +114,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         bootstrap(session_factory, settings, audit)
+        app.state.scheduler.start()
         yield
+        app.state.scheduler.stop()
         if own_executor:
             executor.shutdown(wait=False, cancel_futures=False)
 
@@ -126,6 +130,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         vault = load_vault(settings.credentials_key or settings.secret or None)
     app.state.runs = RunService(session_factory, audit, registry=registry,
                                 executor=executor, vault=vault)
+    app.state.scheduler = Scheduler(session_factory, app.state.runs, audit,
+                                    tick_seconds=settings.scheduler_tick_seconds)
+    app.state.default_timezone = settings.timezone
     app.state.resolver_factory = resolver_factory
     app.state.reach_check = reachability or check_host
     app.state.reach_throttle = CheckThrottle(settings.reachability_per_minute, 60.0)
@@ -147,6 +154,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_credentials.router)
     app.include_router(routes_runs.router)
     app.include_router(routes_findings.router)
+    app.include_router(routes_schedules.router)
     app.include_router(routes_reachability.router)
     app.include_router(routes_audit.router)
     return app

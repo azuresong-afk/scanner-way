@@ -342,3 +342,52 @@ describe("проверка доступности хоста на страниц
     expect(screen.queryByRole("heading", { name: "Проверка доступности хоста" })).not.toBeInTheDocument();
   });
 });
+
+describe("расписания", () => {
+  const SCHED = {
+    id: 3, engagement_id: 1, name: null, title: "Обнаружение + Nuclei · 10.0.0.0/24", targets: ["10.0.0.0/24"], modules: ["discovery", "vuln"],
+    rate_profile: "gentle", credential_ids: [], kind: "weekly", time_of_day: "22:00", weekdays: [0, 4], month_day: null, run_at: null,
+    timezone: "Europe/Moscow", enabled: true, next_run_at: "2026-10-30T19:00:00Z", last_run_at: "2026-10-27T19:00:00Z",
+    last_result: "skipped_overlap", last_run_id: 7, owner_id: 1, created_at: null,
+  };
+
+  it("список показывает имя по опциям, периодичность и итог последнего запуска", async () => {
+    setToken("t");
+    mockApi({ "GET /me": me(["operator"], OPERATOR), "GET /engagements": [ENG], "GET /engagements/1/schedules": [SCHED] });
+    renderApp("/schedules");
+    expect(await screen.findByText("Обнаружение + Nuclei · 10.0.0.0/24")).toBeInTheDocument();
+    expect(screen.getByText("Пн, Пт в 22:00")).toBeInTheDocument();
+    expect(screen.getByText("Пропущен: предыдущий прогон ещё идёт")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "прогон №7" })).toHaveAttribute("href", "/runs/7");
+  });
+
+  it("форма создаёт расписание по дням недели", async () => {
+    setToken("t");
+    const api = mockApi({
+      "GET /me": me(["operator"], OPERATOR),
+      "GET /engagements": [ENG],
+      "GET /engagements/1/schedules": [],
+      "GET /engagements/1/allowlist": [{ id: 1, cidr: "10.0.0.0/24", note: null, added_by: 1, added_at: null }],
+      "POST /engagements/1/schedules": SCHED,
+    });
+    renderApp("/schedules");
+    await userEvent.click(await screen.findByRole("button", { name: /Новое расписание/ }));
+    const dlg = await screen.findByRole("dialog", { name: "Новое расписание" });
+    await userEvent.click(within(dlg).getByRole("button", { name: /Подставить весь allowlist/ }));
+    expect(within(dlg).getByPlaceholderText("Обнаружение + Nuclei · 10.0.0.0/24")).toBeInTheDocument();
+    await userEvent.click(within(dlg).getByRole("button", { name: "По дням недели" }));
+    await userEvent.click(within(dlg).getByRole("button", { name: "Пт" }));
+    fireEvent.change(within(dlg).getByLabelText("Время"), { target: { value: "22:00" } });
+    await userEvent.click(within(dlg).getByRole("checkbox", { name: /Подтверждаю/ }));
+    const submit = screen.getByRole("button", { name: "Запланировать" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    await userEvent.click(submit);
+    await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/schedules" && c.init?.method === "POST")).toBe(true));
+    const call = api.calls.find((c) => c.path === "/engagements/1/schedules" && c.init?.method === "POST")!;
+    const sent = JSON.parse(String(call.init!.body));
+    expect(sent).toMatchObject({ kind: "weekly", weekdays: [0, 4], time_of_day: "22:00", targets: ["10.0.0.0/24"], modules: ["discovery", "vuln"] });
+    expect(sent.name).toBeUndefined();
+    expect(sent.timezone).toBeTruthy();
+    expect(await screen.findByText(/Расписание «Обнаружение \+ Nuclei · 10.0.0.0\/24» сохранено/)).toBeInTheDocument();
+  });
+});

@@ -10,9 +10,9 @@ import { TrendChart, type TrendPoint } from "../components/charts/TrendChart";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { ReportMenu } from "../components/ReportMenu";
 import { StartRunModal } from "../components/StartRunModal";
-import { Empty, ErrorAlert, Loading, RefTags, RunStatusPill, SeverityBadge } from "../components/ui";
+import { Empty, ErrorAlert, Loading, RefTags, RunName, RunStatusPill, SeverityBadge } from "../components/ui";
 import { fmtDate, fmtDelta, fmtNumber, plural } from "../lib/format";
-import { isFinished, SEVERITY_LABEL, moduleList } from "../lib/labels";
+import { isFinished, SEVERITY_LABEL, runName } from "../lib/labels";
 import { byHost, compareFindings, isIssue, issueTotal, severityCounts, summarize, type HostRow, type RunSummary } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
 
@@ -103,7 +103,7 @@ function RunsTable({ runs, nav }: { runs: RunOut[]; nav: Nav }) {
           <thead>
             <tr>
               <th>№</th>
-              <th>Модули</th>
+              <th>Название</th>
               <th>Статус</th>
               <th>Начат</th>
             </tr>
@@ -116,7 +116,9 @@ function RunsTable({ runs, nav }: { runs: RunOut[]; nav: Nav }) {
                     #{r.id}
                   </Link>
                 </td>
-                <td className="muted">{moduleList(r.modules)}</td>
+                <td>
+                      <RunName run={r} />
+                    </td>
                 <td>
                   <RunStatusPill status={r.status} />
                 </td>
@@ -337,7 +339,7 @@ export function DashboardPage() {
         <div key={r.id} className="alert alert-info">
           <span className="spinner" style={{ width: 14, height: 14 }} aria-hidden="true" />
           <span style={{ flex: 1 }}>
-            Прогон №{r.id} {r.status === "pending" ? "в очереди" : "выполняется"}: {moduleList(r.modules)}
+            «{runName(r)}» (№{r.id}) {r.status === "pending" ? "в очереди" : "выполняется"}
           </span>
           <Link to={`/runs/${r.id}`}>Мониторинг</Link>
         </div>
@@ -370,7 +372,7 @@ export function DashboardPage() {
       )}
 
       {starting && (
-        <StartRunModal engagement={current} onClose={() => setStarting(false)} onStarted={(run) => navigate(`/runs/${run.id}`, { state: { created: run } })} />
+        <StartRunModal engagement={current} onClose={() => setStarting(false)} onStarted={(run) => navigate(`/runs/${run.id}`, { state: { created: run } })} onScheduled={() => navigate("/schedules")} />
       )}
       {open && (
         <FindingDrawer

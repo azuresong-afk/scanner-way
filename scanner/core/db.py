@@ -95,6 +95,36 @@ class HostCredentialRow(Base):
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
 
 
+# ========== Расписания ==========
+class ScanSchedule(Base):
+    """Прогон по расписанию: параметры прогона + когда его ставить в очередь.
+
+    Запускается от имени owner_id — пользователя, который последним сохранил
+    расписание; его права перепроверяются при каждом срабатывании.
+    """
+    __tablename__ = "scan_schedules"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str | None] = mapped_column(Text)        # None — имя по опциям
+    targets: Mapped[list[str]] = mapped_column(TextArray, default=list)
+    modules: Mapped[list[str]] = mapped_column(TextArray)
+    rate_profile: Mapped[str] = mapped_column(Text, default="gentle")
+    credential_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
+    kind: Mapped[str] = mapped_column(Text)               # once|daily|weekly|monthly
+    time_of_day: Mapped[str | None] = mapped_column(Text)  # ЧЧ:ММ в timezone
+    weekdays: Mapped[list[int]] = mapped_column(Jsonb, default=list)
+    month_day: Mapped[int | None] = mapped_column(Integer)
+    run_at: Mapped[datetime | None] = mapped_column(TsTz)
+    timezone: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(TsTz, index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(TsTz)
+    last_result: Mapped[str | None] = mapped_column(Text)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+
+
 # ========== Прогоны ==========
 class ScanRun(Base):
     __tablename__ = "scan_runs"
@@ -106,6 +136,12 @@ class ScanRun(Base):
     rate_profile: Mapped[str] = mapped_column(Text, default="gentle")
     # Учётные записи активов, выбранные для прогона (host_credentials.id).
     credential_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
+    # Имя по выбранным опциям (scanner.core.naming) или заданное оператором;
+    # у прогонов до миграции 0006 — NULL.
+    name: Mapped[str | None] = mapped_column(Text)
+    targets: Mapped[list[str]] = mapped_column(TextArray, default=list)
+    schedule_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scan_schedules.id", ondelete="SET NULL"), index=True)
     status: Mapped[str] = mapped_column(Text, default="pending")
     started_at: Mapped[datetime | None] = mapped_column(TsTz)
     finished_at: Mapped[datetime | None] = mapped_column(TsTz)

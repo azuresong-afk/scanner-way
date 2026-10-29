@@ -6,9 +6,9 @@ import type { RunStatus } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { StartRunModal } from "../components/StartRunModal";
-import { Empty, ErrorAlert, Loading, RunStatusPill } from "../components/ui";
+import { Empty, ErrorAlert, Loading, RunName, RunStatusPill } from "../components/ui";
 import { fmtDate, fmtDuration } from "../lib/format";
-import { isFinished, RATE_PROFILES, RUN_STATUS_LABEL, moduleList } from "../lib/labels";
+import { isFinished, RATE_PROFILES, RUN_STATUS_LABEL } from "../lib/labels";
 import { useAsync, useInterval } from "../lib/useAsync";
 
 const FILTERS: (RunStatus | "all")[] = ["all", "running", "done", "stopped", "failed"];
@@ -82,7 +82,7 @@ export function RunsPage() {
               <thead>
                 <tr>
                   <th>№</th>
-                  <th>Модули</th>
+                  <th>Название</th>
                   <th>Профиль</th>
                   <th>Статус</th>
                   <th>Начат</th>
@@ -99,7 +99,9 @@ export function RunsPage() {
                         #{r.id}
                       </Link>
                     </td>
-                    <td className="muted">{moduleList(r.modules)}</td>
+                    <td>
+                      <RunName run={r} />
+                    </td>
                     <td className="muted">{RATE_PROFILES.find((p) => p.id === r.rate_profile)?.label ?? r.rate_profile}</td>
                     <td>
                       <RunStatusPill status={r.status} />
@@ -130,7 +132,7 @@ export function RunsPage() {
       </div>
 
       {starting && (
-        <StartRunModal engagement={current} onClose={() => setStarting(false)} onStarted={(run) => navigate(`/runs/${run.id}`, { state: { created: run } })} />
+        <StartRunModal engagement={current} onClose={() => setStarting(false)} onStarted={(run) => navigate(`/runs/${run.id}`, { state: { created: run } })} onScheduled={() => navigate("/schedules")} />
       )}
     </>
   );

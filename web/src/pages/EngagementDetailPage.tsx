@@ -7,9 +7,9 @@ import { useEngagement } from "../auth/EngagementContext";
 import { CredentialsCard } from "../components/CredentialsCard";
 import { ReachabilityCheck } from "../components/ReachabilityCheck";
 import { StartRunModal } from "../components/StartRunModal";
-import { Empty, ErrorAlert, Loading, Modal, RunStatusPill } from "../components/ui";
+import { Empty, ErrorAlert, Loading, Modal, RunName, RunStatusPill } from "../components/ui";
 import { fmtDate, fmtDuration } from "../lib/format";
-import { RATE_PROFILES, moduleList } from "../lib/labels";
+import { RATE_PROFILES } from "../lib/labels";
 import { isIpOrCidr } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
 import { EngagementForm } from "../components/EngagementForm";
@@ -204,7 +204,7 @@ export function EngagementDetailPage() {
                   <thead>
                     <tr>
                       <th>№</th>
-                      <th>Модули</th>
+                      <th>Название</th>
                       <th>Профиль</th>
                       <th>Статус</th>
                       <th>Начат</th>
@@ -219,7 +219,9 @@ export function EngagementDetailPage() {
                             #{r.id}
                           </Link>
                         </td>
-                        <td className="muted">{moduleList(r.modules)}</td>
+                        <td>
+                      <RunName run={r} />
+                    </td>
                         <td className="muted">{RATE_PROFILES.find((p) => p.id === r.rate_profile)?.label ?? r.rate_profile}</td>
                         <td>
                           <RunStatusPill status={r.status} />
@@ -267,7 +269,11 @@ export function EngagementDetailPage() {
         navigate("/engagements");
       }} />}
       {starting && (
-        <StartRunModal engagement={e} onClose={() => setStarting(false)} onStarted={(run) => navigate(`/runs/${run.id}`)} />
+        <StartRunModal engagement={e} onClose={() => setStarting(false)} onStarted={(run) => navigate(`/runs/${run.id}`)} onScheduled={() => {
+            select(e.id);
+            navigate("/schedules");
+          }}
+        />
       )}
     </>
   );

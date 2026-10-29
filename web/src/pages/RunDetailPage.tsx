@@ -12,7 +12,7 @@ import { ReportMenu } from "../components/ReportMenu";
 import { ServicesTable } from "../components/ServicesTable";
 import { Empty, ErrorAlert, Kpi, Loading, RunStatusPill } from "../components/ui";
 import { fmtDateFull, fmtDuration } from "../lib/format";
-import { isFinished, MODULE_LABEL, RATE_PROFILES } from "../lib/labels";
+import { isFinished, MODULE_LABEL, RATE_PROFILES, runName } from "../lib/labels";
 import { byHost, isFalsePositive, isIssue, replaceFinding, summarize } from "../lib/stats";
 import { useAsync, useInterval } from "../lib/useAsync";
 
@@ -62,10 +62,16 @@ export function RunDetailPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">
-            <Link to="/runs">Прогоны</Link> / <Link to={`/engagements/${r.engagement_id}`}>договор #{r.engagement_id}</Link>
+            <Link to="/runs">Прогоны</Link> / <Link to={`/engagements/${r.engagement_id}`}>договор #{r.engagement_id}</Link> / прогон №{r.id}
+            {r.schedule_id !== null && (
+              <>
+                {" "}
+                · <Link to="/schedules">по расписанию</Link>
+              </>
+            )}
           </span>
           <h1 className="inline" style={{ gap: 12 }}>
-            Прогон №{r.id} <RunStatusPill status={r.status} />
+            {runName(r)} <RunStatusPill status={r.status} />
           </h1>
         </div>
         <div className="actions">
@@ -92,6 +98,8 @@ export function RunDetailPage() {
 
       <section className="card card-pad">
         <dl className="kv" style={{ gridTemplateColumns: "160px minmax(0,1fr)" }}>
+          <dt>Цели</dt>
+          <dd className="mono">{r.targets.length ? r.targets.join(", ") : "—"}</dd>
           <dt>Модули</dt>
           <dd>{r.modules.map((m) => MODULE_LABEL[m] ?? m).join(", ")}</dd>
           <dt>Профиль нагрузки</dt>

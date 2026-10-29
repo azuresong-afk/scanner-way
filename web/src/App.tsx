@@ -16,6 +16,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { RunDetailPage } from "./pages/RunDetailPage";
 import { RunsPage } from "./pages/RunsPage";
+import { SchedulesPage } from "./pages/SchedulesPage";
 import { UsersPage } from "./pages/UsersPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -73,6 +74,7 @@ export function App() {
         <Route path="engagements/:id" element={<RequirePerm perm="view_engagements"><EngagementDetailPage /></RequirePerm>} />
         <Route path="runs" element={<RequirePerm perm="view_report"><RunsPage /></RequirePerm>} />
         <Route path="runs/:id" element={<RequirePerm perm="view_report"><RunDetailPage /></RequirePerm>} />
+        <Route path="schedules" element={<RequirePerm perm="view_report"><SchedulesPage /></RequirePerm>} />
         <Route path="findings" element={<RequirePerm perm="view_report"><FindingsPage /></RequirePerm>} />
         <Route path="hosts" element={<RequirePerm perm="view_report"><HostsPage /></RequirePerm>} />
         <Route path="hosts/:host" element={<RequirePerm perm="view_report"><HostDetailPage /></RequirePerm>} />
