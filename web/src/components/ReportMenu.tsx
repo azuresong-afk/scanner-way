@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Download, Eye } from "lucide-react";
 import { api } from "../api/client";
 import type { ReportFormat } from "../api/types";
+import { saveBlob } from "../lib/download";
 import { Modal } from "./ui";
 
 const FORMATS: { id: ReportFormat; label: string }[] = [
@@ -10,17 +11,6 @@ const FORMATS: { id: ReportFormat; label: string }[] = [
   { id: "html", label: "HTML" },
   { id: "json", label: "JSON" },
 ];
-
-function save(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
 
 /** Кнопки выгрузки отчёта: файл скачивается через fetch с Bearer-токеном. */
 export function ReportMenu({ runId, disabled, compact }: { runId: number; disabled?: boolean; compact?: boolean }) {
@@ -32,7 +22,7 @@ export function ReportMenu({ runId, disabled, compact }: { runId: number; disabl
     setBusy(fmt);
     setError(null);
     try {
-      save(await api.report(runId, fmt), `report-run-${runId}.${fmt}`);
+      saveBlob(await api.report(runId, fmt), `report-run-${runId}.${fmt}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
