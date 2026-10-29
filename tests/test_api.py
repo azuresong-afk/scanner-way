@@ -437,6 +437,14 @@ def test_second_run_statuses_and_report_export(api, sqlite_factory, cves):
     assert html.status_code == 200 and "Ромашка" in html.text
     assert api.c.get(f"/runs/{second}/report", headers=aud,
                      params={"format": "exe"}).status_code == 422
+    brief = api.c.get(f"/runs/{second}/report", headers=aud,
+                      params={"format": "json", "variant": "brief"})
+    assert brief.status_code == 200, brief.text
+    assert f"report-run-{second}-brief.json" in brief.headers["content-disposition"]
+    assert brief.json()["meta"]["variant"] == "brief"
+    assert "remediation_plan" not in brief.json()
+    assert api.c.get(f"/runs/{second}/report", headers=aud,
+                     params={"variant": "short"}).status_code == 422
     assert ("user:aud", "export", f"scan_run:{second}", "ok") in api.audit(sqlite_factory)
 
     runs = api.c.get(f"/engagements/{eid}/runs", headers=aud).json()

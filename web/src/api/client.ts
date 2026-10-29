@@ -11,6 +11,7 @@ import type {
   FindingOut,
   MeOut,
   ReportFormat,
+  ReportVariant,
   RunCreate,
   RunCreated,
   RunOut,
@@ -156,8 +157,13 @@ export const api = {
   services: (runId: number) => json<ServiceOut[]>(`/runs/${runId}/services`),
 
   /** Отчёт как Blob: эндпоинт требует Bearer, поэтому обычная ссылка не подходит. */
-  report: async (runId: number, format: ReportFormat, compare = true): Promise<Blob> => {
-    const res = await request(`/runs/${runId}/report?format=${format}&compare=${compare}`);
+  report: async (
+    runId: number,
+    format: ReportFormat,
+    variant: ReportVariant = "full",
+    compare = true,
+  ): Promise<Blob> => {
+    const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}&compare=${compare}`);
     return res.blob();
   },
 

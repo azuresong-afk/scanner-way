@@ -182,3 +182,62 @@ def test_weak_credentials_get_urgent_deadline(report):
     cred = next(v for v in report.combined.findings if v.finding.module == "cred_audit")
     assert cred.finding.severity is Severity.HIGH
     assert cred.remediation.deadline_days == 3
+
+
+# --- краткая версия ---------------------------------------------------------------
+
+def test_brief_json_drops_plan_and_remediation_text(report):
+    data = json.loads(ReportRenderer().render(report, ReportFormat.JSON, variant="brief"))
+    assert data["meta"]["variant"] == "brief"
+    assert "remediation_plan" not in data
+    findings = data["combined"]["findings"] + data["combined"]["trend"]["fixed"]
+    findings += [f for m in data["modules"] for f in m["findings"]]
+    assert findings
+    for f in findings:
+        assert set(f["remediation"]) == {"references"}
+    assert any(f["remediation"]["references"] for f in findings)
+    assert not any("план устранения" in p for p in data["summary"]["key_points"])
+    # полная версия не изменилась
+    full = json.loads(ReportRenderer().render(report, ReportFormat.JSON))
+    assert full["meta"]["variant"] == "full" and full["remediation_plan"]
+    assert "text" in full["combined"]["findings"][0]["remediation"]
+
+
+def test_brief_html_has_links_but_no_plan_or_advice(report):
+    html = ReportRenderer().render(report, ReportFormat.HTML, variant="brief").decode()
+    assert "краткая версия" in html
+    assert "План устранения" not in html
+    assert "Рекомендация по устранению" not in html
+    assert fx.BDU_REMEDIATION not in html
+    assert "Ссылки на устранение" in html
+    assert "https://bdu.fstec.ru/vul/2023-04110" in html
+    # разделы перенумерованы: «Детальные результаты» — четвёртый
+    assert '<span class="n">04</span>Детальные результаты' in html
+    assert "<script>alert(1)</script>" not in html
+
+
+def test_brief_docx_has_links_but_no_plan_or_advice(report):
+    raw = ReportRenderer().render(report, ReportFormat.DOCX, variant="brief")
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        xml = z.read("word/document.xml").decode()
+        rels = z.read("word/_rels/document.xml.rels").decode()
+    assert "План устранения" not in xml and "Рекомендация по устранению" not in xml
+    assert "PermitRootLogin no" not in xml
+    assert "Ссылки на устранение" in xml and "КРАТКАЯ ВЕРСИЯ" in xml
+    assert "https://bdu.fstec.ru/vul/2023-04110" in rels
+
+
+def test_brief_pdf_renders(report):
+    pytest.importorskip("weasyprint")
+    try:
+        raw = ReportRenderer().render(report, ReportFormat.PDF, variant="brief")
+    except RuntimeError as e:  # нет системных библиотек Pango
+        pytest.skip(str(e))
+    assert raw.startswith(b"%PDF")
+
+
+def test_brief_empty_report():
+    r = build_report([], previous=[])
+    for fmt in ReportFormat:
+        if fmt is not ReportFormat.PDF:
+            assert ReportRenderer().render(r, fmt, variant="brief")

@@ -4,7 +4,7 @@
     scanner feeds sync-nvd [--file nvdcve-2.0-2024.json.gz ...] [--since ... --until ...]
     scanner run --engagement 1 --targets 10.0.0.0/28 10.0.0.50 --modules discovery vuln \\
                 --confirm-authorized
-    scanner report --run 7 --format pdf [--out report.pdf]
+    scanner report --run 7 --format pdf [--out report.pdf] [--brief]
 
 БД — `--db-url` / `SCANNER_DATABASE_URL`, иначе Postgres из настроек окружения.
 Перед каждой командой схема поднимается миграциями Alembic (`alembic upgrade
@@ -117,6 +117,9 @@ def build_parser() -> argparse.ArgumentParser:
                      help="файл отчёта (по умолчанию report-run-<id>.<формат>)")
     rep.add_argument("--no-compare", action="store_true",
                      help="без сравнения с предыдущим прогоном договора")
+    rep.add_argument("--brief", action="store_true",
+                     help="краткая версия: без плана устранения, вместо рекомендаций "
+                          "только ссылки на устранение")
     rep.set_defaults(handler=cmd_report)
     return p
 
@@ -330,15 +333,18 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
 
     report = build_report(current, previous=previous, historically_fixed=hist,
                           resolver=_resolver(env, current), context=context)
+    variant = "brief" if args.brief else "full"
     try:
-        body = ReportRenderer().render(report, args.format)
+        body = ReportRenderer().render(report, args.format, variant=variant)
     except RuntimeError as e:   # PDF без Pango
         raise CliError(str(e)) from e
-    out = args.out or Path(f"report-run-{args.run_id}.{args.format}")
+    suffix = "-brief" if args.brief else ""
+    out = args.out or Path(f"report-run-{args.run_id}{suffix}.{args.format}")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(body)
     env.audit.record(subject=env.actor, action="export", target=f"scan_run:{args.run_id}",
-                     result="ok", details={"format": args.format, "previous_run_id": prev_id,
+                     result="ok", details={"format": args.format, "variant": variant,
+                                           "previous_run_id": prev_id,
                                            "findings": len(current), "file": out.name})
     print(f"Отчёт: {out} ({len(body)} байт, находок — {len(current)})")
     return 0

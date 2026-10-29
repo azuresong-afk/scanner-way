@@ -168,7 +168,9 @@
                  text-transform: uppercase; display: block; margin-bottom: 2px; }
   .refs ol { margin: 0; padding-left: 18px; font-size: 8pt; }
   .refs li { margin: 1px 0; }
-  .refs li b { color: var(--ink-2); font-weight: 600; margin-right: 4px; }
+  .refs li b, .brief-refs li b { color: var(--ink-2); font-weight: 600; margin-right: 4px; }
+  .brief-refs { margin: 0; padding-left: 18px; font-size: 8pt; }
+  .brief-refs li { margin: 1px 0; }
   .verdict { padding: 10px 14px; border-radius: 10px; background: var(--panel);
              border: 1px solid var(--line); color: var(--ink); font-weight: 600; margin: 0 0 12px; }
   .footer-note { color: var(--muted); font-size: 8pt; margin-top: 28px; padding-top: 10px;
@@ -183,7 +185,7 @@
 {% set t = r.combined.trend %}
 
 <section class="cover">
-  <div class="kicker">Анализ защищённости · результаты сканирования</div>
+  <div class="kicker">Анализ защищённости · результаты сканирования{% if r.brief %} · краткая версия{% endif %}</div>
   <h1>{{ r.context.title }}</h1>
   {% if r.context.customer %}<div class="customer">{{ r.context.customer }}</div>{% endif %}
   <div class="meta">
@@ -202,7 +204,7 @@
   в рамках договора и предназначен только для заказчика.</div>
 </section>
 
-<h2><span class="n">01</span>Резюме для руководства</h2>
+<h2><span class="n">{{ "%02d"|format(num.summary) }}</span>Резюме для руководства</h2>
 <div class="dashboard">
 <div class="kpis">
   <div class="kpi risk risk-{{ r.summary.risk_level or 'none' }}">
@@ -217,7 +219,7 @@
   <div class="kpi"><small>Критических и высоких</small><b>{{ sc.critical + sc.high }}</b>
     <span class="sub">устранять в первую очередь</span></div>
   <div class="kpi"><small>Хостов с находками</small><b>{{ r.summary.hosts }}</b>
-    <span class="sub">мер в плане устранения: {{ r.plan|length }}</span></div>
+    <span class="sub">{% if r.brief %}по всем модулям сканирования{% else %}мер в плане устранения: {{ r.plan|length }}{% endif %}</span></div>
   {% if t %}
   <div class="kpi"><small>Новые / повторные</small><b>{{ t.counts.new }} / {{ t.counts.regression }}</b>
     <span class="sub">устранено: <span class="down">{{ t.counts.fixed }}</span></span></div>
@@ -252,7 +254,8 @@
   {% endfor %}
 </table></div>
 
-<h2><span class="n">02</span>План устранения</h2>
+{% if not r.brief %}
+<h2><span class="n">{{ "%02d"|format(num.plan) }}</span>План устранения</h2>
 {% if r.plan %}
 <p class="lead">Одинаковые меры объединены: одна строка — одно действие и все хосты, где его нужно выполнить.
 Порядок — по уровню опасности и числу затронутых хостов.</p>
@@ -271,8 +274,9 @@
 {% else %}
 <p>Мер устранения не требуется.</p>
 {% endif %}
+{% endif %}
 
-<h2><span class="n">03</span>Сравнение с предыдущим прогоном</h2>
+<h2><span class="n">{{ "%02d"|format(num.trend) }}</span>Сравнение с предыдущим прогоном</h2>
 {% if t %}
 <div class="verdict">{{ t.verdict }}</div>
 <div class="kpis">
@@ -317,7 +321,7 @@
 <p>Предыдущий прогон не задан — это первый прогон, сравнение будет доступно со следующего.</p>
 {% endif %}
 
-<h2><span class="n">04</span>Результаты по хостам</h2>
+<h2><span class="n">{{ "%02d"|format(num.hosts) }}</span>Результаты по хостам</h2>
 {% if hosts %}
 <p class="lead">Все находки по каждому хосту. Хосты упорядочены по уровню риска.</p>
 {% for h in hosts %}
@@ -350,10 +354,10 @@
 <p>Находок нет.</p>
 {% endif %}
 
-<h2><span class="n">05</span>Детальные результаты для инженеров</h2>
-<p class="lead">Описание каждой находки с подтверждением и рекомендацией по устранению, по модулям сканирования.</p>
+<h2><span class="n">{{ "%02d"|format(num.details) }}</span>Детальные результаты для инженеров</h2>
+<p class="lead">Описание каждой находки с подтверждением и {{ "ссылками на устранение" if r.brief else "рекомендацией по устранению" }}, по модулям сканирования.</p>
 {% for m in r.modules %}
-<h3>5.{{ loop.index }}. {{ m.label }}</h3>
+<h3>{{ num.details }}.{{ loop.index }}. {{ m.label }}</h3>
 {% if not m.findings %}<p class="muted">Открытых находок нет.</p>{% endif %}
 {% for s, label, group in m.by_severity %}
   {% for v in group %}
@@ -369,6 +373,14 @@
       {% if f.bdu_ids %}<span>БДУ <b>{{ f.bdu_ids|join(", ") }}</b></span>{% endif %}
     </div>
     {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
+    {% if r.brief %}
+    <div class="fix">
+      <span class="label">Ссылки на устранение</span>
+      {% set refs = v.remediation.references|links %}
+      {% if refs %}<ol class="brief-refs">{% for ref in refs %}<li><b>{{ ref.label }}</b> <a href="{{ ref.url }}">{{ ref.url }}</a></li>{% endfor %}</ol>
+      {% else %}<span class="src">Ссылок на устранение нет.</span>{% endif %}
+    </div>
+    {% else %}
     <div class="fix">
       <span class="label">Рекомендация по устранению</span>
       {{ v.remediation.text }}
@@ -381,6 +393,7 @@
       </div>
       {% endif %}
     </div>
+    {% endif %}
   </div>
   {% endfor %}
 {% endfor %}

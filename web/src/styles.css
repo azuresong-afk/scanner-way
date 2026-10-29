@@ -241,6 +241,27 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 }
 .icon-btn { width: 34px; padding: 0; }
 
+/* Переключатель версии отчёта (Полный / Краткий) — той же высоты, что кнопки. */
+.seg {
+  display: inline-flex; height: 34px; padding: 2px; gap: 2px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+}
+.seg button {
+  all: unset; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 76px; padding: 0 10px; border-radius: calc(var(--radius-sm) - 2px); cursor: pointer;
+  font-weight: 500; color: var(--text-2); white-space: nowrap;
+}
+.seg button:hover:not(:disabled) { color: var(--text); }
+.seg button[aria-checked="true"] { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.seg button:focus-visible { outline: 2px solid var(--accent); }
+.seg button:disabled { opacity: 0.5; cursor: not-allowed; }
+.seg.seg-sm { height: 30px; font-size: 13px; }
+.seg.seg-sm button { min-width: 0; padding: 0 8px; }
+@media (max-width: 600px) {
+  .seg { flex-basis: 100%; }
+  .seg button { flex: 1 1 0; }
+}
+
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span { font-size: 13px; color: var(--text-2); font-weight: 500; }
 .field small { color: var(--text-3); font-size: 12px; }

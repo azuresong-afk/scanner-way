@@ -526,6 +526,8 @@ docker compose exec app scanner --actor cli:ivanov run \
 # отчёт по завершённому прогону (файл появится в каталоге репозитория на хосте)
 docker compose exec app scanner report --run 1 --format pdf --out /app/report-1.pdf
 docker compose exec app scanner report --run 1 --format docx --out /app/report-1.docx
+# краткая версия: без плана устранения, по находкам только ссылки на устранение
+docker compose exec app scanner report --run 1 --format pdf --brief --out /app/report-1-brief.pdf
 ```
 
 Без `--confirm-authorized` прогон не запускается. Модуль `cred_audit` в CLI

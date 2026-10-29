@@ -258,7 +258,7 @@ def test_run_refuses_targets_outside_allowlist(engagement):
     assert row.result == "denied"
 
 
-def test_run_and_report(engagement, tmp_path, capsys):
+def test_run_and_report(engagement, tmp_path, capsys, monkeypatch):
     url, eid = engagement
     # вторая цель вне allowlist — отбрасывается гейтом, прогон идёт по остальным
     rc, _ = _run(url, "--engagement", str(eid), "--targets", "10.10.0.0/30",
@@ -280,6 +280,13 @@ def test_run_and_report(engagement, tmp_path, capsys):
     assert cli.main(["--db-url", url, "report", "--run", "1", "--format", "html",
                      "--out", str(tmp_path / "r.html")]) == 0
     assert "CVE-2018-15473" in (tmp_path / "r.html").read_text(encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--db-url", url, "report", "--run", "1", "--format", "json",
+                     "--brief"]) == 0
+    brief = json.loads((tmp_path / "report-run-1-brief.json").read_text(encoding="utf-8"))
+    assert brief["meta"]["variant"] == "brief" and "remediation_plan" not in brief
+    assert {r.details["variant"] for r in _audit(url, "export")} == {"full", "brief"}
 
 
 def test_report_unknown_run(db_url, capsys):

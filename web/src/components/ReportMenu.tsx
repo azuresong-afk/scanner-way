@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Download, Eye } from "lucide-react";
 import { api } from "../api/client";
-import type { ReportFormat } from "../api/types";
+import type { ReportFormat, ReportVariant } from "../api/types";
 import { saveBlob } from "../lib/download";
 import { Modal } from "./ui";
 
@@ -12,10 +12,16 @@ const FORMATS: { id: ReportFormat; label: string }[] = [
   { id: "json", label: "JSON" },
 ];
 
+const VARIANTS: { id: ReportVariant; label: string; hint: string }[] = [
+  { id: "full", label: "Полный", hint: "С планом устранения и рекомендациями по каждой находке" },
+  { id: "brief", label: "Краткий", hint: "Без плана устранения; по находкам — только ссылки на устранение" },
+];
+
 /**
  * Кнопки выгрузки отчёта: файл скачивается через fetch с Bearer-токеном.
  * По умолчанию кнопки полного размера — как соседние «Новый прогон» и «Остановить»
- * в шапке страницы; `small` — для строк таблицы.
+ * в шапке страницы; `small` — для строк таблицы. Переключатель «Полный / Краткий»
+ * задаёт версию для скачивания и просмотра.
  */
 export function ReportMenu({
   runId,
@@ -31,12 +37,14 @@ export function ReportMenu({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [html, setHtml] = useState<string | null>(null);
+  const [variant, setVariant] = useState<ReportVariant>("full");
+  const suffix = variant === "brief" ? "-brief" : "";
 
   const download = async (fmt: ReportFormat) => {
     setBusy(fmt);
     setError(null);
     try {
-      saveBlob(await api.report(runId, fmt), `report-run-${runId}.${fmt}`);
+      saveBlob(await api.report(runId, fmt, variant), `report-run-${runId}${suffix}.${fmt}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -50,7 +58,7 @@ export function ReportMenu({
     setBusy("view");
     setError(null);
     try {
-      setHtml(await (await api.report(runId, "html")).text());
+      setHtml(await (await api.report(runId, "html", variant)).text());
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -65,6 +73,21 @@ export function ReportMenu({
   return (
     <div className="stack" style={{ gap: 6 }}>
       <div className="inline" style={{ gap: small ? 6 : 13 }}>
+        <div className={`seg${small ? " seg-sm" : ""}`} role="radiogroup" aria-label="Версия отчёта">
+          {VARIANTS.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              role="radio"
+              aria-checked={variant === v.id}
+              title={v.hint}
+              disabled={disabled || !!busy}
+              onClick={() => setVariant(v.id)}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
         {!compact && (
           <button type="button" className={`${btn} btn-report-view`} disabled={disabled || !!busy} onClick={preview}>
             {busy === "view" ? <span className="spinner" style={{ width: icon, height: icon }} /> : <Eye size={icon} />}
@@ -87,7 +110,7 @@ export function ReportMenu({
       </div>
       {error && <span style={{ color: "var(--danger)", fontSize: 12 }}>{error}</span>}
       {html !== null && (
-        <Modal title={`Отчёт по прогону №${runId}`} onClose={() => setHtml(null)} wide>
+        <Modal title={`${variant === "brief" ? "Краткий отчёт" : "Отчёт"} по прогону №${runId}`} onClose={() => setHtml(null)} wide>
           <iframe title={`Отчёт по прогону №${runId}`} sandbox="" srcDoc={html} className="report-frame" />
         </Modal>
       )}
