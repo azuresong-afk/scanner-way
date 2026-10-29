@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Nuclei — Go-бинарник из релизов ProjectDiscovery (не apt-пакет). Версия и
 # архитектура задаются аргументами сборки; по умолчанию linux/amd64.
-ARG NUCLEI_VERSION=3.3.0
+ARG NUCLEI_VERSION=3.11.1
 ARG TARGETARCH=amd64
 RUN set -eux; \
     arch="${TARGETARCH:-amd64}"; \

