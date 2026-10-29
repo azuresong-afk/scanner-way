@@ -1,4 +1,5 @@
 """Тесты модуля vuln на эталонном JSONL Nuclei — без реального сканирования."""
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -275,3 +276,73 @@ def test_subprocess_runner_turns_timeout_into_partial_result(monkeypatch):
         assert False, "ожидался VulnScanTimeout"
     except VulnScanTimeout as e:
         assert e.partial_output == SAMPLE
+
+
+class _BannerMatcher:
+    """matcher с цепочками по версии: на Apache 2.4.49 отдаёт CVE и BDU без CVE."""
+
+    def enrich(self, finding, service=None):
+        return finding
+
+    def findings_for_service(self, service, *, module):
+        from scanner.core.models import Finding as F
+        return [
+            F(module=module, host=service.host, port=service.port,
+              finding_type=FindingType.VULN, vuln_id="CVE-2021-41773",
+              cve_ids=["CVE-2021-41773"], bdu_ids=["BDU:2021-04877"],
+              title="banner CVE"),
+            F(module=module, host=service.host, port=service.port,
+              finding_type=FindingType.VULN, vuln_id="BDU:2099-00001",
+              bdu_ids=["BDU:2099-00001"], title="banner BDU"),
+        ]
+
+
+def _apache():
+    return [ServiceInfo(host="10.0.0.5", port=80, protocol="tcp", service="http",
+                        product="Apache httpd", version="2.4.49")]
+
+
+def test_banner_matching_adds_findings_when_nuclei_finds_nothing():
+    ctx = _ctx(services=_apache())
+    findings = VulnModule(runner=_runner(""), matcher=_BannerMatcher()).run(ctx)
+    assert {f.vuln_id for f in findings} == {"CVE-2021-41773", "BDU:2099-00001"}
+    assert all(f.module == "vuln" and f.port == 80 for f in findings)
+    assert any(r["action"] == "banner_match" and r["result"] == "ok"
+               for r in ctx.audit.records)
+
+
+def test_banner_matching_skips_what_nuclei_already_found():
+    nuclei_hit = json.dumps({
+        "template-id": "CVE-2021-41773", "host": "http://10.0.0.5:80",
+        "matched-at": "http://10.0.0.5:80/icons/.%2e/etc/passwd", "port": "80",
+        "ip": "10.0.0.5",
+        "info": {"name": "Apache 2.4.49 - Path Traversal", "severity": "high",
+                 "classification": {"cve-id": ["cve-2021-41773"]}},
+    })
+    findings = VulnModule(runner=_runner(nuclei_hit + "\n"),
+                          matcher=_BannerMatcher()).run(_ctx(services=_apache()))
+    cve = [f for f in findings if "CVE-2021-41773" in f.cve_ids]
+    assert len(cve) == 1 and cve[0].title.startswith("Apache 2.4.49")   # из Nuclei
+    assert any(f.vuln_id == "BDU:2099-00001" for f in findings)
+
+
+def test_banner_matching_errors_do_not_fail_module():
+    class Broken(_BannerMatcher):
+        def findings_for_service(self, service, *, module):
+            raise RuntimeError("db down")
+
+    ctx = _ctx(services=_apache())
+    assert VulnModule(runner=_runner(""), matcher=Broken()).run(ctx) == []
+    assert any(r["action"] == "banner_match" and r["result"] == "error"
+               for r in ctx.audit.records)
+
+
+def test_duplicate_nuclei_lines_collapse_to_one_finding():
+    hit = {"template-id": "http-trace", "host": "http://10.0.0.5:80", "port": "80",
+           "ip": "10.0.0.5", "info": {"name": "HTTP TRACE method enabled",
+                                      "severity": "info"}}
+    lines = "\n".join(json.dumps({**hit, "matched-at": u})
+                      for u in ("http://10.0.0.5:80/", "http://10.0.0.5:80/x")) + "\n"
+    findings = VulnModule(runner=_runner(lines)).run(_ctx(services=_apache()))
+    assert [f.vuln_id for f in findings].count(findings[0].vuln_id) == 1
+    assert len(findings) == 1

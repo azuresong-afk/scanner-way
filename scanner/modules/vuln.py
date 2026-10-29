@@ -348,6 +348,9 @@ class _Matcher:
 
     def enrich(self, finding: Finding, service: ServiceInfo | None = None) -> Finding: ...
 
+    # Необязательно: находки по продукту и версии сервиса (цепочки 3–4 matcher).
+    # def findings_for_service(self, service: ServiceInfo, *, module: str) -> list[Finding]
+
 
 class VulnModule(ScanModule):
     name = "vuln"
@@ -369,7 +372,7 @@ class VulnModule(ScanModule):
             ctx.audit.record(subject="scanner", action="vuln_deny", target=r,
                              result="not_an_ip_literal")
         if not inputs:
-            return []
+            return self._banner_findings(ctx, [])
 
         opts = self.options
         cmd = build_nuclei_command(ctx.rate, opts)
@@ -410,7 +413,52 @@ class VulnModule(ScanModule):
                              target=f"{len(batch)} targets", result="ok",
                              details=f"findings={len(batch_findings)}")
             findings.extend(self._enrich(batch_findings, ctx.services))
-        return findings
+        findings.extend(self._banner_findings(ctx, findings))
+        # Nuclei отдаёт по строке на каждый сработавший matcher/URL шаблона;
+        # одна уязвимость на host:port — одна находка (тот же ключ сравнения).
+        unique: dict[str, Finding] = {}
+        for f in findings:
+            unique.setdefault(f.dedup_key(), f)
+        return list(unique.values())
+
+    def _banner_findings(self, ctx: ScanContext, found: list[Finding]) -> list[Finding]:
+        """Находки по продукту и версии из discovery (CPE -> NVD, ПО+версия -> БДУ).
+
+        Дополняют Nuclei: многие уязвимости (и почти все записи БДУ без CVE)
+        шаблонами не проверяются, а версия из баннера их выдаёт. Совпавшее с
+        уже найденным Nuclei (тот же host:port и CVE/BDU) не дублируется.
+        """
+        by_service = getattr(self._matcher, "findings_for_service", None)
+        services = [s for s in ctx.services or [] if s.product and s.version]
+        if by_service is None or not services:
+            return []
+
+        def idents(f: Finding) -> set[str]:
+            return {i.upper() for i in (f.vuln_id, *f.cve_ids, *f.bdu_ids) if i}
+
+        seen: dict[tuple[str, int | None], set[str]] = {}
+        for f in found:
+            seen.setdefault((f.host, f.port), set()).update(idents(f))
+        out: list[Finding] = []
+        for s in services:
+            try:
+                matched = by_service(s, module=self.name)
+            except Exception as e:  # noqa: BLE001 — справочник недоступен: Nuclei-находки важнее
+                ctx.audit.record(subject="scanner", action="banner_match",
+                                 target=f"{s.host}:{s.port}", result="error",
+                                 details=f"{type(e).__name__}: {e}"[:500])
+                continue
+            known = seen.setdefault((s.host, s.port), set())
+            for f in matched:
+                ids = idents(f)
+                if ids & known:
+                    continue
+                known |= ids
+                out.append(f)
+        ctx.audit.record(subject="scanner", action="banner_match",
+                         target=f"{len(services)} services", result="ok",
+                         details=f"findings={len(out)}")
+        return out
 
     def _enrich(self, findings: Iterable[Finding],
                 services: list[ServiceInfo] | None) -> list[Finding]:
