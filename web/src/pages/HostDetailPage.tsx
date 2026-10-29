@@ -1,13 +1,17 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { Radar } from "lucide-react";
 import { api } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
+import { useEngagement } from "../auth/EngagementContext";
 import type { FindingOut } from "../api/types";
 import { SeverityBars } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { FindingsTable } from "../components/FindingsTable";
+import { ReachabilityCheck } from "../components/ReachabilityCheck";
 import { RunPicker } from "../components/RunPicker";
 import { ServicesTable } from "../components/ServicesTable";
-import { Empty, ErrorAlert, Kpi, Loading } from "../components/ui";
+import { Empty, ErrorAlert, Kpi, Loading, Modal } from "../components/ui";
 import { byHost, isIssue } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
 import { useRunSelection } from "../lib/useRunSelection";
@@ -25,6 +29,9 @@ export function HostDetailPage() {
     !!run,
   );
   const [open, setOpen] = useState<FindingOut | null>(null);
+  const [checking, setChecking] = useState(false);
+  const { has } = useAuth();
+  const { current } = useEngagement();
   const row = useMemo(() => (data.data ? byHost(data.data.findings.filter(isIssue), data.data.services)[0] : undefined), [data.data]);
   const info = data.data?.findings.filter((f) => !isIssue(f)) ?? [];
 
@@ -40,7 +47,14 @@ export function HostDetailPage() {
           </h1>
           {row?.summary && <span className="muted">{row.summary}</span>}
         </div>
-        <div className="actions">{runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} />}</div>
+        <div className="actions">
+          {has("run_scan") && current && (
+            <button type="button" className="btn" onClick={() => setChecking(true)}>
+              <Radar size={15} /> Проверить доступность
+            </button>
+          )}
+          {runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} />}
+        </div>
       </div>
       {error && <ErrorAlert error={error} />}
       {data.error && <ErrorAlert error={data.error} onRetry={data.reload} />}
@@ -90,6 +104,11 @@ export function HostDetailPage() {
         </>
       )}
       {open && <FindingDrawer finding={open} onClose={() => setOpen(null)} />}
+      {checking && current && (
+        <Modal title="Проверка доступности хоста" onClose={() => setChecking(false)} wide>
+          <ReachabilityCheck engagementId={current.id} initialTarget={host} />
+        </Modal>
+      )}
     </>
   );
 }

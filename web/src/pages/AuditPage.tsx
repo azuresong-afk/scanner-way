@@ -13,6 +13,11 @@ const RESULT_TONE: Record<string, string> = {
   failure: "pill-danger",
   forbidden: "pill-danger",
   locked: "pill-warn",
+  reachable: "pill-ok",
+  unreachable: "pill-warn",
+  rate_limited: "pill-warn",
+  rejected_not_in_allowlist: "pill-danger",
+  rejected_not_an_ip: "pill-danger",
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -26,6 +31,7 @@ const ACTION_LABEL: Record<string, string> = {
   allowlist_add: "Добавление в allowlist",
   allowlist_remove: "Удаление из allowlist",
   scan_request: "Запрос прогона",
+  reachability_check: "Проверка доступности хоста",
   scan_queue: "Постановка прогона в очередь",
   scan_start: "Начало прогона",
   scan_finish: "Завершение прогона",

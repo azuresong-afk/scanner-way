@@ -159,3 +159,27 @@ class AuditOut(_Orm):
     target: str | None
     result: str | None
     details: dict | None
+
+
+# ---- проверка доступности ----
+class ReachabilityIn(BaseModel):
+    target: str = Field(min_length=1, max_length=64)
+    ports: list[int] | None = Field(default=None, min_length=1, max_length=10)
+
+
+class PortStateOut(BaseModel):
+    port: int
+    state: str                    # open | closed | filtered
+    rtt_ms: float | None
+
+
+class ReachabilityOut(BaseModel):
+    target: str
+    reachable: bool
+    methods: list[str]            # icmp / tcp — чем подтверждена доступность
+    icmp_available: bool          # есть ли ping в окружении API
+    icmp_alive: bool
+    icmp_rtt_ms: float | None
+    ports: list[PortStateOut]
+    elapsed_ms: float
+    checked_at: datetime

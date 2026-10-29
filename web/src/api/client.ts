@@ -10,6 +10,8 @@ import type {
   EngagementOut,
   FindingOut,
   MeOut,
+  ReachabilityIn,
+  ReachabilityOut,
   ReportFormat,
   ReportVariant,
   RunCreate,
@@ -152,6 +154,8 @@ export const api = {
   run: (id: number) => json<RunOut>(`/runs/${id}`),
   startRun: (engagementId: number, data: RunCreate) =>
     json<RunCreated>(`/engagements/${engagementId}/runs`, { method: "POST", ...body(data) }),
+  checkReachability: (engagementId: number, data: ReachabilityIn) =>
+    json<ReachabilityOut>(`/engagements/${engagementId}/reachability`, { method: "POST", ...body(data) }),
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),
   findings: (runId: number) => json<FindingOut[]>(`/runs/${runId}/findings`),
   services: (runId: number) => json<ServiceOut[]>(`/runs/${runId}/services`),

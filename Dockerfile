@@ -2,9 +2,11 @@ FROM python:3.12-slim
 
 # Внешние движки-бэкенды (вызываются как процессы; см. лицензии в architecture.md):
 # nmap — разведка; openscap-scanner/lynis — аудит конфигураций; openssh-client —
-# безагентный доступ; libpango/fonts — рендер PDF (WeasyPrint).
+# безагентный доступ; iputils-ping — ICMP в проверке доступности хоста;
+# libpango/fonts — рендер PDF (WeasyPrint).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap \
+        iputils-ping \
         openssh-client \
         openscap-scanner \
         lynis \
