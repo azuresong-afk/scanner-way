@@ -26,14 +26,17 @@ import json
 import re
 import shlex
 import subprocess
+import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from scanner.core.models import Finding, FindingType, ServiceInfo, Severity
 from scanner.core.ratelimit import RateProfile
 from scanner.modules.base import ScanContext, ScanModule
 
-# Раннер: (argv, stdin_targets, timeout_sec) -> JSONL со stdout. Подменяется в тестах.
+# Раннер: (argv, targets, timeout_sec) -> JSONL со stdout; targets — список целей
+# построчно. Подменяется в тестах.
 Runner = Callable[[list[str], str, float], str]
 
 # severity Nuclei -> наша шкала
@@ -143,10 +146,9 @@ def build_inputs(ctx: ScanContext) -> tuple[list[str], list[str]]:
 
 
 def build_nuclei_command(rate: RateProfile, opts: VulnOptions) -> list[str]:
-    """Собирает argv Nuclei. Цели подаются в stdin (``-l -``), не в argv."""
+    """Собирает argv Nuclei без целей: их добавляет раннер файлом (``-l``)."""
     cmd = [
         opts.nuclei_path,
-        "-l", "-",                 # список целей из stdin
         "-jsonl",                  # структурированный вывод в stdout
         "-silent",                 # без баннера/прогресса в stdout
         "-no-color",
@@ -166,9 +168,14 @@ def build_nuclei_command(rate: RateProfile, opts: VulnOptions) -> list[str]:
     return cmd
 
 
-def _subprocess_runner(cmd: list[str], stdin_targets: str, timeout: float) -> str:
-    proc = subprocess.run(cmd, input=stdin_targets, capture_output=True, text=True,
-                          timeout=timeout, check=False)
+def _subprocess_runner(cmd: list[str], targets: str, timeout: float) -> str:
+    # Nuclei 3.x не понимает «-l -» (ищет файл с именем «-»), поэтому цели
+    # передаются временным файлом. Цели в argv так и не попадают.
+    with tempfile.TemporaryDirectory(prefix="nuclei-") as tmp:
+        targets_file = Path(tmp) / "targets.txt"
+        targets_file.write_text(targets)
+        proc = subprocess.run([*cmd, "-l", str(targets_file)], stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=timeout, check=False)
     # Nuclei отдаёт rc=0 даже когда ничего не найдено; ненулевой — ошибка запуска.
     if proc.returncode != 0:
         raise VulnScanError(f"nuclei rc={proc.returncode}: {proc.stderr.strip()[:500]}")
@@ -330,12 +337,12 @@ class VulnModule(ScanModule):
         step = max(1, opts.batch_size)
         for i in range(0, len(inputs), step):
             batch = inputs[i:i + step]
-            stdin_targets = "\n".join(batch) + "\n"
+            targets = "\n".join(batch) + "\n"
             ctx.audit.record(subject="scanner", action="nuclei_exec",
                              target=f"{len(batch)} targets", result="started",
                              details=shlex.join(cmd))
             try:
-                output = self._runner(cmd, stdin_targets, float(opts.overall_timeout_sec))
+                output = self._runner(cmd, targets, float(opts.overall_timeout_sec))
                 batch_findings = parse_nuclei_jsonl(output, self.name)
             except (VulnScanError, subprocess.TimeoutExpired, OSError) as e:
                 ctx.audit.record(subject="scanner", action="nuclei_exec",

@@ -1,4 +1,6 @@
 """Тесты модуля vuln на эталонном JSONL Nuclei — без реального сканирования."""
+import os
+import subprocess
 from pathlib import Path
 
 from scanner.core.models import FindingType, ServiceInfo, Severity
@@ -137,7 +139,9 @@ def test_command_carries_rate_limits_and_disables_net():
     assert "-rate-limit" in cmd and cmd[cmd.index("-rate-limit") + 1] == "5"
     assert "-concurrency" in cmd and cmd[cmd.index("-concurrency") + 1] == "8"
     assert "-disable-update-check" in cmd
-    assert "-jsonl" in cmd and "-l" in cmd
+    assert "-jsonl" in cmd
+    # цели не в argv и не «-l -»: их передаёт раннер файлом
+    assert "-l" not in cmd and "-" not in cmd
     # dos/fuzz исключены по умолчанию
     assert cmd[cmd.index("-exclude-tags") + 1] == "dos,fuzz"
 
@@ -205,3 +209,27 @@ def test_batching_splits_calls():
     runner = _runner("")
     VulnModule(options=VulnOptions(batch_size=2), runner=runner).run(_ctx(services=services))
     assert len(runner.calls) == 3   # 5 целей / batch 2 -> 3 вызова
+
+
+def test_subprocess_runner_passes_targets_as_file(monkeypatch):
+    """Nuclei 3.x падает на «-l -»: цели должны прийти файлом через -l <path>."""
+    from scanner.modules import vuln as vuln_mod
+
+    seen = {}
+
+    def fake_run(argv, **kw):
+        path = argv[argv.index("-l") + 1]
+        seen["argv"], seen["kw"] = argv, kw
+        seen["path"] = path
+        with open(path) as f:
+            seen["content"] = f.read()
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(vuln_mod.subprocess, "run", fake_run)
+    cmd = build_nuclei_command(get_profile("gentle"), VulnOptions())
+    vuln_mod._subprocess_runner(cmd, "10.0.0.5:8080\n", 10.0)
+    assert seen["path"] != "-"
+    assert seen["content"] == "10.0.0.5:8080\n"
+    assert seen["argv"][:len(cmd)] == cmd
+    assert seen["kw"]["stdin"] is subprocess.DEVNULL
+    assert not os.path.exists(seen["path"])   # временный файл убран
