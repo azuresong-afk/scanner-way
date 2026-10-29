@@ -81,7 +81,7 @@ cp .env.example .env
 |---|---|---|
 | `BDU_FSTEC_FEED_PATH` | `/data/vullist.xlsx` | путь к выгрузке БДУ внутри контейнера (это `./data` на хосте) |
 | `SCANNER_BDU_AUTOLOAD` | `1` | загрузить БДУ автоматически при первом старте |
-| `SCANNER_NUCLEI_UPDATE` | `1` | обновлять шаблоны Nuclei при старте (без сети просто пропускается) |
+| `SCANNER_NUCLEI_UPDATE` | `1` | обновлять шаблоны Nuclei при старте. Шаблоны хранятся в томе `nuclei_templates`; без сети обновление пропускается, ошибка видна в логах `app` |
 | `NVD_API_KEY` | пусто | ключ NVD API 2.0, ускоряет загрузку CVE ([получить](https://nvd.nist.gov/developers/request-an-api-key)) |
 | `DEFAULT_RATE_PROFILE` | `gentle` | профиль нагрузки по умолчанию |
 
@@ -548,7 +548,7 @@ docker compose down -v && rm -f data/.bdu_loaded
 | 5 неудачных входов подряд — вход заблокирован | подождите 15 минут (защита от перебора) |
 | Находки без БДУ | БДУ не загружена: см. раздел 7; проверьте `ls data/.bdu_loaded` и логи загрузки |
 | Прогон отклонён: «no requested target is in the engagement allowlist» | цели нет в allowlist выбранного договора |
-| `vuln` не находит ничего | шаблоны Nuclei не скачались (нет сети при старте): `docker compose exec app nuclei -update-templates` |
+| `vuln` не находит ничего или ошибка `no templates provided for scan` | шаблоны Nuclei не скачались (в логах `app` будет «шаблонов Nuclei нет»): `docker compose exec app nuclei -update-templates`. Нужен доступ контейнера к github.com |
 | Ошибка сборки на шаге Nuclei | нет доступа к github.com при сборке; проверьте прокси/сеть сервера |
 | `port is already allocated` / `address already in use` | порт хоста занят: задайте свободный в `.env` (`SCANNER_WEB_PORT` / `SCANNER_API_PORT` / `SCANNER_DB_PORT`), раздел 5.1 |
 | Подробности ошибки модуля | раздел «Журнал аудита», действие `scan_finish`, или `docker compose logs app` |

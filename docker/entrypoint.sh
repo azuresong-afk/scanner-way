@@ -21,10 +21,20 @@ if [ "${SCANNER_BDU_AUTOLOAD:-1}" = "1" ] && [ -f "$BDU_FSTEC_FEED_PATH" ] && [ 
   fi
 fi
 
+# Шаблоны Nuclei лежат в томах (см. docker-compose.yml) и переживают
+# пересоздание контейнера; здесь они только обновляются.
+NUCLEI_TEMPLATES_DIR="${HOME:-/root}/nuclei-templates"
 if [ "${SCANNER_NUCLEI_UPDATE:-1}" = "1" ] && command -v nuclei >/dev/null 2>&1; then
   echo "[entrypoint] обновляю шаблоны Nuclei (по возможности)..."
-  nuclei -update-templates -disable-update-check >/dev/null 2>&1 || \
-    echo "[entrypoint] шаблоны Nuclei не обновлены (нет сети?) — не критично" >&2
+  if ! nuclei -update-templates -disable-update-check >/tmp/nuclei-update.log 2>&1; then
+    echo "[entrypoint] шаблоны Nuclei не обновлены:" >&2
+    tail -n 5 /tmp/nuclei-update.log >&2
+  fi
+fi
+if command -v nuclei >/dev/null 2>&1 && \
+   [ -z "$(find "$NUCLEI_TEMPLATES_DIR" -name '*.yaml' -print -quit 2>/dev/null)" ]; then
+  echo "[entrypoint] ВНИМАНИЕ: шаблонов Nuclei нет — модуль «Поиск уязвимостей» не" \
+       "сможет работать. Загрузите их: docker compose exec app nuclei -update-templates" >&2
 fi
 
 echo "[entrypoint] запускаю API на :8000 ..."
