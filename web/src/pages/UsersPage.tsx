@@ -11,6 +11,7 @@ const MIN_PASSWORD = 12;
 
 function RolePicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
   const credWithoutOperator = value.includes("cred_audit") && !value.includes("operator");
+  const hostCredsWithoutRole = value.includes("host_credentials") && !value.includes("operator") && !value.includes("admin");
   return (
     <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
       <span>Роли</span>
@@ -30,6 +31,11 @@ function RolePicker({ value, onChange }: { value: string[]; onChange: (v: string
         ))}
       </div>
       {credWithoutOperator && <small style={{ color: "var(--warn)" }}>Право cred_audit действует только вместе с ролью оператора.</small>}
+      {hostCredsWithoutRole && (
+        <small style={{ color: "var(--warn)" }}>
+          Право host_credentials добавляется к роли: оператору — для запуска по учётке, администратору — чтобы заводить учётки.
+        </small>
+      )}
       {value.includes("admin") && value.includes("operator") && (
         <small style={{ color: "var(--warn)" }}>Совмещение администратора и оператора нарушает разделение обязанностей.</small>
       )}
@@ -211,7 +217,7 @@ export function UsersPage() {
                       <span className="inline" style={{ gap: 6 }}>
                         {u.roles.length ? (
                           u.roles.map((r) => (
-                            <span key={r} className={`pill ${r === "admin" ? "pill-warn" : r === "cred_audit" ? "pill-danger" : "pill-info"}`}>
+                            <span key={r} className={`pill ${r === "admin" ? "pill-warn" : r === "cred_audit" || r === "host_credentials" ? "pill-danger" : "pill-info"}`}>
                               {ROLE_LABEL[r] ?? r}
                             </span>
                           ))

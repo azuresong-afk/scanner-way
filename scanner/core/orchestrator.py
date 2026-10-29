@@ -29,15 +29,26 @@ from sqlalchemy.orm import Session, sessionmaker
 from scanner.core import repository as repo
 from scanner.core.allowlist import AllowlistGate
 from scanner.core.audit import AuditSink
+from scanner.core.credentials import CredentialVault, HostCredential, load_vault
 from scanner.core.db import session_scope
-from scanner.core.models import Finding, ServiceInfo
+from scanner.core.models import Finding, HostInventory, ServiceInfo
 from scanner.core.ratelimit import PROFILES, RateProfile, get_profile
 from scanner.modules.base import ScanContext, ScanModule
 from scanner.reporting.diff import diff_runs
 
 # Порядок исполнения: discovery первым — его сервисы (ctx.services) нужны
 # остальным модулям.
-MODULE_ORDER: tuple[str, ...] = ("discovery", "vuln", "config_audit", "cred_audit")
+MODULE_ORDER: tuple[str, ...] = ("discovery", "vuln", "auth_inventory", "config_audit",
+                                 "cred_audit")
+
+# Движки поиска уязвимостей (выбор оператора): сетевые проверки Nuclei без
+# учётной записи и/или инвентаризация пакетов по учётной записи.
+VULN_ENGINES: dict[str, tuple[str, ...]] = {
+    "nuclei": ("vuln",),
+    "credentialed": ("auth_inventory",),
+    "both": ("vuln", "auth_inventory"),
+}
+CREDENTIAL_MODULES = frozenset({"auth_inventory"})
 
 # Защита от опечатки вида 10.0.0.0/8 в запросе: столько адресов за прогон
 # с запасом покрывает «десятки–сотни хостов».
@@ -52,7 +63,8 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
     """Имя модуля -> фабрика. Импорт ленивый: модули тянут свои зависимости.
 
     matcher — слой сопоставления CVE/БДУ (feeds.matcher.VulnMatcher). Когда он
-    задан, модуль vuln обогащает находки CVE/БДУ ФСТЭК; без него (matcher=None)
+    задан, модуль vuln обогащает находки CVE/БДУ ФСТЭК, а auth_inventory
+    сопоставляет с ними версии пакетов; без него (matcher=None)
     находки остаются без привязки к справочникам — поэтому в реальном прогоне
     RunService всегда передаёт matcher над справочниками из БД.
     """
@@ -64,6 +76,15 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
         from scanner.modules.vuln import VulnModule
         return VulnModule(matcher=matcher)
 
+    def auth_inventory() -> ScanModule:
+        from scanner.core.sshexec import options_from_env
+        from scanner.modules.auth_inventory import (
+            AuthInventoryModule,
+            AuthInventoryOptions,
+        )
+        return AuthInventoryModule(AuthInventoryOptions(ssh=options_from_env()),
+                                   matcher=matcher)
+
     def config_audit() -> ScanModule:
         from scanner.modules.config_audit import ConfigAuditModule
         return ConfigAuditModule()
@@ -72,8 +93,8 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
         from scanner.modules.cred_audit import CredentialAuditModule
         return CredentialAuditModule()
 
-    return {"discovery": discovery, "vuln": vuln, "config_audit": config_audit,
-            "cred_audit": cred_audit}
+    return {"discovery": discovery, "vuln": vuln, "auth_inventory": auth_inventory,
+            "config_audit": config_audit, "cred_audit": cred_audit}
 
 
 def order_modules(names: Iterable[str]) -> list[str]:
@@ -143,6 +164,7 @@ def plan_targets(gate: AllowlistGate, requested: Iterable[str], *,
 class RunOutcome:
     findings: list[Finding] = field(default_factory=list)
     services: list[ServiceInfo] = field(default_factory=list)
+    inventory: list[HostInventory] = field(default_factory=list)
     allowed: list[str] = field(default_factory=list)
     denied: list[DeniedTarget] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)   # модуль -> ошибка
@@ -157,14 +179,16 @@ class Orchestrator:
         self.should_stop = should_stop or (lambda: False)
 
     def run(self, *, engagement_id: int, scan_run_id: int, requested_targets: list[str],
-            modules: list[ScanModule], rate: RateProfile) -> list[Finding]:
+            modules: list[ScanModule], rate: RateProfile,
+            credentials: list[HostCredential] | None = None) -> list[Finding]:
         return self.run_detailed(engagement_id=engagement_id, scan_run_id=scan_run_id,
                                  requested_targets=requested_targets, modules=modules,
-                                 rate=rate).findings
+                                 rate=rate, credentials=credentials).findings
 
     def run_detailed(self, *, engagement_id: int, scan_run_id: int,
                      requested_targets: list[str], modules: list[ScanModule],
-                     rate: RateProfile) -> RunOutcome:
+                     rate: RateProfile,
+                     credentials: list[HostCredential] | None = None) -> RunOutcome:
         """Гейт + модули по порядку. Ошибка модуля не прерывает остальные."""
         plan = plan_targets(self.gate, requested_targets)
         out = RunOutcome(allowed=plan.allowed, denied=plan.denied)
@@ -176,7 +200,8 @@ class Orchestrator:
             return out
 
         ctx = ScanContext(engagement_id=engagement_id, scan_run_id=scan_run_id,
-                          targets=list(plan.allowed), rate=rate, audit=self.audit)
+                          targets=list(plan.allowed), rate=rate, audit=self.audit,
+                          credentials=list(credentials or []))
         for module in modules:
             if self.should_stop():
                 out.stopped = True
@@ -198,11 +223,13 @@ class Orchestrator:
                                            "error": out.errors[module.name]})
                 continue
             out.findings.extend(found)
+            ctx.completed.add(module.name)
             self.audit.record(subject="scanner", action="module_finish",
                               target=module.name, result="ok",
                               details={"scan_run_id": scan_run_id,
                                        "findings": len(found)})
         out.services = list(ctx.services or [])
+        out.inventory = list(ctx.inventory.values())
         return out
 
 
@@ -230,9 +257,12 @@ class RunService:
     def __init__(self, session_factory: sessionmaker[Session], audit: AuditSink, *,
                  registry: Mapping[str, ModuleFactory] | None = None,
                  executor: Executor | None = None,
-                 reference_store: object | None = None):
+                 reference_store: object | None = None,
+                 vault: CredentialVault | None = None):
         self.sessions = session_factory
         self.audit = audit
+        # Ключ шифрования учётных записей; None — учётки недоступны.
+        self.vault = vault if vault is not None else load_vault()
         # Без явного реестра строим стандартный и подключаем к vuln сопоставление
         # с CVE/БДУ ФСТЭК над справочниками из той же БД — иначе находки реального
         # прогона остались бы без привязки к БДУ (ключевая функция продукта).
@@ -271,9 +301,34 @@ class RunService:
         return plan_targets(gate, requested_targets)
 
     # --- жизненный цикл ----------------------------------------------------
+    def check_credentials(self, engagement_id: int, modules: list[str],
+                          credential_ids: list[int]) -> None:
+        """Учётки прогона: нужны модулям из CREDENTIAL_MODULES, принадлежат договору.
+
+        ValueError — понятная оператору причина отказа (API отдаёт её как 422).
+        """
+        needs = [m for m in modules if m in CREDENTIAL_MODULES]
+        if not credential_ids:
+            if needs:
+                raise ValueError(f"модулю {needs[0]} нужна учётная запись: "
+                                 "выберите хотя бы одну")
+            return
+        if not needs:
+            raise ValueError("учётные записи используются только модулем auth_inventory")
+        if self.vault is None:
+            raise ValueError("не задан ключ шифрования учётных записей "
+                             "(SCANNER_CREDENTIALS_KEY или SCANNER_API_SECRET)")
+        with session_scope(self.sessions) as s:
+            known = {r.id for r in repo.list_host_credentials(s, engagement_id)}
+        missing = sorted(set(credential_ids) - known)
+        if missing:
+            raise ValueError(f"учётные записи не найдены в договоре: "
+                             f"{', '.join(map(str, missing))}")
+
     def submit(self, *, engagement_id: int, modules: list[str], rate_profile: str,
                requested_targets: list[str], actor: str,
-               started_by: int | None = None) -> int:
+               started_by: int | None = None,
+               credential_ids: list[int] | None = None) -> int:
         """Создаёт прогон (pending) и отдаёт его исполнителю. Права проверяет API."""
         unknown = [m for m in modules if m not in self.registry]
         if unknown:
@@ -281,14 +336,17 @@ class RunService:
         if rate_profile not in PROFILES:
             raise ValueError(f"unknown rate profile: {rate_profile}")
         names = order_modules(modules)
+        cred_ids = list(dict.fromkeys(credential_ids or []))
+        self.check_credentials(engagement_id, names, cred_ids)
         with session_scope(self.sessions) as s:
             run_id = repo.create_scan_run(s, engagement_id=engagement_id, modules=names,
                                           rate_profile=rate_profile,
-                                          started_by=started_by)
+                                          started_by=started_by, credential_ids=cred_ids)
         self.audit.record(subject=actor, action="scan_queue", target=f"scan_run:{run_id}",
                           result="ok",
                           details={"engagement_id": engagement_id, "modules": names,
                                    "rate_profile": rate_profile,
+                                   "credential_ids": cred_ids,
                                    "requested_targets": requested_targets[:100]})
         self.executor.submit(self.execute, run_id, list(requested_targets))
         return run_id
@@ -342,22 +400,35 @@ class RunService:
             rate = get_profile(run.rate_profile)
             # allowlist читается в момент запуска, а не постановки
             gate = repo.load_allowlist_gate(s, engagement_id)
+            # учётки расшифровываются только на время прогона, в памяти процесса
+            cred_ids = list(run.credential_ids or [])
+            credentials = []
+            if cred_ids:
+                if self.vault is None:
+                    raise RuntimeError("не задан ключ шифрования учётных записей")
+                credentials = repo.load_host_credentials(s, self.vault, engagement_id,
+                                                         cred_ids)
             repo.set_scan_run_status(s, scan_run_id, "running")
         self.audit.record(subject="scanner", action="scan_start",
                           target=f"scan_run:{scan_run_id}", result="ok",
                           details={"engagement_id": engagement_id, "modules": names,
-                                   "rate_profile": rate.name})
+                                   "rate_profile": rate.name,
+                                   "credentials": [c.describe() for c in credentials]
+                                   or None})
 
         modules = [self.registry[n]() for n in names]
         orch = Orchestrator(gate, self.audit,
                             should_stop=lambda: self._status(scan_run_id) == "stopped")
         out = orch.run_detailed(engagement_id=engagement_id, scan_run_id=scan_run_id,
                                 requested_targets=requested_targets, modules=modules,
-                                rate=rate)
+                                rate=rate, credentials=credentials)
+        del credentials     # секреты больше не нужны
 
         with session_scope(self.sessions) as s:
             if out.services:
                 repo.save_services(s, scan_run_id=scan_run_id, services=out.services)
+            if out.inventory:
+                repo.save_inventory(s, scan_run_id=scan_run_id, inventories=out.inventory)
             prev_id = repo.previous_scan_run_id(s, scan_run_id)
             statuses = {}
             if prev_id is not None:

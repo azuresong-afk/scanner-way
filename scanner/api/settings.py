@@ -1,6 +1,7 @@
 """Настройки API (переменные окружения с префиксом SCANNER_API_)."""
 from __future__ import annotations
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +13,12 @@ class ApiSettings(BaseSettings):
     # (токены перестают действовать после перезапуска).
     secret: str = ""
     token_ttl_minutes: int = 60
+
+    # Ключ шифрования учётных записей активов (не короче 16 символов). Пусто —
+    # используется secret. Без обоих учётки нельзя завести и использовать.
+    # Смена ключа делает сохранённые учётки нечитаемыми — их придётся завести заново.
+    credentials_key: str = Field(default="", validation_alias=AliasChoices(
+        "SCANNER_CREDENTIALS_KEY", "SCANNER_API_CREDENTIALS_KEY"))
 
     # Первый администратор: создаётся при старте, только если в БД нет ни одного
     # пользователя. После создания переменные стоит убрать из окружения.

@@ -57,8 +57,8 @@ describe("byHost", () => {
 
 describe("inventoryRows", () => {
   const inv = [
-    { host: "10.0.0.10", os_guess: null, run_ids: [1], services_run_id: 1, services: [] },
-    { host: "10.0.0.9", os_guess: null, run_ids: [1, 2], services_run_id: 2, services: [] },
+    { host: "10.0.0.10", os_guess: null, run_ids: [1], services_run_id: 1, services: [], packages_run_id: null, package_count: 0 },
+    { host: "10.0.0.9", os_guess: null, run_ids: [1, 2], services_run_id: 2, services: [], packages_run_id: null, package_count: 0 },
   ];
 
   it("сохраняет порядок по IP и берёт счётчики из прогона", () => {

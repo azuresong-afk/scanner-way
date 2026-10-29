@@ -11,14 +11,27 @@ from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from scanner.core.allowlist import AllowlistGate
+from scanner.core.credentials import (
+    AUTH_KEY,
+    AUTH_KINDS,
+    AUTH_PASSWORD,
+    CredentialError,
+    CredentialVault,
+    HostCredential,
+    key_fingerprint,
+    normalize_scope,
+    validate_username,
+)
 from scanner.core.db import (
     AllowlistEntry,
     Engagement,
     FindingRow,
+    HostCredentialRow,
+    HostPackageRow,
     HostResult,
     ScanRun,
     ServiceResult,
@@ -27,6 +40,8 @@ from scanner.core.models import (
     Finding,
     FindingStatus,
     FindingType,
+    HostInventory,
+    InstalledPackage,
     ServiceInfo,
     Severity,
 )
@@ -107,11 +122,85 @@ def load_allowlist_gate(session: Session, engagement_id: int) -> AllowlistGate:
     return AllowlistGate(list_allowlist(session, engagement_id))
 
 
+# ========== Учётные записи активов ==========
+def create_host_credential(session: Session, vault: CredentialVault, *,
+                           engagement_id: int, name: str, auth: str, username: str,
+                           port: int = 22, targets: Iterable[str] = (),
+                           password: str | None = None, private_key: str | None = None,
+                           passphrase: str | None = None,
+                           created_by: int | None = None) -> int:
+    """Завести учётку договора. Секреты шифруются, в БД открытым текстом не попадают.
+
+    Область действия (targets) обязана входить в allowlist договора: учётка не
+    должна «расширять» объём работ. CredentialError — недопустимые данные.
+    """
+    if auth not in AUTH_KINDS:
+        raise CredentialError(f"неизвестный способ аутентификации: {auth}")
+    if not 0 < port < 65536:
+        raise CredentialError(f"недопустимый порт SSH: {port}")
+    username = validate_username(username)
+    scope = normalize_scope(targets)
+    for cidr in scope:
+        net = ipaddress.ip_network(cidr)
+        if find_allowlist_cover(session, engagement_id, net) is None:
+            raise CredentialError(f"{cidr} не входит в allowlist договора")
+    fingerprint = None
+    if auth == AUTH_PASSWORD:
+        if not password:
+            raise CredentialError("нужен пароль")
+        secrets = {"password": password}
+    else:
+        if not private_key or not private_key.strip():
+            raise CredentialError("нужен закрытый ключ SSH")
+        private_key = private_key.strip() + "\n"
+        fingerprint = key_fingerprint(private_key, passphrase)
+        secrets = {"private_key": private_key, "passphrase": passphrase}
+    row = HostCredentialRow(engagement_id=engagement_id, name=name.strip(), auth=auth,
+                            username=username, port=port, targets=scope,
+                            secret_enc=vault.encrypt(secrets),
+                            key_fingerprint=fingerprint, created_by=created_by)
+    session.add(row)
+    session.flush()
+    return row.id
+
+
+def list_host_credentials(session: Session, engagement_id: int) -> list[HostCredentialRow]:
+    return list(session.scalars(
+        select(HostCredentialRow).where(HostCredentialRow.engagement_id == engagement_id)
+        .order_by(HostCredentialRow.id)))
+
+
+def load_host_credentials(session: Session, vault: CredentialVault, engagement_id: int,
+                          ids: Iterable[int]) -> list[HostCredential]:
+    """Расшифрованные учётки прогона (только этого договора), в порядке ids."""
+    wanted = list(dict.fromkeys(int(i) for i in ids))
+    if not wanted:
+        return []
+    rows = {r.id: r for r in session.scalars(
+        select(HostCredentialRow).where(HostCredentialRow.id.in_(wanted),
+                                        HostCredentialRow.engagement_id == engagement_id))}
+    out = []
+    for cid in wanted:
+        r = rows.get(cid)
+        if r is None:
+            continue
+        sec = vault.decrypt(r.secret_enc)
+        out.append(HostCredential(
+            id=r.id, name=r.name, auth=r.auth, username=r.username, port=r.port,
+            targets=tuple(str(t) for t in r.targets or ()),
+            password=sec.get("password") if r.auth == AUTH_PASSWORD else None,
+            private_key=sec.get("private_key") if r.auth == AUTH_KEY else None,
+            passphrase=sec.get("passphrase") if r.auth == AUTH_KEY else None))
+    return out
+
+
 # ========== Прогоны ==========
 def create_scan_run(session: Session, *, engagement_id: int, modules: list[str],
-                    rate_profile: str = "gentle", started_by: int | None = None) -> int:
+                    rate_profile: str = "gentle", started_by: int | None = None,
+                    credential_ids: Iterable[int] = ()) -> int:
     run = ScanRun(engagement_id=engagement_id, modules=list(modules),
-                  rate_profile=rate_profile, started_by=started_by, status="pending")
+                  rate_profile=rate_profile, started_by=started_by, status="pending",
+                  credential_ids=[int(i) for i in credential_ids])
     session.add(run)
     session.flush()
     return run.id
@@ -197,6 +286,46 @@ def save_services(session: Session, *, scan_run_id: int,
     return existing
 
 
+def save_inventory(session: Session, *, scan_run_id: int,
+                   inventories: Iterable[HostInventory]) -> int:
+    """Сохранить результат инвентаризации по учётке: ОС хоста и пакеты.
+
+    ОС, прочитанная на самом хосте, точнее догадки nmap — она заменяет os_guess.
+    Возвращает число сохранённых пакетов.
+    """
+    hosts = {str(h.host): h for h in session.scalars(
+        select(HostResult).where(HostResult.scan_run_id == scan_run_id))}
+    n = 0
+    for inv in inventories:
+        host = str(ipaddress.ip_address(inv.host))
+        h = hosts.get(host)
+        if h is None:
+            h = session.get(HostResult, save_host(session, scan_run_id=scan_run_id,
+                                                  host=host))
+            hosts[host] = h
+        if inv.os_label:
+            h.os_guess, h.os_accuracy = inv.os_label, 100
+        for p in inv.packages:
+            session.add(HostPackageRow(scan_run_id=scan_run_id, host=host,
+                                       manager=p.manager, name=p.name,
+                                       version=p.version, arch=p.arch))
+            n += 1
+    session.flush()
+    return n
+
+
+def get_packages(session: Session, scan_run_id: int,
+                 host: str | None = None) -> list[tuple[str, InstalledPackage]]:
+    """[(host, пакет)] прогона, по хосту и имени пакета."""
+    q = select(HostPackageRow).where(HostPackageRow.scan_run_id == scan_run_id)
+    if host is not None:
+        q = q.where(HostPackageRow.host == str(ipaddress.ip_address(host)))
+    rows = [(str(r.host), InstalledPackage(r.name, r.version, r.manager, r.arch))
+            for r in session.scalars(q.order_by(HostPackageRow.id))]
+    rows.sort(key=lambda x: (int(ipaddress.ip_address(x[0])), x[1].name, x[1].version))
+    return rows
+
+
 def get_services(session: Session, scan_run_id: int) -> list[ServiceInfo]:
     rows = session.execute(
         select(HostResult.host, ServiceResult)
@@ -252,8 +381,19 @@ def engagement_hosts(session: Session, engagement_id: int) -> list[dict]:
             row["services"].append(ServiceInfo(
                 host=row["host"], port=s.port, protocol=s.protocol, service=s.service,
                 product=s.product, version=s.version, cpe=s.cpe))
+    for host, rid, count in session.execute(
+            select(HostPackageRow.host, HostPackageRow.scan_run_id, func.count())
+            .where(HostPackageRow.scan_run_id.in_(run_ids))
+            .group_by(HostPackageRow.host, HostPackageRow.scan_run_id)
+            .order_by(HostPackageRow.scan_run_id.desc())):
+        row = get(host)
+        row["run_ids"].add(rid)
+        if row.get("packages_run_id") is None:
+            row["packages_run_id"], row["package_count"] = rid, count
     out = []
     for row in hosts.values():
+        row.setdefault("packages_run_id", None)
+        row.setdefault("package_count", 0)
         row["run_ids"] = sorted(row["run_ids"])
         row["services"].sort(key=lambda s: (s.port, s.protocol))
         out.append(row)

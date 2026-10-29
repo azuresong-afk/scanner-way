@@ -61,6 +61,7 @@ STATUS_LABELS: dict[FindingStatus, str] = {
 MODULE_LABELS: dict[str, str] = {
     "discovery": "Инвентаризация сети",
     "vuln": "Уязвимости ПО",
+    "auth_inventory": "Уязвимости ПО по учётной записи",
     "config_audit": "Аудит конфигураций",
     "cred_audit": "Аудит учётных записей",
 }

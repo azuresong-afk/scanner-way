@@ -1,6 +1,6 @@
 // Русские подписи для значений API и справочники модулей/профилей.
 
-import type { FindingStatus, RunStatus, Severity } from "../api/types";
+import type { FindingStatus, RunStatus, Severity, VulnEngine } from "../api/types";
 
 export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
 
@@ -50,6 +50,12 @@ export interface ModuleInfo {
 export const MODULES: ModuleInfo[] = [
   { id: "discovery", label: "Обнаружение и инвентаризация", description: "Хосты, порты, сервисы, версии, ОС (nmap)" },
   { id: "vuln", label: "Поиск уязвимостей", description: "CVE/NVD и БДУ ФСТЭК (Nuclei)" },
+  {
+    id: "auth_inventory",
+    label: "Уязвимости по учётной записи",
+    description: "Пакеты и версии ПО на хосте (SSH) → БДУ ФСТЭК и CVE/NVD",
+    permission: "host_credentials",
+  },
   { id: "config_audit", label: "Аудит конфигураций", description: "CIS, требования ФСТЭК/ГОСТ (OpenSCAP, Lynis по SSH)" },
   {
     id: "cred_audit",
@@ -61,9 +67,36 @@ export const MODULES: ModuleInfo[] = [
 
 export const MODULE_LABEL: Record<string, string> = Object.fromEntries(MODULES.map((m) => [m.id, m.label]));
 
+/** Модули поиска уязвимостей — выбираются движком, а не флажками. */
+export const ENGINE_MODULES = ["vuln", "auth_inventory"];
+
+export interface EngineInfo {
+  id: VulnEngine | "none";
+  label: string;
+  description: string;
+  modules: string[];
+  /** Нужна учётная запись (и право host_credentials). */
+  credentials: boolean;
+}
+
+// Совпадает с VULN_ENGINES на бэкенде.
+export const VULN_ENGINES: EngineInfo[] = [
+  { id: "nuclei", label: "Nuclei", description: "Сетевые проверки снаружи, без учётной записи", modules: ["vuln"], credentials: false },
+  {
+    id: "credentialed",
+    label: "По учётной записи",
+    description: "Вход по SSH, пакеты и версии ПО → БДУ/CVE",
+    modules: ["auth_inventory"],
+    credentials: true,
+  },
+  { id: "both", label: "Оба движка", description: "Nuclei и инвентаризация по учётной записи", modules: ["vuln", "auth_inventory"], credentials: true },
+  { id: "none", label: "Не искать", description: "Только выбранные ниже модули", modules: [], credentials: false },
+];
+
 export const MODULE_SHORT: Record<string, string> = {
   discovery: "Обнаружение",
-  vuln: "Уязвимости",
+  vuln: "Уязвимости (Nuclei)",
+  auth_inventory: "Уязвимости (учётка)",
   config_audit: "Конфигурации",
   cred_audit: "Учётные данные",
 };
@@ -88,6 +121,11 @@ export const ROLES = [
   { id: "operator", label: "Оператор", description: "Запуск и остановка прогонов, просмотр результатов" },
   { id: "auditor", label: "Аудитор", description: "Просмотр и экспорт отчётов, журнал аудита" },
   { id: "cred_audit", label: "Право cred_audit", description: "Доступ к модулю аудита учётных данных (вдобавок к оператору)" },
+  {
+    id: "host_credentials",
+    label: "Право host_credentials",
+    description: "Учётные записи активов: заводить и запускать с ними поиск уязвимостей по учётной записи",
+  },
 ];
 
 export const ROLE_LABEL: Record<string, string> = Object.fromEntries(ROLES.map((r) => [r.id, r.label]));

@@ -57,6 +57,8 @@ VENDOR_SYNONYMS: dict[str, set[str]] = {
     "nginx": {"f5", "nginx"},
     "oracle": {"oracle", "mysql"},
     "mysql": {"oracle", "mysql"},
+    "openprinting": {"openprinting", "apple"},
+    "apple": {"apple", "openprinting"},
 }
 
 _ANY = {"*", ""}

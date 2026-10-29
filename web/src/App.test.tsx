@@ -79,33 +79,67 @@ it("закрытый раздел без права показывает отк�
   expect(await screen.findByText("Нет доступа")).toBeInTheDocument();
 });
 
+const CRED = {
+  id: 5, engagement_id: 1, name: "Серверы ДМЗ", username: "audit", auth: "key", port: 22,
+  targets: ["10.0.0.0/24"], key_fingerprint: "SHA256:abc", created_by: 1, created_at: null,
+};
+
 describe("модуль cred_audit в форме запуска", () => {
-  async function openForm(perms: string[]) {
+  async function openForm(perms: string[], extra: Record<string, unknown> = {}) {
     setToken("t");
-    mockApi({
+    const api = mockApi({
       "GET /me": me(["operator"], perms),
       "GET /engagements": [ENG],
       "GET /engagements/1/runs": [],
       "GET /engagements/1/allowlist": [{ id: 1, cidr: "10.0.0.0/24", note: null, added_by: 1, added_at: null }],
-    });
+      ...extra,
+    } as Parameters<typeof mockApi>[0]);
     renderApp("/runs");
     await userEvent.click(await screen.findByRole("button", { name: /Новый прогон/ }));
-    return screen.findByRole("dialog", { name: "Новый прогон" });
+    return { dlg: await screen.findByRole("dialog", { name: "Новый прогон" }), api };
   }
 
   it("скрыт без права cred_audit", async () => {
-    const dlg = await openForm(OPERATOR);
-    expect(within(dlg).getByText("Поиск уязвимостей")).toBeInTheDocument();
+    const { dlg } = await openForm(OPERATOR);
+    expect(within(dlg).getByText("Поиск уязвимостей — движок")).toBeInTheDocument();
     expect(within(dlg).queryByText("Аудит учётных данных")).not.toBeInTheDocument();
   });
 
+  it("движок «по учётной записи» недоступен без права host_credentials", async () => {
+    const { dlg } = await openForm(OPERATOR);
+    expect(within(dlg).getByRole("radio", { name: /Nuclei/ })).toBeChecked();
+    expect(within(dlg).getByRole("radio", { name: /По учётной записи/ })).toBeDisabled();
+    expect(within(dlg).getAllByText("Нужно право host_credentials")).toHaveLength(2);
+  });
+
+  it("по учётной записи: нужна учётка, в запрос уходят auth_inventory и её id", async () => {
+    const { dlg, api } = await openForm([...OPERATOR, "host_credentials"], {
+      "GET /engagements/1/credentials": [CRED],
+      "POST /engagements/1/runs": { id: 9, engagement_id: 1, modules: [], rate_profile: "gentle", credential_ids: [5], status: "pending",
+        started_by: 1, started_at: null, finished_at: null, created_at: null, accepted_targets: 1, denied_targets: [] },
+    });
+    await userEvent.click(within(dlg).getByRole("radio", { name: /По учётной записи/ }));
+    await userEvent.click(within(dlg).getByRole("button", { name: /Подставить весь allowlist/ }));
+    await userEvent.click(within(dlg).getByRole("checkbox", { name: /Подтверждаю/ }));
+    const submit = screen.getByRole("button", { name: "Запустить" });
+    expect(submit).toBeDisabled();                       // учётка не выбрана
+    await userEvent.click(await within(dlg).findByRole("checkbox", { name: /Серверы ДМЗ/ }));
+    await waitFor(() => expect(submit).toBeEnabled());
+    await userEvent.click(submit);
+    await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")).toBe(true));
+    const call = api.calls.find((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")!;
+    const sent = JSON.parse(String(call.init!.body));
+    expect(sent.modules).toEqual(["discovery", "auth_inventory"]);
+    expect(sent.credential_ids).toEqual([5]);
+  });
+
   it("виден при наличии права", async () => {
-    const dlg = await openForm([...OPERATOR, "cred_audit"]);
+    const { dlg } = await openForm([...OPERATOR, "cred_audit"]);
     expect(within(dlg).getByText("Аудит учётных данных")).toBeInTheDocument();
   });
 
   it("запуск требует подтверждения объёма работ", async () => {
-    const dlg = await openForm(OPERATOR);
+    const { dlg } = await openForm(OPERATOR);
     await userEvent.click(within(dlg).getByRole("button", { name: /Подставить весь allowlist/ }));
     const submit = screen.getByRole("button", { name: "Запустить" });
     expect(submit).toBeDisabled();

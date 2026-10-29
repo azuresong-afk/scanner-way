@@ -1,0 +1,391 @@
+"""Модуль: аутентифицированная инвентаризация (поиск уязвимостей по учётной записи).
+
+Альтернатива (или дополнение) сетевому движку Nuclei: вместо проверок снаружи
+сканер входит на хост по учётке договора (SSH, пароль или ключ), читает
+установленные пакеты и их версии и сопоставляет их с БДУ ФСТЭК и NVD.
+
+На хосте выполняется ОДНА фиксированная команда только на чтение
+(`INVENTORY_SCRIPT`): /etc/os-release, `uname`, `hostname` и список пакетов
+dpkg / rpm / apk. Ничего не устанавливается, права root не нужны, в команду не
+подставляется ничего из входных данных (нет места для инъекции).
+
+Безопасность:
+- цели — только литеральные IP, уже прошедшие allowlist оркестратора; если в
+  прогоне был discovery, подключаемся только к хостам, которые он нашёл;
+- учётки — только выбранные оператором для прогона (ctx.credentials), и только
+  те, в область действия которых входит хост; на хосте пробуется не больше
+  `MAX_CREDENTIALS_PER_HOST` учёток (защита от блокировки учётных записей);
+- секреты не пишутся ни в аудит, ни в находки — только id/имя учётки, логин,
+  порт и способ аутентификации;
+- подключения ограничены профилем нагрузки: не больше max_concurrency хостов
+  параллельно и минимальный интервал между подключениями;
+- вывод хоста недоверенный: лимит размера, строки разбираются без eval.
+
+Результат:
+- инвентарь (ОС, пакеты) — в ctx.inventory, оркестратор сохраняет его в БД;
+- находки VULN — по одной на CVE/БДУ для ПО хоста (port=None, ключ сравнения
+  прогонов host+vuln_id+module стабилен), severity/CVSS — из справочников;
+- INFO-находки: сводка инвентаризации хоста и ошибки (нет доступа, отказ входа).
+"""
+from __future__ import annotations
+
+import ipaddress
+import re
+import shlex
+import time
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+
+from scanner.core.credentials import HostCredential, credentials_for_host
+from scanner.core.models import (
+    Finding,
+    FindingType,
+    HostInventory,
+    InstalledPackage,
+    Severity,
+)
+from scanner.core.sshexec import (
+    AuthFailed,
+    HostKeyMismatch,
+    RemoteShell,
+    SshError,
+    SshOptions,
+    Unreachable,
+    connect,
+)
+from scanner.feeds import packages as pk
+from scanner.modules.base import ScanContext, ScanModule
+from scanner.modules.config_audit import _Throttle
+
+MODULE = "auth_inventory"
+
+# Единственная команда, выполняемая на хосте. Только чтение, без sudo.
+INVENTORY_SCRIPT = r"""LC_ALL=C; export LC_ALL
+echo '@@os-release'; cat /etc/os-release 2>/dev/null || cat /usr/lib/os-release 2>/dev/null
+echo '@@uname'; uname -srm 2>/dev/null
+echo '@@hostname'; hostname 2>/dev/null || cat /etc/hostname 2>/dev/null
+if command -v dpkg-query >/dev/null 2>&1; then
+  echo '@@dpkg'; dpkg-query -W -f='${Status}\t${Package}\t${Version}\t${Architecture}\n' 2>/dev/null
+fi
+if command -v rpm >/dev/null 2>&1; then
+  echo '@@rpm'; rpm -qa --qf '%{NAME}\t%{EPOCH}:%{VERSION}-%{RELEASE}\t%{ARCH}\n' 2>/dev/null
+fi
+if command -v apk >/dev/null 2>&1; then
+  echo '@@apk'; apk info -v 2>/dev/null
+fi
+echo '@@end'
+"""
+INVENTORY_COMMAND = "sh -c " + shlex.quote(INVENTORY_SCRIPT)
+
+MAX_PACKAGES = 20000
+_APK_RE = re.compile(r"^(?P<name>.+)-(?P<ver>\d[^-]*)-r(?P<rel>\d+)$")
+
+Connector = Callable[[str, HostCredential, SshOptions], RemoteShell]
+
+
+# ---------- разбор вывода ----------
+
+def _os_release(lines: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in lines:
+        key, sep, value = line.partition("=")
+        if sep and re.fullmatch(r"[A-Z_]+", key):
+            out[key] = value.strip().strip('"').strip("'")[:200]
+    return out
+
+
+def parse_inventory(text: str, host: str) -> HostInventory:
+    """Вывод INVENTORY_SCRIPT -> HostInventory. Неполный вывод не ошибка."""
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in text.splitlines():
+        if line.startswith("@@"):
+            current = sections.setdefault(line[2:].strip(), [])
+            continue
+        if current is not None:
+            current.append(line.rstrip("\r"))
+    osr = _os_release(sections.get("os-release", []))
+    inv = HostInventory(
+        host=host, os_id=osr.get("ID") or None,
+        os_name=osr.get("PRETTY_NAME") or osr.get("NAME") or None,
+        os_version=osr.get("VERSION_ID") or None,
+        kernel=next((x.strip()[:200] for x in sections.get("uname", []) if x.strip()), None),
+        hostname=next((x.strip()[:255] for x in sections.get("hostname", []) if x.strip()),
+                      None))
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(p: InstalledPackage) -> None:
+        key = (p.manager, p.name, p.version)
+        if p.name and p.version and key not in seen and len(inv.packages) < MAX_PACKAGES:
+            seen.add(key)
+            inv.packages.append(p)
+
+    for line in sections.get("dpkg", []):
+        parts = line.split("\t")
+        if len(parts) < 3 or not parts[0].endswith(" installed"):
+            continue              # rc (удалён, остались конфиги), half-installed…
+        add(InstalledPackage(parts[1][:200], parts[2][:200], "dpkg",
+                             (parts[3][:32] if len(parts) > 3 else None) or None))
+    for line in sections.get("rpm", []):
+        parts = line.split("\t")
+        if len(parts) < 2 or parts[0].startswith("gpg-pubkey"):
+            continue
+        version = parts[1].replace("(none):", "")
+        add(InstalledPackage(parts[0][:200], version[:200], "rpm",
+                             (parts[2][:32] if len(parts) > 2 else None) or None))
+    for line in sections.get("apk", []):
+        m = _APK_RE.match(line.strip())
+        if m:
+            add(InstalledPackage(m["name"][:200], f"{m['ver']}-r{m['rel']}"[:200], "apk"))
+    return inv
+
+
+# ---------- пакеты -> ПО ----------
+
+@dataclass(slots=True)
+class SoftwareGroup:
+    software: pk.Software
+    upstream: str
+    distro: str
+    packages: list[str] = field(default_factory=list)
+
+
+def group_software(packages: Sequence[InstalledPackage],
+                   bdu_names: set[str]) -> list[SoftwareGroup]:
+    """Пакеты -> ПО для сопоставления. Пакеты одного ПО одной версии
+    (openssh-server + openssh-client, openssl + libssl3) — одна группа."""
+    groups: dict[tuple[str, str], SoftwareGroup] = {}
+    for p in packages:
+        if pk.is_kernel(p.name):
+            continue
+        sw = pk.lookup(p.name) or pk.generic_software(p.name, bdu_names)
+        upstream = pk.upstream_version(p.version) if sw else None
+        if sw is None or not upstream:
+            continue
+        g = groups.setdefault((sw.key, upstream),
+                              SoftwareGroup(sw, upstream, pk.distro_version(p.version)))
+        if p.name not in g.packages:
+            g.packages.append(p.name)
+    return list(groups.values())
+
+
+# ---------- модуль ----------
+
+@dataclass(slots=True)
+class AuthInventoryOptions:
+    ssh: SshOptions = field(default_factory=SshOptions)
+    command_timeout_sec: float = 180.0
+    max_parallel_hosts: int = 8          # верхняя граница; реальная — min с профилем
+
+
+class _Matcher:
+    """Интерфейс слоя сопоставления (feeds.matcher.VulnMatcher)."""
+
+    store: object
+
+    def findings_for_package(self, host: str, **kw) -> list[Finding]: ...
+
+
+class AuthInventoryModule(ScanModule):
+    name = MODULE
+
+    def __init__(self, options: AuthInventoryOptions | None = None,
+                 matcher: _Matcher | None = None, connector: Connector | None = None,
+                 sleep: Callable[[float], None] = time.sleep):
+        self.options = options or AuthInventoryOptions()
+        self._matcher = matcher
+        self._connect = connector or connect
+        self._sleep = sleep
+
+    # --- сбор ---
+    def _collect(self, ctx: ScanContext, throttle: _Throttle, host: str,
+                 creds: list[HostCredential]) -> tuple[HostInventory | None, list[Finding]]:
+        notes: list[Finding] = []
+        for cred in creds:
+            info = cred.describe()
+            throttle.wait()
+            ctx.audit.record(subject="scanner", action="auth_inventory_ssh", target=host,
+                             result="started", details=info)
+            try:
+                shell = self._connect(host, cred, self.options.ssh)
+            except AuthFailed as e:
+                ctx.audit.record(subject="scanner", action="auth_inventory_ssh",
+                                 target=host, result="auth_failed",
+                                 details={**info, "error": str(e)[:300]})
+                notes.append(self._info(host, "INFO:auth-inventory-auth-failed",
+                                        "Вход по учётной записи отклонён",
+                                        f"учётка «{cred.name}» ({cred.username}@{host}:"
+                                        f"{cred.port}): {e}"))
+                continue                      # следующая учётка из области хоста
+            except HostKeyMismatch as e:
+                ctx.audit.record(subject="scanner", action="auth_inventory_ssh",
+                                 target=host, result="host_key_mismatch",
+                                 details={**info, "error": str(e)[:300]})
+                return None, [self._info(host, "INFO:auth-inventory-host-key",
+                                         "Ключ SSH хоста не прошёл проверку", str(e))]
+            except Unreachable as e:
+                ctx.audit.record(subject="scanner", action="auth_inventory_ssh",
+                                 target=host, result="unreachable",
+                                 details={**info, "error": str(e)[:300]})
+                return None, [self._info(host, "INFO:auth-inventory-unreachable",
+                                         "Хост недоступен по SSH",
+                                         f"{host}:{cred.port}: {e}")]
+            except (SshError, ValueError) as e:
+                ctx.audit.record(subject="scanner", action="auth_inventory_ssh",
+                                 target=host, result="error",
+                                 details={**info, "error": str(e)[:300]})
+                notes.append(self._info(host, "INFO:auth-inventory-error",
+                                        "Инвентаризация по учётной записи не выполнена",
+                                        str(e)[:500]))
+                continue
+            try:
+                res = shell.run(INVENTORY_COMMAND, self.options.command_timeout_sec)
+            except SshError as e:
+                ctx.audit.record(subject="scanner", action="auth_inventory_exec",
+                                 target=host, result="error",
+                                 details={**info, "error": str(e)[:300]})
+                return None, [*notes, self._info(
+                    host, "INFO:auth-inventory-error",
+                    "Инвентаризация по учётной записи не выполнена", str(e)[:500])]
+            finally:
+                shell.close()
+            inv = parse_inventory(res.stdout.decode("utf-8", "replace"), host)
+            inv.credential_id = cred.id
+            ctx.audit.record(subject="scanner", action="auth_inventory_exec", target=host,
+                             result="ok" if inv.packages else "no_packages",
+                             details={**info, "rc": res.returncode,
+                                      "packages": len(inv.packages),
+                                      "truncated": res.truncated, "os": inv.os_label})
+            return inv, []   # вход удался — заметки об отказах других учёток не нужны
+        return None, notes
+
+    # --- сопоставление ---
+    def _match(self, ctx: ScanContext, inv: HostInventory, matcher: _Matcher,
+               bdu_names: set[str]) -> list[Finding]:
+        out: dict[str, Finding] = {}
+        groups = group_software(inv.packages, bdu_names)
+        for g in groups:
+            sw = g.software
+            try:
+                found = matcher.findings_for_package(
+                    inv.host, product=sw.label, version=g.upstream, cpe=sw.cpe,
+                    bdu_names=sw.bdu_names, distro_version=g.distro,
+                    packages=g.packages, use_nvd=sw.cpe is not None, module=self.name)
+            except Exception as e:  # noqa: BLE001 — справочник недоступен: инвентарь важнее
+                ctx.audit.record(subject="scanner", action="auth_inventory_match",
+                                 target=inv.host, result="error",
+                                 details={"software": sw.label,
+                                          "error": f"{type(e).__name__}: {e}"[:300]})
+                continue
+            for f in found:
+                prev = out.get(f.vuln_id or "")
+                if prev is None:
+                    out[f.vuln_id or ""] = f
+                elif f.evidence and f.evidence not in (prev.evidence or ""):
+                    prev.evidence = f"{prev.evidence}\n{f.evidence}"   # libssl1.1 + libssl3
+        ctx.audit.record(subject="scanner", action="auth_inventory_match", target=inv.host,
+                         result="ok", details={"software": len(groups),
+                                               "findings": len(out)})
+        return list(out.values())
+
+    @staticmethod
+    def _info(host: str, vuln_id: str, title: str, evidence: str | None) -> Finding:
+        return Finding(module=MODULE, host=host, finding_type=FindingType.INFO,
+                       title=title, severity=Severity.INFO, vuln_id=vuln_id,
+                       evidence=evidence)
+
+    def _summary(self, inv: HostInventory, cred: HostCredential | None,
+                 matched: int) -> Finding:
+        managers = sorted({p.manager for p in inv.packages})
+        lines = [f"ОС: {inv.os_label or 'не определена'}"]
+        if inv.kernel:
+            lines.append(f"ядро: {inv.kernel} (с уязвимостями ядра по версии не "
+                         "сопоставляется — версия дистрибутива не равна апстриму)")
+        if inv.hostname:
+            lines.append(f"имя хоста: {inv.hostname}")
+        lines.append(f"пакетов: {len(inv.packages)}"
+                     + (f" ({', '.join(managers)})" if managers else ""))
+        lines.append(f"уязвимостей по версиям пакетов: {matched}")
+        if cred is not None:
+            lines.append(f"учётная запись: «{cred.name}» ({cred.username}, {cred.auth})")
+        if not inv.packages:
+            lines.append("менеджер пакетов dpkg/rpm/apk не найден или недоступен")
+        title = (f"Инвентаризация по учётной записи: {inv.os_label or inv.host}, "
+                 f"пакетов — {len(inv.packages)}")
+        return self._info(inv.host, "INFO:auth-inventory", title, "\n".join(lines))
+
+    def _hosts(self, ctx: ScanContext) -> list[str]:
+        hosts = []
+        for t in ctx.targets:
+            try:
+                hosts.append(str(ipaddress.ip_address(t.strip())))
+            except ValueError:
+                ctx.audit.record(subject="scanner", action="auth_inventory_deny", target=t,
+                                 result="not_an_ip_literal")
+        if "discovery" in ctx.completed and ctx.services is not None:
+            # discovery отработал: не стучимся по SSH в хосты, которых он не нашёл.
+            # Если он упал (нет nmap, ошибка) — пробуем все цели прогона.
+            alive = {s.host for s in ctx.services}
+            for h in hosts:
+                if h not in alive:
+                    ctx.audit.record(subject="scanner", action="auth_inventory_skip",
+                                     target=h, result="host_not_discovered")
+            hosts = [h for h in hosts if h in alive]
+        return hosts
+
+    def run(self, ctx: ScanContext) -> list[Finding]:
+        jobs: list[tuple[str, list[HostCredential]]] = []
+        for host in self._hosts(ctx):
+            creds = credentials_for_host(host, ctx.credentials)
+            if not creds:
+                ctx.audit.record(subject="scanner", action="auth_inventory_skip",
+                                 target=host, result="no_credentials")
+                continue
+            jobs.append((host, creds))
+        if not jobs:
+            return []
+
+        throttle = _Throttle(ctx.rate, sleep=self._sleep)
+        workers = max(1, min(self.options.max_parallel_hosts, ctx.rate.max_concurrency,
+                             len(jobs)))
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="auth-inventory") as pool:
+            collected = list(pool.map(lambda j: (j, self._collect(ctx, throttle, *j)), jobs))
+
+        matcher = self._run_matcher()
+        bdu_names: set[str] = set()
+        if matcher is not None:
+            try:
+                bdu_names = set(matcher.store.bdu_software_names())  # type: ignore[attr-defined]
+            except Exception as e:  # noqa: BLE001 — без индекса работают известные пакеты
+                ctx.audit.record(subject="scanner", action="auth_inventory_match",
+                                 target="bdu_software_names", result="error",
+                                 details=f"{type(e).__name__}: {e}"[:300])
+        findings: list[Finding] = []
+        for (host, creds), (inv, notes) in collected:
+            findings.extend(notes)
+            if inv is None:
+                continue
+            ctx.inventory[host] = inv
+            matched = self._match(ctx, inv, matcher, bdu_names) if matcher else []
+            cred = next((c for c in creds if c.id == inv.credential_id), None)
+            findings.append(self._summary(inv, cred, len(matched)))
+            findings.extend(matched)
+        return findings
+
+    def _run_matcher(self) -> _Matcher | None:
+        """Matcher прогона с кэшем справочника (одни и те же пакеты на сотнях хостов)."""
+        if self._matcher is None:
+            return None
+        store = getattr(self._matcher, "store", None)
+        if store is None:
+            return self._matcher
+        from scanner.feeds.matcher import VulnMatcher
+        from scanner.feeds.store import CachingReferenceStore
+        if not isinstance(self._matcher, VulnMatcher):
+            return self._matcher
+        m = self._matcher
+        return VulnMatcher(CachingReferenceStore(store),  # type: ignore[arg-type]
+                           bdu_product_match=m.bdu_product_match,
+                           bdu_software_aliases=m.bdu_software_aliases)

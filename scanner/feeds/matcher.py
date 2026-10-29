@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from scanner.core.models import Finding, FindingType, ServiceInfo, Severity
@@ -106,6 +108,23 @@ def _bdu_spec_matches(spec: BduVersionSpec, version: str) -> bool:
     return True
 
 
+# Граница в формате пакета дистрибутива: ``2.19-18+deb8u4``, ``1.2-3ubuntu1``,
+# ``8.0p1-24.el9``, ``0.105-16.1``. Не путать с версиями апстрима через дефис
+# (ImageMagick ``7.0.10-62``).
+_DISTRO_REVISION = re.compile(
+    r"[~+]|-\d+\.\d|-[^-]*(deb\d|ubuntu|astra|\.el\d|\.fc\d|alt\d|\.red\d|\.mos)",
+    re.IGNORECASE)
+
+
+def _spec_version(spec: BduVersionSpec, upstream: str, distro: str | None) -> str:
+    """Какой версией проверять запись БДУ: границы в формате дистрибутива
+    (``2.19-18+deb8u4``, ``0.105-16.1``) — версией пакета, иначе — апстрима."""
+    if distro and any(b and _DISTRO_REVISION.search(b)
+                      for b in (spec.exact, spec.start, spec.end)):
+        return distro
+    return upstream
+
+
 class VulnMatcher:
     def __init__(self, store: ReferenceStore, *, bdu_product_match: bool = True,
                  bdu_software_aliases: dict[str, list[str]] | None = None):
@@ -161,25 +180,76 @@ class VulnMatcher:
         if self.bdu_product_match:
             for rec, ev in self._bdu_by_product(service):
                 self._add_bdu(res, rec, ev)
-
         label = " ".join(x for x in (service.product, service.version) if x) or service.service
+        return self._version_findings(
+            res, host=service.host, port=service.port, module=module, label=label,
+            evidence=lambda ids: self._evidence_text(res, ids, service))
+
+    def findings_for_package(self, host: str, *, product: str, version: str,
+                             cpe: str | None = None, bdu_names: Sequence[str] = (),
+                             distro_version: str | None = None,
+                             packages: Sequence[str] = (), use_nvd: bool = True,
+                             module: str = "auth_inventory") -> list[Finding]:
+        """Находки по установленному пакету (аутентифицированная инвентаризация).
+
+        :param product: название ПО (главное имя в БДУ), напр. «OpenSSH».
+        :param version: версия апстрима (``9.2p1``).
+        :param cpe: ``cpe:/a:vendor:product`` — только для известных пакетов;
+            без него NVD не используется (только БДУ по названию ПО).
+        :param distro_version: версия пакета без эпохи (``9.2p1-2+deb12u3``) —
+            для записей БДУ, где граница указана в формате дистрибутива.
+        :param packages: пакеты хоста, давшие это ПО (для evidence).
+        Находки без порта: уязвимость относится к хосту, а не к сервису.
+        """
+        cpe_value = f"{cpe}:{version}" if cpe else None
+        service = ServiceInfo(host=host, port=0, protocol="pkg", product=product,
+                              version=version, cpe=cpe_value)
+        res = MatchResult()
+        if use_nvd and cpe:
+            for cve, ev in self._cves_by_cpe(service):
+                self._add_cve(res, cve, ev)
+        if self.bdu_product_match:
+            for rec, ev in self._bdu_by_product(service, extra_names=bdu_names,
+                                                distro_version=distro_version,
+                                                hints=bool(cpe)):
+                self._add_bdu(res, rec, ev)
+        label = f"{product} {version}"
+        pkgs = ", ".join(packages) or product
+
+        def evidence(ids: set[str]) -> str:
+            lines = [f"Пакет {pkgs} ({distro_version or version}) → {label}"
+                     + (f", {cpe_value}" if cpe_value else "")]
+            lines += [f"[{e.source}] {e.identifier}: {e.detail}"
+                      for e in res.evidence
+                      if e.identifier in ids and e.source in (SRC_CPE, SRC_BDU_PRODUCT)]
+            lines.append("Совпадение по версии установленного пакета: дистрибутив мог "
+                         "перенести исправление в свою ревизию пакета (бэкпорт) — "
+                         "сверьтесь с бюллетенем безопасности дистрибутива.")
+            return "\n".join(lines)
+
+        return self._version_findings(res, host=host, port=None, module=module,
+                                      label=label, evidence=evidence)
+
+    def _version_findings(self, res: MatchResult, *, host: str, port: int | None,
+                          module: str, label: str | None,
+                          evidence: Callable[[set[str]], str]) -> list[Finding]:
         findings: list[Finding] = []
         for cve in res.cve_ids:
-            f = Finding(module=module, host=service.host, port=service.port,
+            f = Finding(module=module, host=host, port=port,
                         finding_type=FindingType.VULN, vuln_id=cve, cve_ids=[cve],
                         title=self._title(res, cve, label))
-            findings.append(self.enrich(f, service))
-            f.evidence = self._evidence_text(res, {cve, *f.bdu_ids}, service)
+            findings.append(self.enrich(f))
+            f.evidence = evidence({cve, *f.bdu_ids})
         linked = {b for f in findings for b in f.bdu_ids}
         for bdu_id in res.bdu_ids:
             if bdu_id in linked:
                 continue
             rec = res.bdu[bdu_id]
-            f = Finding(module=module, host=service.host, port=service.port,
+            f = Finding(module=module, host=host, port=port,
                         finding_type=FindingType.VULN, vuln_id=bdu_id, bdu_ids=[bdu_id],
                         title=rec.title or f"{bdu_id} в {label}")
             findings.append(self.enrich(f))
-            f.evidence = self._evidence_text(res, {bdu_id}, service)
+            f.evidence = evidence({bdu_id})
         return findings
 
     # ---------- сборка результата ----------
@@ -285,25 +355,35 @@ class VulnMatcher:
 
     # ---------- прямой поиск в БДУ по ПО+версии ----------
 
-    def _bdu_software_names(self, service: ServiceInfo,
-                            cpe: Cpe | None) -> tuple[list[str], str | None]:
+    def _bdu_software_names(self, service: ServiceInfo, cpe: Cpe | None,
+                            hints: bool = True) -> tuple[list[str], str | None]:
         names: list[str] = []
         vendor_word: str | None = None
-        if cpe:
+        if cpe and hints:
             hint_names, vendor_word = BDU_SOFTWARE_HINTS.get(cpe.product, ([], None))
             names += self.bdu_software_aliases.get(cpe.product, [])
             names += hint_names
             names.append(cpe.product.replace("_", " "))
-        if service.product and not (cpe and cpe.product in BDU_SOFTWARE_HINTS):
+        if service.product and not (cpe and hints and cpe.product in BDU_SOFTWARE_HINTS):
             names.append(service.product)
         return list(dict.fromkeys(n for n in names if normalize_name(n))), vendor_word
 
-    def _bdu_by_product(self, service: ServiceInfo) -> list[tuple[BduRecord, MatchEvidence]]:
-        cpe = service_cpe(service.cpe, service.product, service.version)
+    def _bdu_by_product(self, service: ServiceInfo, *, extra_names: Sequence[str] = (),
+                        distro_version: str | None = None, hints: bool = True,
+                        ) -> list[tuple[BduRecord, MatchEvidence]]:
+        """Записи БДУ, где ПО сервиса/пакета и его версия попадают в «Версия ПО».
+
+        distro_version — версия пакета дистрибутива (без эпохи): ей проверяются
+        границы, записанные в формате дистрибутива (``до 2.19-18+deb8u4``),
+        остальные — версией апстрима.
+        """
+        cpe = (service_cpe(service.cpe, service.product, service.version) if hints
+               else None)
         version = clean_version(cpe.full_version if cpe else None) or clean_version(service.version)
         if not version:
             return []
-        names, vendor_word = self._bdu_software_names(service, cpe)
+        names, vendor_word = self._bdu_software_names(service, cpe, hints)
+        names = list(dict.fromkeys([*names, *(n for n in extra_names if normalize_name(n))]))
         out: list[tuple[BduRecord, MatchEvidence]] = []
         seen: set[str] = set()
         for name in names:
@@ -315,13 +395,16 @@ class VulnMatcher:
                     continue
                 hit = next((s for s in parse_bdu_versions(rec.versions)
                             if normalize_name(s.software) == norm
-                            and _bdu_spec_matches(s, version)), None)
+                            and _bdu_spec_matches(s, _spec_version(s, version,
+                                                                   distro_version))),
+                           None)
                 if hit is None:
                     continue
                 seen.add(rec.bdu_id)
+                shown = _spec_version(hit, version, distro_version)
                 out.append((rec, MatchEvidence(
                     SRC_BDU_PRODUCT, rec.bdu_id,
-                    f"{hit.software} {version} ∈ «{self._describe_spec(hit)}»")))
+                    f"{hit.software} {shown} ∈ «{self._describe_spec(hit)}»")))
         return sorted(out, key=lambda x: x[0].bdu_id)
 
     @staticmethod

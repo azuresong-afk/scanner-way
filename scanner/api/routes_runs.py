@@ -14,6 +14,7 @@ from scanner.api.schemas import (
     DeniedTargetOut,
     FindingOut,
     InventoryHostOut,
+    PackageOut,
     RunCreate,
     RunCreated,
     RunOut,
@@ -21,7 +22,7 @@ from scanner.api.schemas import (
 )
 from scanner.core import repository as repo
 from scanner.core.db import ScanRun
-from scanner.core.orchestrator import RunService
+from scanner.core.orchestrator import VULN_ENGINES, RunService, order_modules
 from scanner.core.ratelimit import PROFILES
 
 router = APIRouter(tags=["runs"])
@@ -48,7 +49,8 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
               audit: AuditDep,
               runs: Annotated[RunService, Depends(_runs)]) -> RunCreated:
     get_engagement(session, engagement_id)
-    unknown = [m for m in body.modules if m not in runs.registry]
+    modules = _with_engine(body.modules, body.vuln_engine)
+    unknown = [m for m in modules if m not in runs.registry]
     if unknown:
         raise HTTPException(422,
                             f"unknown modules: {', '.join(unknown)}; "
@@ -58,10 +60,16 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
                             f"unknown rate profile: {body.rate_profile}; "
                             f"available: {', '.join(PROFILES)}")
     # Права на отдельные модули — до постановки прогона в очередь.
-    missing = sorted({str(MODULE_PERMISSIONS[m]) for m in body.modules
-                      if m in MODULE_PERMISSIONS and not user.has(MODULE_PERMISSIONS[m])})
+    missing = {str(MODULE_PERMISSIONS[m]) for m in modules
+               if m in MODULE_PERMISSIONS and not user.has(MODULE_PERMISSIONS[m])}
+    if body.credential_ids and not user.has(Perm.HOST_CREDENTIALS):
+        missing.add(str(Perm.HOST_CREDENTIALS))
     if missing:
-        deny(audit, user, request, missing)
+        deny(audit, user, request, sorted(missing))
+    try:
+        runs.check_credentials(engagement_id, modules, body.credential_ids)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
 
     plan = runs.preview(engagement_id, body.targets)
     denied = [DeniedTargetOut(target=d.target, reason=d.reason, count=d.count)
@@ -76,13 +84,23 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
                              "denied_targets": [d.model_dump() for d in denied]})
 
     session.commit()   # отпустить транзакцию запроса до работы исполнителя
-    run_id = runs.submit(engagement_id=engagement_id, modules=body.modules,
+    run_id = runs.submit(engagement_id=engagement_id, modules=modules,
                          rate_profile=body.rate_profile, requested_targets=body.targets,
-                         actor=user.subject, started_by=user.id)
+                         actor=user.subject, started_by=user.id,
+                         credential_ids=body.credential_ids)
     session.expire_all()
     run = _get_run(session, run_id)
     return RunCreated(**RunOut.model_validate(run).model_dump(),
                       accepted_targets=len(plan.allowed), denied_targets=denied)
+
+
+def _with_engine(modules: list[str], engine: str | None) -> list[str]:
+    """Модули прогона с учётом выбранного движка поиска уязвимостей."""
+    if engine is None:
+        return list(modules)
+    engine_modules = {m for ms in VULN_ENGINES.values() for m in ms}
+    return order_modules([*(m for m in modules if m not in engine_modules),
+                          *VULN_ENGINES[engine]])
 
 
 @router.get("/engagements/{engagement_id}/runs", response_model=list[RunOut])
@@ -101,6 +119,7 @@ def list_hosts(engagement_id: int, _: Annotated[Principal, Depends(require(Perm.
     return [InventoryHostOut(
                 host=h["host"], os_guess=h["os_guess"], run_ids=h["run_ids"],
                 services_run_id=h["services_run_id"],
+                packages_run_id=h["packages_run_id"], package_count=h["package_count"],
                 services=[ServiceOut(host=s.host, port=s.port, protocol=s.protocol,
                                      service=s.service, product=s.product,
                                      version=s.version, cpe=s.cpe)
@@ -146,6 +165,19 @@ def list_services(run_id: int, _: Annotated[Principal, Depends(require(Perm.VIEW
     return [ServiceOut(host=s.host, port=s.port, protocol=s.protocol, service=s.service,
                        product=s.product, version=s.version, cpe=s.cpe)
             for s in repo.get_services(session, run_id)]
+
+
+@router.get("/runs/{run_id}/packages", response_model=list[PackageOut])
+def list_packages(run_id: int, _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                  session: SessionDep, host: str | None = None) -> list[PackageOut]:
+    """Пакеты хостов, собранные инвентаризацией по учётной записи."""
+    _get_run(session, run_id)
+    try:
+        rows = repo.get_packages(session, run_id, host)
+    except ValueError as e:
+        raise HTTPException(422, f"invalid host: {host}") from e
+    return [PackageOut(host=h, manager=p.manager, name=p.name, version=p.version,
+                       arch=p.arch) for h, p in rows]
 
 
 @router.get("/runs/{run_id}/report")

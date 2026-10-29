@@ -81,3 +81,32 @@ def test_pg_round_trip_and_append_only_audit(pg_factory):
             s.execute(text("DELETE FROM audit_log"))
         s.rollback()
         assert s.scalar(text("SELECT details->>'why' FROM audit_log")) == "test"
+
+
+def test_pg_credentials_and_packages_round_trip(pg_factory):
+    from scanner.core import repository as repo
+    from scanner.core.credentials import CredentialVault
+    from scanner.core.db import session_scope
+    from scanner.core.models import HostInventory, InstalledPackage
+
+    vault = CredentialVault("k" * 32)
+    with session_scope(pg_factory) as s:
+        eid = repo.create_engagement(s, name="pg")
+        repo.add_allowlist_entry(s, engagement_id=eid, cidr="10.1.0.0/16")
+        cid = repo.create_host_credential(s, vault, engagement_id=eid, name="a",
+                                          auth="password", username="audit",
+                                          password="pw-123", targets=["10.1.2.0/24"])
+        rid = repo.create_scan_run(s, engagement_id=eid, modules=["auth_inventory"],
+                                   credential_ids=[cid])
+        repo.save_inventory(s, scan_run_id=rid, inventories=[HostInventory(
+            "10.1.2.3", os_name="Debian GNU/Linux 12 (bookworm)",
+            packages=[InstalledPackage("bash", "5.2.15-2+b2", "dpkg", "amd64")])])
+    with session_scope(pg_factory) as s:
+        assert repo.get_scan_run(s, rid).credential_ids == [cid]
+        creds = repo.load_host_credentials(s, vault, eid, [cid])
+        assert creds[0].password == "pw-123" and creds[0].targets == ("10.1.2.0/24",)
+        assert [(h, p.name) for h, p in repo.get_packages(s, rid)] == [("10.1.2.3", "bash")]
+        hosts = repo.engagement_hosts(s, eid)
+        assert hosts[0]["os_guess"] == "Debian GNU/Linux 12 (bookworm)"
+        assert (hosts[0]["packages_run_id"], hosts[0]["package_count"]) == (rid, 1)
+        assert "pw-123" not in s.scalar(text("SELECT secret_enc FROM host_credentials"))
