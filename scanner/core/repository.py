@@ -45,10 +45,48 @@ def create_engagement(session: Session, *, name: str, client: str | None = None,
     return e.id
 
 
+class AllowlistDuplicate(Exception):
+    """Цель уже есть в allowlist: та же запись или входит в более широкую подсеть."""
+
+    def __init__(self, cidr: str, existing_id: int, existing_cidr: str):
+        self.cidr = cidr
+        self.existing_id = existing_id
+        self.existing_cidr = existing_cidr
+        self.exact = cidr == existing_cidr
+        super().__init__(f"{cidr} already covered by {existing_cidr}")
+
+
+def find_allowlist_cover(session: Session, engagement_id: int,
+                         net: ipaddress.IPv4Network | ipaddress.IPv6Network
+                         ) -> tuple[int, str] | None:
+    """Запись allowlist, совпадающая с `net` или целиком его включающая."""
+    rows = session.execute(
+        select(AllowlistEntry.id, AllowlistEntry.cidr)
+        .where(AllowlistEntry.engagement_id == engagement_id)
+        .order_by(AllowlistEntry.id)).all()
+    covers = []
+    for entry_id, raw in rows:
+        existing = ipaddress.ip_network(str(raw), strict=False)
+        if existing.version == net.version and net.subnet_of(existing):
+            covers.append((existing.prefixlen != net.prefixlen, entry_id, str(existing)))
+    if not covers:
+        return None
+    _, entry_id, existing_cidr = min(covers)   # точное совпадение — первым
+    return entry_id, existing_cidr
+
+
 def add_allowlist_entry(session: Session, *, engagement_id: int, cidr: str,
                         note: str | None = None, added_by: int | None = None) -> int:
-    """Добавить цель в allowlist договора. CIDR валидируется и нормализуется."""
-    net = ipaddress.ip_network(cidr, strict=False)  # ValueError на мусоре
+    """Добавить цель в allowlist договора. CIDR валидируется и нормализуется.
+
+    Дубли не заносятся: `10.0.0.5`, `10.0.0.5/32` и ` 10.0.0.5 ` — одна цель,
+    `10.0.0.7/24` — то же, что `10.0.0.0/24`; адрес или подсеть, уже входящие
+    в занесённую подсеть, тоже отклоняются (AllowlistDuplicate).
+    """
+    net = ipaddress.ip_network(cidr.strip(), strict=False)  # ValueError на мусоре
+    cover = find_allowlist_cover(session, engagement_id, net)
+    if cover is not None:
+        raise AllowlistDuplicate(str(net), *cover)
     entry = AllowlistEntry(engagement_id=engagement_id, cidr=str(net), note=note,
                            added_by=added_by)
     session.add(entry)

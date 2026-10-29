@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Pencil, Play, Plus, Trash2 } from "lucide-react";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { StartRunModal } from "../components/StartRunModal";
@@ -26,6 +26,7 @@ export function EngagementDetailPage() {
   const [cidr, setCidr] = useState("");
   const [note, setNote] = useState("");
   const [allowError, setAllowError] = useState<string | null>(null);
+  const [dupId, setDupId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
 
   if (eng.loading && !eng.data) return <Loading />;
@@ -43,6 +44,7 @@ export function EngagementDetailPage() {
     }
     setBusy(true);
     setAllowError(null);
+    setDupId(null);
     try {
       await api.addAllowlist(id, { cidr: value, note: note.trim() || null });
       setCidr("");
@@ -50,6 +52,9 @@ export function EngagementDetailPage() {
       await allow.reload();
     } catch (err) {
       setAllowError((err as Error).message);
+      // 409: цель уже занесена — подсвечиваем запись, которая её покрывает
+      const existing = err instanceof ApiError && err.status === 409 ? duplicateOf(err.detail) : null;
+      setDupId(existing);
     } finally {
       setBusy(false);
     }
@@ -57,6 +62,7 @@ export function EngagementDetailPage() {
 
   const remove = async (entryId: number) => {
     setAllowError(null);
+    setDupId(null);
     try {
       await api.removeAllowlist(id, entryId);
       await allow.reload();
@@ -113,7 +119,15 @@ export function EngagementDetailPage() {
             <form onSubmit={add} className="inline" style={{ padding: "0 20px 14px", alignItems: "flex-end" }}>
               <label className="field" style={{ flex: "1 1 180px" }}>
                 <span>IP или подсеть</span>
-                <input className="input mono" value={cidr} onChange={(ev) => setCidr(ev.target.value)} placeholder="10.0.0.0/24" />
+                <input
+                  className="input mono"
+                  value={cidr}
+                  onChange={(ev) => {
+                    setCidr(ev.target.value);
+                    setDupId(null);
+                  }}
+                  placeholder="10.0.0.0/24"
+                />
               </label>
               <label className="field" style={{ flex: "2 1 220px" }}>
                 <span>Комментарий</span>
@@ -150,7 +164,7 @@ export function EngagementDetailPage() {
                 </thead>
                 <tbody>
                   {allow.data!.map((a) => (
-                    <tr key={a.id}>
+                    <tr key={a.id} className={a.id === dupId ? "selected" : undefined} aria-current={a.id === dupId || undefined}>
                       <td className="mono">{a.cidr}</td>
                       <td className="muted">{a.note ?? "—"}</td>
                       <td className="muted nowrap">{fmtDate(a.added_at)}</td>
@@ -278,4 +292,12 @@ function DeleteEngagement({ id, name, onClose, onDone }: { id: number; name: str
       {error && <ErrorAlert error={error} />}
     </Modal>
   );
+}
+
+function duplicateOf(detail: unknown): number | null {
+  if (detail && typeof detail === "object" && "existing_id" in detail) {
+    const v = (detail as { existing_id: unknown }).existing_id;
+    return typeof v === "number" ? v : null;
+  }
+  return null;
 }

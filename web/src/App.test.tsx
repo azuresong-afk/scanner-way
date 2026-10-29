@@ -212,3 +212,36 @@ describe("журнал аудита", () => {
     expect(screen.getByRole("button", { name: "Выгрузить журнал JSON" })).toBeDisabled();
   });
 });
+
+it("повторно занесённая цель не дублируется в allowlist и подсвечивает существующую запись", async () => {
+  setToken("t");
+  const entry = { id: 3, cidr: "10.0.0.0/24", note: "ДМЗ", added_by: 1, added_at: null };
+  const { calls } = mockApi({
+    "GET /me": me(["admin"], ADMIN),
+    "GET /engagements": [ENG],
+    "GET /engagements/1": ENG,
+    "GET /engagements/1/runs": [],
+    "GET /engagements/1/allowlist": [entry],
+    "POST /engagements/1/allowlist": () =>
+      new Response(
+        JSON.stringify({
+          detail: {
+            message: "10.0.0.5/32 уже входит в подсеть 10.0.0.0/24 из allowlist",
+            code: "allowlist_duplicate",
+            cidr: "10.0.0.5/32",
+            existing_id: 3,
+            existing_cidr: "10.0.0.0/24",
+          },
+        }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      ),
+  });
+  renderApp("/engagements/1");
+  await userEvent.type(await screen.findByPlaceholderText("10.0.0.0/24"), "10.0.0.5");
+  await userEvent.click(screen.getByRole("button", { name: /Добавить/ }));
+  expect(await screen.findByText(/уже входит в подсеть 10\.0\.0\.0\/24/)).toBeInTheDocument();
+  const row = screen.getByText("ДМЗ").closest("tr")!;
+  expect(row).toHaveClass("selected");
+  expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  expect(screen.getAllByRole("row")).toHaveLength(2); // заголовок + одна запись
+});
