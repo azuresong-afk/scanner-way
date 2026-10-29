@@ -3,9 +3,9 @@ import { BarChart3 } from "lucide-react";
 import { api } from "../api/client";
 import { useEngagement } from "../auth/EngagementContext";
 import { ReportMenu } from "../components/ReportMenu";
-import { Empty, ErrorAlert, Loading, RunStatusPill } from "../components/ui";
+import { Empty, ErrorAlert, Loading, RunName, RunStatusPill } from "../components/ui";
 import { fmtDate } from "../lib/format";
-import { isFinished, moduleList } from "../lib/labels";
+import { isFinished } from "../lib/labels";
 import { useAsync } from "../lib/useAsync";
 
 export function ReportsPage() {
@@ -38,8 +38,8 @@ export function ReportsPage() {
             <table className="table" style={{ minWidth: 860 }}>
               <thead>
                 <tr>
-                  <th>Прогон</th>
-                  <th>Модули</th>
+                  <th>№</th>
+                  <th>Название</th>
                   <th>Статус</th>
                   <th>Завершён</th>
                   <th>Выгрузка</th>
@@ -51,7 +51,9 @@ export function ReportsPage() {
                     <td className="mono">
                       <Link to={`/runs/${r.id}`}>#{r.id}</Link>
                     </td>
-                    <td className="muted">{moduleList(r.modules)}</td>
+                    <td>
+                      <RunName run={r} />
+                    </td>
                     <td>
                       <RunStatusPill status={r.status} />
                     </td>

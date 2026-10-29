@@ -1,4 +1,5 @@
 import { errorText } from "../api/client";
+import { runName, runTitle, scheduleWhen } from "./labels";
 import { parseDate, plural } from "./format";
 import { bduUrl, cveUrl } from "./refs";
 import { isIpOrCidr, parseTargets } from "./targets";
@@ -52,5 +53,26 @@ describe("errorText", () => {
     expect(errorText([{ msg: "a" }, { msg: "b" }], "x")).toBe("a; b");
     expect(errorText({ message: "no targets" }, "x")).toBe("no targets");
     expect(errorText(undefined, "x")).toBe("x");
+  });
+});
+
+describe("имя прогона и расписание", () => {
+  it("строит имя по опциям так же, как бэкенд", () => {
+    expect(runTitle(["discovery", "vuln"], ["10.0.0.0/24"])).toBe("Обнаружение + Nuclei · 10.0.0.0/24");
+    expect(runTitle(["vuln", "auth_inventory", "config_audit"], ["10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8"])).toBe(
+      "Nuclei + учётная запись + конфигурации · 10.0.0.5, 10.0.0.6 и ещё 2",
+    );
+    expect(runTitle(["auth_inventory"], ["10.0.0.5"])).toBe("По учётной записи · 10.0.0.5");
+    expect(runTitle(["cred_audit"])).toBe("Аудит паролей");
+    expect(runTitle([])).toBe("Прогон");
+  });
+  it("старый прогон без имени подписывается по модулям", () => {
+    expect(runName({ name: "", modules: ["discovery"], targets: [] })).toBe("Инвентаризация");
+    expect(runName({ name: "Ночной DMZ", modules: ["discovery"], targets: [] })).toBe("Ночной DMZ");
+  });
+  it("описывает периодичность", () => {
+    expect(scheduleWhen({ kind: "weekly", time_of_day: "22:00", weekdays: [0, 4], month_day: null })).toBe("Пн, Пт в 22:00");
+    expect(scheduleWhen({ kind: "monthly", time_of_day: "01:00", weekdays: [], month_day: 15 })).toBe("15-го числа в 01:00");
+    expect(scheduleWhen({ kind: "daily", time_of_day: "03:00", weekdays: [], month_day: null })).toBe("Каждый день в 03:00");
   });
 });

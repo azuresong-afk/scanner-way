@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { AlertTriangle, Inbox, X } from "lucide-react";
-import type { FindingStatus, RunStatus, Severity } from "../api/types";
-import { RUN_STATUS_LABEL, SEVERITY_LABEL, SEVERITY_SHORT, STATUS_LABEL } from "../lib/labels";
+import { AlertTriangle, CalendarClock, Inbox, X } from "lucide-react";
+import type { FindingStatus, RunOut, RunStatus, Severity } from "../api/types";
+import { RUN_STATUS_LABEL, SEVERITY_LABEL, SEVERITY_SHORT, STATUS_LABEL, runName } from "../lib/labels";
 import { bduUrl, cveUrl } from "../lib/refs";
 
 export function SeverityBadge({ severity, short }: { severity: Severity; short?: boolean }) {
@@ -23,6 +23,20 @@ const RUN_PILL: Record<RunStatus, string> = {
 
 export function RunStatusPill({ status }: { status: RunStatus }) {
   return <span className={`pill ${RUN_PILL[status]}`}>{RUN_STATUS_LABEL[status]}</span>;
+}
+
+/** Имя прогона; у поставленного по расписанию — значок часов. */
+export function RunName({ run }: { run: Pick<RunOut, "name" | "modules" | "targets" | "schedule_id"> }) {
+  return (
+    <span className="run-name">
+      {run.schedule_id !== null && run.schedule_id !== undefined && (
+        <span title="По расписанию" aria-label="По расписанию" role="img" className="run-name-icon">
+          <CalendarClock size={14} aria-hidden="true" />
+        </span>
+      )}
+      <span>{runName(run)}</span>
+    </span>
+  );
 }
 
 const FINDING_PILL: Record<FindingStatus, string> = {

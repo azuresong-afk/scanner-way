@@ -21,6 +21,8 @@ import type {
   RunCreate,
   RunCreated,
   RunOut,
+  ScheduleIn,
+  ScheduleOut,
   ServiceOut,
   TokenOut,
   UserCreate,
@@ -164,6 +166,13 @@ export const api = {
   run: (id: number) => json<RunOut>(`/runs/${id}`),
   startRun: (engagementId: number, data: RunCreate) =>
     json<RunCreated>(`/engagements/${engagementId}/runs`, { method: "POST", ...body(data) }),
+  schedules: (engagementId: number) => json<ScheduleOut[]>(`/engagements/${engagementId}/schedules`),
+  createSchedule: (engagementId: number, data: ScheduleIn) =>
+    json<ScheduleOut>(`/engagements/${engagementId}/schedules`, { method: "POST", ...body(data) }),
+  updateSchedule: (id: number, data: ScheduleIn) => json<ScheduleOut>(`/schedules/${id}`, { method: "PUT", ...body(data) }),
+  toggleSchedule: (id: number, enabled: boolean) => json<ScheduleOut>(`/schedules/${id}`, { method: "PATCH", ...body({ enabled }) }),
+  runScheduleNow: (id: number) => json<ScheduleOut>(`/schedules/${id}/run`, { method: "POST" }),
+  deleteSchedule: (id: number) => request(`/schedules/${id}`, { method: "DELETE" }).then(() => undefined),
   checkReachability: (engagementId: number, data: ReachabilityIn) =>
     json<ReachabilityOut>(`/engagements/${engagementId}/reachability`, { method: "POST", ...body(data) }),
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),

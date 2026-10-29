@@ -1,6 +1,8 @@
 import type { RunOut } from "../api/types";
 import { fmtDate } from "../lib/format";
-import { RUN_STATUS_LABEL } from "../lib/labels";
+import { RUN_STATUS_LABEL, runName } from "../lib/labels";
+
+const short = (s: string, n = 48) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 export function RunPicker({ runs, value, onChange, label = "Прогон" }: { runs: RunOut[]; value: number | null; onChange: (id: number) => void; label?: string }) {
   return (
@@ -12,7 +14,7 @@ export function RunPicker({ runs, value, onChange, label = "Прогон" }: { r
         {value === null && <option value="">—</option>}
         {runs.map((r) => (
           <option key={r.id} value={r.id}>
-            №{r.id} · {fmtDate(r.started_at ?? r.created_at)} · {RUN_STATUS_LABEL[r.status]}
+            №{r.id} · {short(runName(r))} · {fmtDate(r.started_at ?? r.created_at)} · {RUN_STATUS_LABEL[r.status]}
           </option>
         ))}
       </select>

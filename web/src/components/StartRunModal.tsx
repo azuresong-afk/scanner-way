@@ -1,33 +1,72 @@
 import { useState, type FormEvent } from "react";
 import { ShieldCheck } from "lucide-react";
 import { api, ApiError } from "../api/client";
-import type { DeniedTarget, EngagementOut, RunCreated } from "../api/types";
+import type { DeniedTarget, EngagementOut, RunCreated, ScheduleIn, ScheduleKind, ScheduleOut } from "../api/types";
 import { useAuth, type Perm } from "../auth/AuthContext";
-import { ENGINE_MODULES, MODULES, RATE_PROFILES, VULN_ENGINES, type EngineInfo } from "../lib/labels";
+import { localToIso, toLocalInput } from "../lib/format";
+import { ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, runTitle, type EngineInfo } from "../lib/labels";
 import { parseTargets } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
 import { ErrorAlert, Modal } from "./ui";
 
-/** Форма запуска прогона: цели, движок поиска уязвимостей (Nuclei / учётная запись),
- * прочие модули (cred_audit — только при праве), профиль нагрузки. */
+type When = "now" | "schedule";
+
+/** Движок по сохранённому списку модулей (для редактирования расписания). */
+function engineOf(modules: string[]): EngineInfo["id"] {
+  const v = modules.includes("vuln");
+  const a = modules.includes("auth_inventory");
+  return v && a ? "both" : v ? "nuclei" : a ? "credentialed" : "none";
+}
+
+function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function inHour(): string {
+  const d = new Date(Date.now() + 3600_000);
+  d.setMinutes(0, 0, 0);
+  return toLocalInput(d);
+}
+
+/** Форма запуска прогона — сразу или по расписанию: цели, движок поиска уязвимостей
+ * (Nuclei / учётная запись), прочие модули (cred_audit — только при праве), профиль
+ * нагрузки, имя (по умолчанию — по выбранным опциям). С `schedule` — правка расписания. */
 export function StartRunModal({
   engagement,
   onClose,
   onStarted,
+  onScheduled,
+  initialWhen = "now",
+  schedule,
 }: {
   engagement: EngagementOut;
   onClose: () => void;
-  onStarted: (run: RunCreated) => void;
+  onStarted?: (run: RunCreated) => void;
+  onScheduled?: (schedule: ScheduleOut) => void;
+  initialWhen?: When;
+  schedule?: ScheduleOut;
 }) {
   const { has } = useAuth();
   const allowlist = useAsync(() => api.allowlist(engagement.id), [engagement.id]);
-  const [targets, setTargets] = useState("");
-  const [modules, setModules] = useState<string[]>(["discovery"]);
-  const [engine, setEngine] = useState<EngineInfo["id"]>("nuclei");
-  const [credIds, setCredIds] = useState<number[]>([]);
+  const [when, setWhen] = useState<When>(schedule ? "schedule" : initialWhen);
+  const [targets, setTargets] = useState(schedule ? schedule.targets.join("\n") : "");
+  const [modules, setModules] = useState<string[]>(schedule ? schedule.modules.filter((m) => !ENGINE_MODULES.includes(m)) : ["discovery"]);
+  const [engine, setEngine] = useState<EngineInfo["id"]>(schedule ? engineOf(schedule.modules) : "nuclei");
+  const [credIds, setCredIds] = useState<number[]>(schedule?.credential_ids ?? []);
   const canCreds = has("host_credentials");
   const creds = useAsync(() => api.credentials(engagement.id), [engagement.id], canCreds);
-  const [profile, setProfile] = useState("gentle");
+  const [profile, setProfile] = useState(schedule?.rate_profile ?? "gentle");
+  const [name, setName] = useState(schedule?.name ?? "");
+  const [kind, setKind] = useState<ScheduleKind>(schedule?.kind ?? "daily");
+  const [timeOfDay, setTimeOfDay] = useState(schedule?.time_of_day ?? "03:00");
+  const [weekdays, setWeekdays] = useState<number[]>(schedule?.weekdays.length ? schedule.weekdays : [0]);
+  const [monthDay, setMonthDay] = useState(schedule?.month_day ?? 1);
+  const [runAt, setRunAt] = useState(schedule?.run_at ? toLocalInput(new Date(schedule.run_at)) : inHour());
+  const timezone = schedule?.timezone ?? browserTimezone();
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +77,13 @@ export function StartRunModal({
   const allModules = [...modules, ...eng.modules];
   const parsed = parseTargets(targets);
   const credsOk = !eng.credentials || credIds.length > 0;
-  const canSubmit = parsed.targets.length > 0 && parsed.invalid.length === 0 && allModules.length > 0 && credsOk && confirmed && !busy;
+  const scheduled = when === "schedule";
+  const whenOk =
+    !scheduled ||
+    (kind === "once" ? !!localToIso(runAt) : /^\d{2}:\d{2}$/.test(timeOfDay) && (kind !== "weekly" || weekdays.length > 0) && (kind !== "monthly" || (monthDay >= 1 && monthDay <= 31)));
+  const canSubmit = parsed.targets.length > 0 && parsed.invalid.length === 0 && allModules.length > 0 && credsOk && whenOk && confirmed && !busy;
+  const autoName = runTitle(allModules, parsed.targets);
+  const toggleDay = (d: number) => setWeekdays((w) => (w.includes(d) ? w.filter((x) => x !== d) : [...w, d].sort()));
 
   const toggle = (id: string) => setModules((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
   const toggleCred = (id: number) => setCredIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
@@ -50,13 +95,28 @@ export function StartRunModal({
     setError(null);
     setDenied([]);
     try {
-      const run = await api.startRun(engagement.id, {
+      const base = {
         targets: parsed.targets,
         modules: allModules,
         rate_profile: profile,
         credential_ids: eng.credentials ? credIds : [],
-      });
-      onStarted(run);
+        name: name.trim() || undefined,
+      };
+      if (scheduled) {
+        const data: ScheduleIn = {
+          ...base,
+          kind,
+          timezone,
+          enabled: schedule?.enabled ?? true,
+          ...(kind === "once" ? { run_at: localToIso(runAt) } : { time_of_day: timeOfDay }),
+          ...(kind === "weekly" ? { weekdays } : {}),
+          ...(kind === "monthly" ? { month_day: monthDay } : {}),
+        };
+        const saved = schedule ? await api.updateSchedule(schedule.id, data) : await api.createSchedule(engagement.id, data);
+        onScheduled?.(saved);
+      } else {
+        onStarted?.(await api.startRun(engagement.id, base));
+      }
     } catch (err) {
       const ex = err as ApiError;
       const d = ex.detail as { denied_targets?: DeniedTarget[] } | undefined;
@@ -69,7 +129,7 @@ export function StartRunModal({
 
   return (
     <Modal
-      title="Новый прогон"
+      title={schedule ? "Изменить расписание" : scheduled ? "Новое расписание" : "Новый прогон"}
       onClose={onClose}
       footer={
         <>
@@ -77,7 +137,7 @@ export function StartRunModal({
             Отмена
           </button>
           <button type="submit" form="start-run" className="btn btn-primary" disabled={!canSubmit}>
-            {busy ? "Запуск…" : "Запустить"}
+            {busy ? "Сохранение…" : scheduled ? (schedule ? "Сохранить" : "Запланировать") : "Запустить"}
           </button>
         </>
       }
@@ -87,6 +147,64 @@ export function StartRunModal({
           Договор: <b style={{ color: "var(--text)" }}>{engagement.client ? `${engagement.client} · ${engagement.name}` : engagement.name}</b>
           {engagement.contract_ref ? ` · ${engagement.contract_ref}` : ""}
         </div>
+
+        {!schedule && (
+          <div className="inline" role="group" aria-label="Когда запускать">
+            <button type="button" className="chip" aria-pressed={when === "now"} onClick={() => setWhen("now")}>
+              Сейчас
+            </button>
+            <button type="button" className="chip" aria-pressed={when === "schedule"} onClick={() => setWhen("schedule")}>
+              По расписанию
+            </button>
+          </div>
+        )}
+
+        {scheduled && (
+          <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+            <span>Расписание</span>
+            <div className="inline" role="group" aria-label="Периодичность">
+              {SCHEDULE_KINDS.map((k) => (
+                <button key={k.id} type="button" className="chip" aria-pressed={kind === k.id} onClick={() => setKind(k.id)}>
+                  {k.label}
+                </button>
+              ))}
+            </div>
+            {kind === "weekly" && (
+              <div className="inline" role="group" aria-label="Дни недели">
+                {WEEKDAYS.map((d, i) => (
+                  <button key={d} type="button" className="chip" aria-pressed={weekdays.includes(i)} onClick={() => toggleDay(i)}>
+                    {d}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="inline" style={{ gap: 12, flexWrap: "wrap" }}>
+              {kind === "once" ? (
+                <label className="field" style={{ minWidth: 220 }}>
+                  <span>Дата и время</span>
+                  <input className="input" type="datetime-local" value={runAt} onChange={(e) => setRunAt(e.target.value)} />
+                </label>
+              ) : (
+                <>
+                  {kind === "monthly" && (
+                    <label className="field" style={{ width: 120 }}>
+                      <span>Число месяца</span>
+                      <input className="input" type="number" min={1} max={31} value={monthDay} onChange={(e) => setMonthDay(Number(e.target.value))} />
+                    </label>
+                  )}
+                  <label className="field" style={{ width: 140 }}>
+                    <span>Время</span>
+                    <input className="input" type="time" value={timeOfDay} onChange={(e) => setTimeOfDay(e.target.value)} />
+                  </label>
+                </>
+              )}
+            </div>
+            <small className="muted">
+              Часовой пояс — {timezone}.{kind === "monthly" && monthDay > 28 ? " В коротких месяцах — в последний день месяца." : ""} Если предыдущий прогон
+              этого расписания ещё идёт, очередной запуск пропускается.
+            </small>
+          </fieldset>
+        )}
 
         <label className="field">
           <span>Цели (IP-адреса и подсети, по одной в строке)</span>
@@ -209,6 +327,12 @@ export function StartRunModal({
             ))}
           </div>
         </fieldset>
+
+        <label className="field">
+          <span>Название</span>
+          <input className="input" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} placeholder={autoName} />
+          <small>Пусто — название по выбранным опциям: «{autoName}».</small>
+        </label>
 
         <label className="check alert alert-info" style={{ color: "var(--text)" }}>
           <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />

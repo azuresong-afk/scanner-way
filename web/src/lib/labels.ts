@@ -1,6 +1,6 @@
 // Русские подписи для значений API и справочники модулей/профилей.
 
-import type { FindingStatus, RunStatus, Severity, VulnEngine } from "../api/types";
+import type { FindingStatus, RunOut, RunStatus, ScheduleOut, Severity, VulnEngine } from "../api/types";
 
 export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
 
@@ -102,6 +102,75 @@ export const MODULE_SHORT: Record<string, string> = {
 };
 
 export const moduleList = (ids: string[]) => ids.map((m) => MODULE_SHORT[m] ?? m).join(", ");
+
+// Имя прогона по опциям — то же правило, что scanner/core/naming.py на бэкенде
+// (здесь — для подсказки в форме до отправки).
+const TITLE_PARTS: [string, string][] = [
+  ["discovery", "обнаружение"],
+  ["vuln", "Nuclei"],
+  ["auth_inventory", "учётная запись"],
+  ["config_audit", "конфигурации"],
+  ["cred_audit", "пароли"],
+];
+const TITLE_ALONE: Record<string, string> = {
+  auth_inventory: "по учётной записи",
+  config_audit: "аудит конфигураций",
+  cred_audit: "аудит паролей",
+  discovery: "инвентаризация",
+};
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+export function runTitle(modules: string[], targets: string[] = []): string {
+  const names = [...new Set(modules)];
+  let title: string;
+  if (names.length === 1 && TITLE_ALONE[names[0]]) title = cap(TITLE_ALONE[names[0]]);
+  else {
+    const known = new Set(TITLE_PARTS.map(([m]) => m));
+    const parts = [...TITLE_PARTS.filter(([m]) => names.includes(m)).map(([, l]) => l), ...names.filter((m) => !known.has(m))];
+    title = parts.length ? cap(parts.join(" + ")) : "Прогон";
+  }
+  const items = [...new Set(targets.map((t) => t.trim()).filter(Boolean))];
+  if (items.length) {
+    const rest = items.length - 2;
+    title += ` · ${items.slice(0, 2).join(", ")}${rest > 0 ? ` и ещё ${rest}` : ""}`;
+  }
+  return title;
+}
+
+/** Подпись прогона в списках. */
+export const runName = (r: Pick<RunOut, "name" | "modules" | "targets">) => r.name || runTitle(r.modules, r.targets ?? []);
+
+export const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+
+export const SCHEDULE_KINDS = [
+  { id: "daily", label: "Каждый день" },
+  { id: "weekly", label: "По дням недели" },
+  { id: "monthly", label: "Раз в месяц" },
+  { id: "once", label: "Один раз" },
+] as const;
+
+/** «Каждый день в 03:00», «Пн, Пт в 22:00», «15-го числа в 01:00», «Один раз». */
+export function scheduleWhen(s: Pick<ScheduleOut, "kind" | "time_of_day" | "weekdays" | "month_day">): string {
+  const at = s.time_of_day ? ` в ${s.time_of_day}` : "";
+  switch (s.kind) {
+    case "daily":
+      return `Каждый день${at}`;
+    case "weekly":
+      return s.weekdays.length === 7 ? `Каждый день${at}` : `${s.weekdays.map((d) => WEEKDAYS[d]).join(", ")}${at}`;
+    case "monthly":
+      return `${s.month_day}-го числа${at}`;
+    default:
+      return "Один раз";
+  }
+}
+
+export const SCHEDULE_RESULT_LABEL: Record<string, string> = {
+  queued: "Прогон поставлен",
+  skipped_overlap: "Пропущен: предыдущий прогон ещё идёт",
+  skipped_no_rights: "Выключено: у владельца нет прав на такой прогон",
+};
+
+export const scheduleResult = (r: string | null) => (r ? (SCHEDULE_RESULT_LABEL[r] ?? (r.startsWith("error") ? `Ошибка: ${r.replace(/^error:\s*/, "")}` : r)) : "—");
 
 export const FINDING_TYPE_LABEL: Record<string, string> = {
   vuln: "Уязвимость",
