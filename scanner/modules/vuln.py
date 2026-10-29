@@ -395,7 +395,7 @@ class VulnModule(ScanModule):
                 ctx.audit.record(subject="scanner", action="nuclei_exec",
                                  target=f"{len(batch)} targets", result="timeout",
                                  details=f"{e}; findings={len(batch_findings)}")
-                findings.extend(self._enrich(batch_findings, ctx.services))
+                findings.extend(self._enrich(batch_findings))
                 for host in dict.fromkeys(_input_host(line) for line in batch):
                     findings.append(Finding(
                         module=self.name, host=host, finding_type=FindingType.INFO,
@@ -412,7 +412,7 @@ class VulnModule(ScanModule):
             ctx.audit.record(subject="scanner", action="nuclei_exec",
                              target=f"{len(batch)} targets", result="ok",
                              details=f"findings={len(batch_findings)}")
-            findings.extend(self._enrich(batch_findings, ctx.services))
+            findings.extend(self._enrich(batch_findings))
         findings.extend(self._banner_findings(ctx, findings))
         # Nuclei отдаёт по строке на каждый сработавший matcher/URL шаблона;
         # одна уязвимость на host:port — одна находка (тот же ключ сравнения).
@@ -460,16 +460,21 @@ class VulnModule(ScanModule):
                          details=f"findings={len(out)}")
         return out
 
-    def _enrich(self, findings: Iterable[Finding],
-                services: list[ServiceInfo] | None) -> list[Finding]:
-        """Обогащает находки через matcher, сопоставляя сервис по host:port."""
+    def _enrich(self, findings: Iterable[Finding]) -> list[Finding]:
+        """Привязывает к находкам Nuclei связанные БДУ/NVD по ИХ СОБСТВЕННЫМ
+        идентификаторам (CVE/BDU из шаблона).
+
+        Сервис сюда НЕ передаётся специально: сопоставление по версии баннера
+        делает ``_banner_findings`` — отдельными находками, по одной на CVE/BDU.
+        Если прокинуть сюда сервис, matcher для находок БЕЗ своего CVE
+        (apache-detect, waf-detect, http-trace и прочие детекты) свалится в
+        сопоставление по версии и приклеит весь список уязвимостей версии к
+        детекту, подняв его severity до critical. Поэтому обогащаем только по
+        идентификаторам самой находки.
+        """
         out = list(findings)
         if self._matcher is None:
             return out
-        by_hostport: dict[tuple[str, int | None], ServiceInfo] = {}
-        for s in services or []:
-            by_hostport[(s.host, s.port)] = s
         for f in out:
-            svc = by_hostport.get((f.host, f.port))
-            self._matcher.enrich(f, svc)
+            self._matcher.enrich(f)
         return out

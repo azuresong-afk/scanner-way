@@ -202,8 +202,10 @@ def test_matcher_enriches_findings():
     findings = VulnModule(runner=_runner(SAMPLE), matcher=matcher).run(ctx)
     log4j = next(f for f in findings if f.vuln_id == "CVE-2021-44228")
     assert log4j.bdu_ids == ["BDU:2021-06500"]
-    # сервис сопоставлен по host:port
-    assert ("CVE-2021-44228", services[0]) in matcher.seen
+    # находки Nuclei обогащаются по СВОИМ идентификаторам, без сервиса:
+    # сопоставление по версии баннера — отдельный путь (_banner_findings),
+    # иначе детекты без своего CVE обросли бы всем списком уязвимостей версии.
+    assert all(svc is None for _, svc in matcher.seen)
 
 
 def test_batching_splits_calls():
@@ -335,6 +337,39 @@ def test_banner_matching_errors_do_not_fail_module():
     assert VulnModule(runner=_runner(""), matcher=Broken()).run(ctx) == []
     assert any(r["action"] == "banner_match" and r["result"] == "error"
                for r in ctx.audit.records)
+
+
+class _VersionFallbackMatcher(_BannerMatcher):
+    """Имитирует реальный matcher: находке БЕЗ своего CVE, если передать сервис,
+    приклеивает уязвимости версии и поднимает severity (цепочка по версии).
+    Так проверяем, что _enrich НЕ передаёт сервис находкам Nuclei."""
+
+    def enrich(self, finding, service=None):
+        own = finding.cve_ids or (finding.vuln_id or "").upper().startswith(
+            ("CVE-", "BDU:"))
+        if not own and service is not None:
+            finding.cve_ids = ["CVE-2099-00001"]
+            finding.bdu_ids = ["BDU:2099-00001"]
+            finding.severity = Severity.CRITICAL
+        return finding
+
+    def findings_for_service(self, service, *, module):
+        return []
+
+
+def test_enrich_does_not_version_match_detection_findings():
+    """Детект без своего CVE (apache-detect) не должен обрастать уязвимостями
+    версии и становиться critical — версия идёт отдельными находками."""
+    hit = {"template-id": "apache-detect", "host": "http://10.0.0.5:80",
+           "port": "80", "ip": "10.0.0.5",
+           "matched-at": "http://10.0.0.5:80",
+           "info": {"name": "Apache Detection", "severity": "info"}}
+    findings = VulnModule(runner=_runner(json.dumps(hit) + "\n"),
+                          matcher=_VersionFallbackMatcher()).run(_ctx(services=_apache()))
+    det = [f for f in findings if f.vuln_id == "NUCLEI:apache-detect"]
+    assert len(det) == 1
+    assert det[0].severity == Severity.INFO
+    assert det[0].cve_ids == [] and det[0].bdu_ids == []
 
 
 def test_duplicate_nuclei_lines_collapse_to_one_finding():
