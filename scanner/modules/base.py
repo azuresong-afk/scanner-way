@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from scanner.core.audit import AuditSink
 from scanner.core.credentials import HostCredential
-from scanner.core.models import Finding, HostInventory, ServiceInfo
+from scanner.core.models import Finding, HostInventory, HostOs, ServiceInfo
 from scanner.core.ratelimit import RateProfile
 
 
@@ -23,6 +23,8 @@ class ScanContext:
     rate: RateProfile
     audit: AuditSink
     services: list[ServiceInfo] | None = None  # результат discovery для след. модулей
+    # Живые хосты по данным discovery и их ОС (nmap -O + баннеры сервисов).
+    hosts: dict[str, HostOs] = field(default_factory=dict)
     # Учётные записи активов, выбранные для прогона (расшифрованы оркестратором).
     credentials: list[HostCredential] = field(default_factory=list)
     # Результат аутентифицированной инвентаризации: хост -> ОС и пакеты.

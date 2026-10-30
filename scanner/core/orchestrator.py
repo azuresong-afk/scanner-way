@@ -31,7 +31,7 @@ from scanner.core.allowlist import AllowlistGate
 from scanner.core.audit import AuditSink
 from scanner.core.credentials import CredentialVault, HostCredential, load_vault
 from scanner.core.db import session_scope
-from scanner.core.models import Finding, HostInventory, ServiceInfo
+from scanner.core.models import Finding, HostInventory, HostOs, ServiceInfo
 from scanner.core.naming import clean_name, run_title
 from scanner.core.ratelimit import PROFILES, RateProfile, get_profile
 from scanner.modules.base import ScanContext, ScanModule
@@ -165,6 +165,7 @@ def plan_targets(gate: AllowlistGate, requested: Iterable[str], *,
 class RunOutcome:
     findings: list[Finding] = field(default_factory=list)
     services: list[ServiceInfo] = field(default_factory=list)
+    hosts: list[HostOs] = field(default_factory=list)
     inventory: list[HostInventory] = field(default_factory=list)
     allowed: list[str] = field(default_factory=list)
     denied: list[DeniedTarget] = field(default_factory=list)
@@ -230,6 +231,7 @@ class Orchestrator:
                               details={"scan_run_id": scan_run_id,
                                        "findings": len(found)})
         out.services = list(ctx.services or [])
+        out.hosts = list(ctx.hosts.values())
         out.inventory = list(ctx.inventory.values())
         return out
 
@@ -285,7 +287,7 @@ class RunService:
             try:
                 from scanner.feeds.store import SqlReferenceStore
                 store = SqlReferenceStore(engine)
-            except Exception:  # noqa: BLE001 — без справочников прогон всё равно идёт
+            except Exception:
                 log.exception("cannot build reference store; vuln findings won't be enriched")
                 return None
         from scanner.feeds.matcher import VulnMatcher
@@ -434,6 +436,8 @@ class RunService:
         del credentials     # секреты больше не нужны
 
         with session_scope(self.sessions) as s:
+            if out.hosts:
+                repo.save_hosts(s, scan_run_id=scan_run_id, hosts=out.hosts)
             if out.services:
                 repo.save_services(s, scan_run_id=scan_run_id, services=out.services)
             if out.inventory:

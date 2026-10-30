@@ -145,18 +145,26 @@ def list_runs(engagement_id: int, _: Annotated[Principal, Depends(require(Perm.V
 
 @router.get("/engagements/{engagement_id}/hosts", response_model=list[InventoryHostOut])
 def list_hosts(engagement_id: int, _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
-               session: SessionDep) -> list[InventoryHostOut]:
-    """Инвентарь договора — не зависит от выбранного прогона."""
+               session: SessionDep,
+               os_family: Annotated[str | None, Query(max_length=32)] = None
+               ) -> list[InventoryHostOut]:
+    """Инвентарь договора — не зависит от выбранного прогона.
+
+    `os_family` оставляет хосты одного семейства ОС (`unknown` — без ОС).
+    """
     get_engagement(session, engagement_id)
     return [InventoryHostOut(
                 host=h["host"], os_guess=h["os_guess"], run_ids=h["run_ids"],
+                os_family=h["os_family"], os_family_label=h["os_family_label"],
+                os_source=h["os_source"], os_accuracy=h["os_accuracy"],
+                os_run_id=h["os_run_id"],
                 services_run_id=h["services_run_id"],
                 packages_run_id=h["packages_run_id"], package_count=h["package_count"],
                 services=[ServiceOut(host=s.host, port=s.port, protocol=s.protocol,
                                      service=s.service, product=s.product,
                                      version=s.version, cpe=s.cpe)
                           for s in h["services"]])
-            for h in repo.engagement_hosts(session, engagement_id)]
+            for h in repo.engagement_hosts(session, engagement_id, os_family=os_family)]
 
 
 @router.get("/runs/{run_id}", response_model=RunOut)

@@ -157,6 +157,10 @@ class HostResult(Base):
     state: Mapped[str | None] = mapped_column(Text)
     os_guess: Mapped[str | None] = mapped_column(Text)
     os_accuracy: Mapped[int | None] = mapped_column(Integer)
+    # Семейство ОС (scanner.core.osfamily) и источник: nmap | banner | ssh.
+    # У хостов до миграции 0007 — NULL, семейство выводится из os_guess.
+    os_family: Mapped[str | None] = mapped_column(Text)
+    os_source: Mapped[str | None] = mapped_column(Text)
 
 
 class ServiceResult(Base):
