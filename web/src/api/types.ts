@@ -453,3 +453,96 @@ export interface AssetFilters {
   criticality?: Criticality;
   q?: string;
 }
+
+// ---------- Соответствие (R5) ----------
+export type ComplianceStatus = "passed" | "failed" | "manual" | "na";
+
+export interface ComplianceControlDef {
+  id: string;
+  title: string;
+  group: string;
+  levels: string[];
+  checks: string[];
+  manual: boolean;
+}
+
+export interface ComplianceProfileDef {
+  id: string;
+  title: string;
+  short: string;
+  document: string;
+  url: string;
+  level_label: string;
+  levels: string[];
+  default_level: string | null;
+  dynamic: string | null;
+  groups: { code: string; title: string }[];
+  controls: ComplianceControlDef[];
+}
+
+export interface ComplianceProfileOut {
+  profile: string;
+  level: string | null;
+  excluded: string[];
+  added: string[];
+  in_report: boolean;
+  updated_at?: string | null;
+}
+
+export interface ComplianceProfileIn {
+  level: string | null;
+  excluded: string[];
+  added: string[];
+  in_report: boolean;
+}
+
+export interface ComplianceFailure {
+  kind: "finding" | "fact";
+  key?: string;
+  vuln_id?: string | null;
+  title: string;
+  severity?: string;
+}
+
+export interface ComplianceRecommendation {
+  check: string;
+  title: string;
+  remediation: string;
+  doc: string | null;
+}
+
+export interface ComplianceControl {
+  id: string;
+  title: string;
+  group: string;
+  group_title: string;
+  status: ComplianceStatus;
+  hosts: Record<ComplianceStatus, number>;
+  added: boolean;
+  failed_hosts?: { host: string; checks: { id: string; failures: ComplianceFailure[]; more: number }[] }[];
+  recommendations?: ComplianceRecommendation[];
+}
+
+export interface ComplianceBreakdown {
+  passed: number;
+  failed: number;
+  na?: number;
+  percent: number | null;
+}
+
+export interface ComplianceSummary {
+  run_id: number;
+  has_results: boolean;
+  profile: { id: string; title: string; short: string; document: string; url: string; level_label: string; levels: string[] };
+  level: string | null;
+  adapted: { excluded: string[]; added: string[] };
+  percent: number | null;
+  counts: Record<ComplianceStatus, number>;
+  evaluated: number;
+  automated: number;
+  hosts: (ComplianceBreakdown & { host: string })[];
+  groups: (ComplianceBreakdown & { group: string; hosts: number })[];
+  controls: ComplianceControl[];
+  failures: ComplianceControl[];
+  manual: { id: string; title: string; group: string; group_title: string }[];
+}

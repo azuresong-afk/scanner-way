@@ -16,6 +16,7 @@ import { HostDetailPage } from "./pages/HostDetailPage";
 import { HostsPage } from "./pages/HostsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ReportsPage } from "./pages/ReportsPage";
+import { CompliancePage } from "./pages/CompliancePage";
 import { RunDetailPage } from "./pages/RunDetailPage";
 import { RunsPage } from "./pages/RunsPage";
 import { SchedulesPage } from "./pages/SchedulesPage";
@@ -81,6 +82,7 @@ export function App() {
         <Route path="findings" element={<RequirePerm perm="view_report"><FindingsPage /></RequirePerm>} />
         <Route path="hosts" element={<RequirePerm perm="view_report"><HostsPage /></RequirePerm>} />
         <Route path="hosts/:host" element={<RequirePerm perm="view_report"><HostDetailPage /></RequirePerm>} />
+        <Route path="compliance" element={<RequirePerm perm="view_report"><CompliancePage /></RequirePerm>} />
         <Route path="reports" element={<RequirePerm perm="view_report"><ReportsPage /></RequirePerm>} />
         <Route path="feeds" element={<RequirePerm perm="view_engagements"><FeedsPage /></RequirePerm>} />
         <Route path="audit" element={<RequirePerm perm="view_audit"><AuditPage /></RequirePerm>} />
