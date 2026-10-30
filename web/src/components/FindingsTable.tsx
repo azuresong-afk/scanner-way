@@ -3,9 +3,9 @@ import { ArrowDown, ArrowUp } from "lucide-react";
 import type { FindingOut } from "../api/types";
 import { MODULE_LABEL } from "../lib/labels";
 import { compareFindings, compareIp, SEVERITY_RANK } from "../lib/stats";
-import { FindingStatusPill, RefTags, SeverityBadge } from "./ui";
+import { FindingStatusPill, PriorityBadge, RefTags, SeverityBadge } from "./ui";
 
-type SortKey = "severity" | "title" | "host" | "cvss" | "module";
+type SortKey = "severity" | "priority" | "title" | "host" | "cvss" | "module";
 
 const PAGE = 100;
 
@@ -26,6 +26,8 @@ export function FindingsTable({
   const rows = useMemo(() => {
     const cmp: Record<SortKey, (a: FindingOut, b: FindingOut) => number> = {
       severity: compareFindings,
+      // ранг 1 — первым; находки без приоритета (info, ложные) — в конце
+      priority: (a, b) => (a.priority?.rank ?? Infinity) - (b.priority?.rank ?? Infinity) || compareFindings(a, b),
       title: (a, b) => a.title.localeCompare(b.title, "ru"),
       host: (a, b) => compareIp(a.host, b.host) || (a.port ?? 0) - (b.port ?? 0),
       cvss: (a, b) => (b.cvss ?? -1) - (a.cvss ?? -1) || SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity],
@@ -46,10 +48,11 @@ export function FindingsTable({
   return (
     <>
       <div className="table-wrap">
-        <table className="table" style={{ minWidth: 860 }}>
+        <table className="table" style={{ minWidth: 940 }}>
           <thead>
             <tr>
               {head("severity", "Опасность")}
+              {head("priority", "Приоритет")}
               {head("title", "Уязвимость")}
               {!hideHost && head("host", "Хост:порт")}
               <th scope="col">БДУ ФСТЭК / CVE</th>
@@ -67,6 +70,9 @@ export function FindingsTable({
               >
                 <td>
                   <SeverityBadge severity={f.severity} />
+                </td>
+                <td className="nowrap">
+                  <PriorityBadge priority={f.priority} />
                 </td>
                 <td style={{ fontWeight: 500, minWidth: 240 }}>
                   <button

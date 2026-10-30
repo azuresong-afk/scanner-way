@@ -95,6 +95,10 @@ class InstalledPackage:
     version: str             # как отдаёт менеджер: с эпохой и ревизией дистрибутива
     manager: str             # dpkg | rpm | apk
     arch: str | None = None
+    # Исходный пакет (dpkg ${source:Package}, rpm SOURCERPM) и его версия (dpkg):
+    # трекер Debian ведёт бюллетени по исходным пакетам. В БД не сохраняются.
+    source: str | None = None
+    source_version: str | None = None
 
 
 @dataclass(slots=True)
@@ -105,6 +109,7 @@ class HostInventory:
     os_name: str | None = None           # PRETTY_NAME
     os_version: str | None = None        # VERSION_ID
     os_like: str | None = None           # ID_LIKE («debian», «rhel fedora»)
+    os_codename: str | None = None       # VERSION_CODENAME (bookworm, jammy)
     kernel: str | None = None            # uname -srm
     hostname: str | None = None
     packages: list[InstalledPackage] = field(default_factory=list)

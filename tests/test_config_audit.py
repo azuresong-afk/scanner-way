@@ -22,6 +22,7 @@ from scanner.core.sshexec import AuthFailed, CommandResult, SshError
 from scanner.modules.base import ScanContext
 from scanner.modules.config_audit import (
     MKTEMP_COMMAND,
+    POLICY_COMMAND,
     PREFLIGHT_COMMAND,
     PROFILE_PREFERENCE,
     ConfigAuditError,
@@ -35,6 +36,7 @@ from scanner.modules.config_audit import (
     openscap_script,
     parse_lynis_report,
     parse_openscap_results,
+    parse_policy_files,
     parse_preflight,
     pick_profile,
     ssg_datastream,
@@ -294,6 +296,11 @@ ASTRA = ('@@os-release\nPRETTY_NAME="Astra Linux 1.7"\nID=astra\nID_LIKE=debian\
          'VERSION_ID=1.7_x86-64\n@@tools\ntimeout\n@@uid\n1001\n@@end\n')
 
 
+POLICY = ("@@scanner-policy-file /etc/login.defs\nPASS_MAX_DAYS 99999\nPASS_MIN_LEN 5\n\n"
+          "@@scanner-policy-file /etc/pam.d/common-auth\n"
+          "auth required pam_faillock.so preauth deny=5\n\n@@end\n")
+
+
 class FakeShell:
     """Фейковая SSH-сессия: отвечает по виду команды, всё записывает."""
 
@@ -312,6 +319,8 @@ class FakeShell:
             return self.net.sudo.get(self.cred.id, CommandResult(0, b"", ""))
         if command == MKTEMP_COMMAND:
             return CommandResult(0, (TMP + "\n").encode(), "")
+        if command == POLICY_COMMAND:
+            return CommandResult(0, self.net.policy.get(self.host, POLICY).encode(), "")
         if "rm -rf --" in command:
             return CommandResult(0, b"", "")
         if "oscap xccdf eval" in command:
@@ -328,8 +337,9 @@ class FakeShell:
 
 
 class FakeNet:
-    def __init__(self, auth_fail=(), os=None, sudo=None, drop_on=None):
+    def __init__(self, auth_fail=(), os=None, sudo=None, drop_on=None, policy=None):
         self.auth_fail = set(auth_fail)
+        self.policy = policy or {}
         self.os = os or {}
         self.sudo = sudo or {}
         self.drop_on = drop_on
@@ -596,3 +606,47 @@ def test_throttle_spaces_connection_starts():
     # delay_between_attempts_sec сильнее, чем rps
     th2 = _Throttle(RateProfile("t", 100, 1, 1.5, 3, 2.0), sleep=sleep, clock=lambda: now[0])
     assert th2.interval == 1.5
+
+
+# --- парольная политика для password_policy ------------------------------------
+
+
+def test_parse_policy_files_keeps_only_known_paths():
+    out = parse_policy_files(
+        "@@scanner-policy-file /etc/login.defs\nPASS_MIN_LEN 5\r\n\n"
+        "@@scanner-policy-file /etc/shadow\nroot:$6$hash:::\n"
+        "@@scanner-policy-file /etc/security/faillock.conf\ndeny = 3\n@@end\ntrailing\n")
+    assert out == {"/etc/login.defs": "PASS_MIN_LEN 5\n",
+                   "/etc/security/faillock.conf": "deny = 3\n"}
+    assert parse_policy_files("@@end\n") == {}
+
+
+def test_policy_files_collected_into_context_without_sudo(scap_dir, lynis_bundle):
+    net = FakeNet()
+    ctx = _ctx(["10.0.0.5"], [pw_cred()])
+    findings = _mod(net, scap_dir, lynis_bundle, backends=("lynis",)).run(ctx)
+    assert set(ctx.host_policy_configs["10.0.0.5"]) == {"/etc/login.defs",
+                                                        "/etc/pam.d/common-auth"}
+    assert "PASS_MIN_LEN 5" in ctx.host_policy_configs["10.0.0.5"]["/etc/login.defs"]
+    [(cmd, stdin)] = [(c, s) for _, _, c, s in net.calls if c == POLICY_COMMAND]
+    assert stdin is None and not cmd.startswith("sudo") and "shadow" not in cmd
+    summary = next(f for f in findings if f.vuln_id == "INFO:config-audit")
+    assert "парольная политика: прочитано файлов — 2" in summary.evidence
+    assert any(r["action"] == "config_audit_policy" and r["result"] == "ok"
+               for r in ctx.audit.records)
+
+
+@pytest.mark.parametrize("net_kw, result", [
+    ({"drop_on": "@@scanner-policy-file"}, "error"),          # обрыв на чтении
+    ({"policy": {"10.0.0.5": "@@end\n"}}, "no_policy_files"),  # файлов нет
+])
+def test_policy_read_failure_does_not_break_audit(scap_dir, lynis_bundle, net_kw, result):
+    net = FakeNet(**net_kw)
+    ctx = _ctx(["10.0.0.5"], [pw_cred()])
+    findings = _mod(net, scap_dir, lynis_bundle, backends=("lynis",)).run(ctx)
+    assert ctx.host_policy_configs == {}          # password_policy останется инертен
+    assert [r["result"] for r in ctx.audit.records
+            if r["action"] == "config_audit_policy"] == [result]
+    assert any(f.vuln_id == "LYNIS:SSH-7408" for f in findings)
+    summary = next(f for f in findings if f.vuln_id == "INFO:config-audit")
+    assert "парольная политика: файлы не прочитаны" in summary.evidence

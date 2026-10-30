@@ -19,6 +19,7 @@ from scanner.api.schemas import (
     FalsePositiveMarkOut,
     FalsePositiveOut,
     FindingOut,
+    PriorityOut,
 )
 from scanner.core import repository as repo
 from scanner.core.db import FindingRow
@@ -35,8 +36,20 @@ def services_by_port(session: Session, scan_run_id: int) -> dict[tuple[str, int]
     return {(s.host, s.port): s for s in repo.get_services(session, scan_run_id)}
 
 
+def run_priorities(session: Session, scan_run_id: int, engagement_id: int,
+                   marks: dict[str, FalsePositiveMark]) -> dict[str, PriorityOut]:
+    """{dedup_key: приоритет} по находкам прогона (без ложных срабатываний)."""
+    from scanner.reporting.risk import build_risk_context, rank_findings
+
+    findings = [f for f in repo.get_findings(session, scan_run_id)
+                if f.dedup_key() not in marks]
+    ranks = rank_findings(findings, build_risk_context(session, findings, engagement_id))
+    return {k: PriorityOut(**a.to_dict()) for k, a in ranks.items()}
+
+
 def finding_out(row: FindingRow, marks: dict[str, FalsePositiveMark],
-                services: dict[tuple[str, int], ServiceInfo] | None = None) -> FindingOut:
+                services: dict[tuple[str, int], ServiceInfo] | None = None,
+                priorities: dict[str, PriorityOut] | None = None) -> FindingOut:
     f = repo.row_to_finding(row)
     mark = marks.get(row.dedup_key)
     sw = software_of(f, services)
@@ -47,6 +60,7 @@ def finding_out(row: FindingRow, marks: dict[str, FalsePositiveMark],
         evidence=f.evidence, status=row.status, detected_at=f.detected_at,
         software=sw.name if sw else None, software_version=sw.version if sw else None,
         software_source=sw.source if sw else None,
+        priority=(priorities or {}).get(row.dedup_key),
         false_positive=None if mark is None else FalsePositiveMarkOut(
             reason=mark.reason, marked_by=mark.marked_by, marked_at=mark.marked_at))
 
@@ -73,8 +87,9 @@ def mark_false_positive(finding_id: int, body: FalsePositiveIn, user: TriageUser
     audit.record(subject=user.subject, action="false_positive_mark",
                  target=f"engagement:{row.engagement_id}", result="ok",
                  details=_details(row, reason=body.reason))
-    return finding_out(row, repo.false_positive_marks(session, row.engagement_id),
-                       services_by_port(session, row.scan_run_id))
+    marks = repo.false_positive_marks(session, row.engagement_id)
+    return finding_out(row, marks, services_by_port(session, row.scan_run_id),
+                       run_priorities(session, row.scan_run_id, row.engagement_id, marks))
 
 
 @router.delete("/findings/{finding_id}/false-positive", response_model=FindingOut)
@@ -90,8 +105,9 @@ def unmark_false_positive(finding_id: int, user: TriageUser, session: SessionDep
     audit.record(subject=user.subject, action="false_positive_unmark",
                  target=f"engagement:{row.engagement_id}", result="ok",
                  details=_details(row, previous_reason=reason))
-    return finding_out(row, repo.false_positive_marks(session, row.engagement_id),
-                       services_by_port(session, row.scan_run_id))
+    marks = repo.false_positive_marks(session, row.engagement_id)
+    return finding_out(row, marks, services_by_port(session, row.scan_run_id),
+                       run_priorities(session, row.scan_run_id, row.engagement_id, marks))
 
 
 @router.get("/engagements/{engagement_id}/false-positives",

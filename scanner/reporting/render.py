@@ -152,11 +152,14 @@ def host_blocks(report: Report) -> list[HostBlock]:
     return blocks
 
 
-def section_numbers(brief: bool) -> dict[str, int]:
-    """Номера разделов: в краткой версии раздела «План устранения» нет."""
+def section_numbers(brief: bool, priority: bool = False) -> dict[str, int]:
+    """Номера разделов: в краткой версии раздела «План устранения» нет; раздел
+    «Исправить в первую очередь» есть, только если считалась приоритизация."""
     keys = ["summary", "plan", "trend", "hosts", "details"]
     if brief:
         keys.remove("plan")
+    if priority:
+        keys.insert(1, "priority")
     return {k: i for i, k in enumerate(keys, 1)}
 
 
@@ -230,7 +233,7 @@ class ReportRenderer:
         charts = {k: Markup(v.to_svg()) for k, v in build_charts(report, history).items()}
         return _env().get_template("report.html.j2").render(
             r=report, charts=charts, hosts=host_blocks(report),
-            num=section_numbers(report.brief))
+            num=section_numbers(report.brief, report.has_priority))
 
     def render_pdf(self, report: Report, history: Sequence[RunPoint] | None = None) -> bytes:
         try:
@@ -406,7 +409,7 @@ class ReportRenderer:
         c = report.context
         s = report.summary
         t = report.combined.trend
-        num = section_numbers(report.brief)
+        num = section_numbers(report.brief, report.has_priority)
 
         # Обложка
         spacer(60)
@@ -466,6 +469,22 @@ class ReportRenderer:
         table(["Модуль"] + [SEVERITY_LABELS[x] for x in SEVERITY_ORDER] + ["Всего"],
               [[m.label] + [m.severity_counts[x] for x in SEVERITY_ORDER]
                + [len(m.findings)] for m in report.modules], first_cm=4.0, num_from=1)
+
+        # Исправить в первую очередь (приоритизация R6)
+        if report.has_priority:
+            heading(num["priority"], "Исправить в первую очередь")
+            small(doc.add_paragraph(), report.priority_formula, MUTED, 8)
+            if report.priority:
+                table(["№", "Приоритет", "Балл", "Уязвимость", "Хост", "Почему"],
+                      [[p.risk.rank, p.risk.label_ru, f"{p.risk.score:.0f}", p.view.finding.title,
+                        p.view.target, "; ".join(p.risk.reasons)] for p in report.priority],
+                      widths=[0.8, 2.6, 1.2, 5.0, 2.8, 5.6])
+                doc.add_heading("Разбивка по хостам", level=2)
+                table(["Хост", "Критический", "Высокий", "Средний", "Низкий"],
+                      [[h.host] + [h.counts[k] for k in ("critical", "high", "medium", "low")]
+                       for h in report.priority_hosts], first_cm=4.0, num_from=1)
+            else:
+                doc.add_paragraph("Находок для ранжирования нет.")
 
         # План устранения (только в полной версии)
         if not report.brief:

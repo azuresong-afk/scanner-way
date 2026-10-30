@@ -19,6 +19,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -242,6 +243,30 @@ class HostPackageRow(Base):
     name: Mapped[str] = mapped_column(Text)
     version: Mapped[str] = mapped_column(Text)
     arch: Mapped[str | None] = mapped_column(Text)
+
+
+
+# ========== Бюллетени дистрибутивов (учёт бэкпортов, R2) ==========
+class DistroAdvisoryRow(Base):
+    """Данные вендора дистрибутива: в какой версии пакета исправлена CVE.
+
+    family/release — семейство данных (debian, ubuntu, rhel, alt, astra, redos) и
+    выпуск (bookworm, jammy, 9, p10, 1.7, 7.3). package — имя пакета, как его
+    называет источник: исходный пакет (трекер Debian) или бинарный (OVAL).
+    status: fixed (fixed_version — первая исправленная версия), not_affected,
+    open (исправления пока нет). Строки выпуска заменяются целиком при загрузке.
+    """
+    __tablename__ = "distro_advisory"
+    __table_args__ = (Index("idx_distro_advisory_pkg", "family", "release", "package"),)
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    family: Mapped[str] = mapped_column(Text)
+    release: Mapped[str] = mapped_column(Text)
+    package: Mapped[str] = mapped_column(Text)
+    cve: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text)          # fixed | not_affected | open
+    fixed_version: Mapped[str | None] = mapped_column(Text)
+    advisory_id: Mapped[str | None] = mapped_column(Text)  # DSA-…, USN-…, RHSA-…
+    loaded_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
 
 
 # ========== Находки ==========

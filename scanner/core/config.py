@@ -16,11 +16,37 @@ class Settings(BaseSettings):
     # Если задан, автообновление скачивает выгрузку БДУ отсюда (в закрытом
     # контуре оставьте пустым: обновляйте файл по bdu_fstec_feed_path вручную).
     bdu_fstec_feed_url: str = ""
+    # Приоритизация риска (R6). В закрытом контуре задайте *_PATH и обновляйте файл вручную.
+    epss_feed_url: str = "https://epss.cyentia.com/epss_scores-current.csv.gz"
+    epss_feed_path: str = ""
+    kev_feed_url: str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    kev_feed_path: str = ""
     # Каталог шаблонов Nuclei; пусто — $HOME/nuclei-templates, как у самого Nuclei.
     nuclei_templates_dir: str = ""
 
+    # Бюллетени дистрибутивов для учёта бэкпортов (R2): какие выпуски загружать
+    # (семейство:выпуск через запятую; семейства — debian, ubuntu, rhel, alt,
+    # astra, redos). Каталог файлов оператора (закрытый контур): файл
+    # <семейство>-<выпуск>.xml[.bz2] или debian.json[.gz] там главнее адреса.
+    advisory_releases: str = ("debian:bullseye,debian:bookworm,ubuntu:focal,"
+                              "ubuntu:jammy,ubuntu:noble,rhel:8,rhel:9,alt:p10")
+    advisory_dir: str = "/data/advisories"
+    # Свой адрес выгрузки семейства ({release} подставляется); пусто — адрес
+    # вендора по умолчанию (у Astra Linux и РЕД ОС его нет: файл или адрес оператора).
+    advisory_url_debian: str = ""
+    advisory_url_ubuntu: str = ""
+    advisory_url_rhel: str = ""
+    advisory_url_alt: str = ""
+    advisory_url_astra: str = ""
+    advisory_url_redos: str = ""
+
     # gentle | normal | aggressive
     default_rate_profile: str = "gentle"
+
+    def advisory_urls(self) -> dict[str, str]:
+        return {f: getattr(self, f"advisory_url_{f}") for f in
+                ("debian", "ubuntu", "rhel", "alt", "astra", "redos")
+                if getattr(self, f"advisory_url_{f}").strip()}
 
     @property
     def database_url(self) -> str:

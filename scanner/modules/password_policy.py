@@ -34,6 +34,8 @@ FAILLOCK = "/etc/security/faillock.conf"
 PAM_PASSWORD = "/etc/pam.d/common-password"
 PAM_AUTH = "/etc/pam.d/common-auth"
 PAM_SYSTEM_AUTH = "/etc/pam.d/system-auth"
+# Всё, что config_audit читает с хоста для этой проверки (и только это).
+POLICY_FILES = (LOGIN_DEFS, PWQUALITY, FAILLOCK, PAM_PASSWORD, PAM_AUTH, PAM_SYSTEM_AUTH)
 
 # Рекомендуемый минимум длины пароля (типовой; не норматив договора).
 MIN_PASSWORD_LENGTH = 8

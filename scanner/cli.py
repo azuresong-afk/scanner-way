@@ -2,6 +2,7 @@
 
     scanner feeds sync-bdu --file vullist.xlsx
     scanner feeds sync-nvd [--file nvdcve-2.0-2024.json.gz ...] [--since ... --until ...]
+    scanner feeds sync-advisories [--release debian:bookworm ...] [--file oval.xml.bz2]
     scanner run --engagement 1 --targets 10.0.0.0/28 10.0.0.50 --modules discovery vuln \\
                 --confirm-authorized
     scanner report --run 7 --format pdf [--out report.pdf] [--brief]
@@ -116,9 +117,20 @@ def build_parser() -> argparse.ArgumentParser:
                            "(по умолчанию SCANNER_MSRC_SINCE)")
     msrc.set_defaults(handler=cmd_sync_msrc)
 
+    adv = fsub.add_parser("sync-advisories",
+                          help="загрузить бюллетени дистрибутивов (учёт бэкпортов)")
+    adv.add_argument("--release", dest="releases", action="append", default=[],
+                     metavar="СЕМЕЙСТВО:ВЫПУСК",
+                     help="выпуск, напр. debian:bookworm, rhel:9, astra:1.7; можно "
+                          "несколько раз. По умолчанию — ADVISORY_RELEASES")
+    adv.add_argument("--file", type=Path,
+                     help="локальный файл (OVAL .xml[.bz2|.gz|.zip] или JSON трекера "
+                          "Debian) для одного семейства из --release")
+    adv.set_defaults(handler=cmd_sync_advisories)
+
     auto = fsub.add_parser("auto-enabled", help="включено ли автообновление источника "
                                                 "по расписанию (код 0 — да, 1 — нет)")
-    auto.add_argument("source", help="bdu | nvd | nuclei")
+    auto.add_argument("source", help="bdu | nvd | nuclei | advisories")
     auto.set_defaults(handler=cmd_auto_enabled)
 
     # --- run ---
@@ -356,6 +368,53 @@ def cmd_sync_msrc(args: argparse.Namespace, env: _Env) -> int:
                      details={**details, "releases": n_docs, "records": n_fixes})
     print(f"MSRC: бюллетеней — {n_docs}, исправлений для Windows — {n_fixes}")
     return 0
+def cmd_sync_advisories(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.core.config import settings
+    from scanner.feeds.advisories import FAMILIES
+    from scanner.feeds.advisories.store import SqlAdvisoryStore
+    from scanner.feeds.advisories.sync import (
+        AdvisoryError,
+        Job,
+        parse_targets,
+        run_job,
+        sync_releases,
+    )
+
+    try:
+        targets = parse_targets(",".join(args.releases) or settings.advisory_releases)
+    except AdvisoryError as e:
+        raise CliError(str(e)) from e
+    if not targets:
+        raise CliError("не заданы выпуски: --release или ADVISORY_RELEASES")
+    store = SqlAdvisoryStore(env.engine)
+    if args.file is not None:
+        if not args.file.is_file():
+            raise CliError(f"файл не найден: {args.file}")
+        families = {f for f, _ in targets}
+        if len(families) != 1:
+            raise CliError("--file: укажите выпуски одного семейства (--release)")
+        try:
+            results, _ = run_job(Job(FAMILIES[families.pop()], [r for _, r in targets],
+                                      path=args.file), store)
+        except Exception as e:
+            raise CliError(f"{args.file.name}: {type(e).__name__}: {e}") from e
+    else:
+        directory = Path(settings.advisory_dir) if settings.advisory_dir else None
+        results, _ = sync_releases(store, targets, directory=directory,
+                                   urls=settings.advisory_urls())
+    for r in results:
+        if r.error:
+            print(f"{r.family}:{r.release}: ошибка — {r.error}", file=sys.stderr)
+        else:
+            print(f"{r.family}:{r.release}: записей — {r.count} ({r.source})")
+    ok = [r for r in results if not r.error]
+    env.audit.record(subject=env.actor, action="feed_sync", target="feed:advisories",
+                     result="ok" if ok else "error",
+                     details={"releases": [f"{r.family}:{r.release}" for r in results],
+                              "records": sum(r.count for r in ok),
+                              "errors": [f"{r.family}:{r.release}: {r.error}"[:200]
+                                         for r in results if r.error] or None})
+    return 0 if len(ok) == len(results) else 1
 
 
 def cmd_auto_enabled(args: argparse.Namespace, env: _Env) -> int:
@@ -465,6 +524,7 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
     from scanner.core.db import Engagement, session_scope
     from scanner.reporting.model import ReportContext, build_report
     from scanner.reporting.render import ReportRenderer
+    from scanner.reporting.risk import build_risk_context
 
     with session_scope(env.sessions) as s:
         run = repo.get_scan_run(s, args.run_id)
@@ -486,10 +546,11 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
         context = ReportContext(customer=eng.client, engagement=eng.contract_ref or eng.name,
                                 run_id=args.run_id, previous_run_id=prev_id)
         marks = repo.false_positive_marks(s, eng.id)
+        risk = build_risk_context(s, current, eng.id)
 
     report = build_report(current, previous=previous, historically_fixed=hist,
                           resolver=_resolver(env, current), context=context,
-                          false_positives=marks)
+                          false_positives=marks, risk=risk)
     variant = "brief" if args.brief else "full"
     try:
         body = ReportRenderer().render(report, args.format, variant=variant)
