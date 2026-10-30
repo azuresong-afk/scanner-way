@@ -78,14 +78,16 @@ def test_remediation_sources(data):
 
 
 def test_finding_own_remediation_wins():
-    # Поле remediation в Finding может появиться позже (матчер/модули) —
-    # резолвер уже учитывает его; эмулируем подклассом со слотом.
-    WithRemediation = type("WithRemediation", (Finding,), {"__slots__": ("remediation",)})
-    f = WithRemediation(module="config_audit", host="h", finding_type=FindingType.CONFIG,
-                        title="t", vuln_id="r1")
-    f.remediation = "своя мера"
-    r = RemediationResolver(benchmark={"r1": "из бенчмарка"}).resolve(f)
+    # Рекомендация самого модуля главнее справочников.
+    f = Finding(module="vuln", host="h", finding_type=FindingType.VULN,
+                title="t", vuln_id="CVE-2024-0001", remediation="своя мера")
+    r = RemediationResolver(nvd={"CVE-2024-0001": "из NVD"}).resolve(f)
     assert r.source is RemediationSource.FINDING and r.text == "своя мера"
+    # у config_audit это fixtext правила — источник «Правило бенчмарка»
+    f = Finding(module="config_audit", host="h", finding_type=FindingType.CONFIG,
+                title="t", vuln_id="r1", remediation="своя мера")
+    r = RemediationResolver(benchmark={"r1": "из бенчмарка"}).resolve(f)
+    assert r.source is RemediationSource.BENCHMARK and r.text == "своя мера"
 
 
 def test_plan_groups_same_action_and_skips_info(report):

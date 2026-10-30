@@ -363,6 +363,9 @@ class RemediationResolver:
             for cwe in re.findall(r"CWE-\d+", getattr(rec, "cwe", None) or ""):
                 urls.append(cwe_url(cwe))
         vid = f.vuln_id or ""
+        if f.finding_type is FindingType.CONFIG:
+            # ссылки правила бенчмарка (config_audit пишет их в evidence)
+            urls.extend(u.rstrip(";,.)") for u in _split_urls(f.evidence))
         if vid:
             urls.extend(self.benchmark_refs.get(vid, []))
             if vid.lower().startswith("lynis:"):
@@ -388,7 +391,10 @@ class RemediationResolver:
 
         own = _clean(getattr(f, "remediation", None))
         if own:
-            return Remediation(own, RemediationSource.FINDING, refs, deadline)
+            # у находок аудита конфигураций это fixtext самого правила бенчмарка
+            source = (RemediationSource.BENCHMARK if f.finding_type is FindingType.CONFIG
+                      else RemediationSource.FINDING)
+            return Remediation(own, source, refs, deadline)
 
         for rec in bdu_records:
             text = _clean(rec.remediation)

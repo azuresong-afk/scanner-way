@@ -17,6 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Контент SCAP Security Guide (CIS/standard для Debian, Ubuntu, RHEL-семейства,
+# SLES) для OpenSCAP в аудите конфигураций. Необязателен: если пакетов нет в
+# репозитории базового образа, сборка продолжается, а аудит выполняет Lynis
+# (причина видна в находке-сводке хоста).
+RUN apt-get update \
+    && (apt-get install -y --no-install-recommends ssg-debderived ssg-nondebian \
+        || echo "WARN: пакеты ssg-* недоступны — OpenSCAP без встроенного контента SSG") \
+    && rm -rf /var/lib/apt/lists/*
+
 # Nuclei — Go-бинарник из релизов ProjectDiscovery (не apt-пакет). Версия и
 # архитектура задаются аргументами сборки; по умолчанию linux/amd64.
 ARG NUCLEI_VERSION=3.11.1
