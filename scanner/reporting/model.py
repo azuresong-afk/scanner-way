@@ -20,7 +20,8 @@
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+import ipaddress
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
@@ -80,6 +81,15 @@ def module_label(module: str) -> str:
     return MODULE_LABELS.get(module, module)
 
 
+def _host_key(host: object) -> str:
+    """Адрес в каноническом виде; не-IP (имя хоста) остаётся как есть."""
+    text = str(host).split("/")[0]
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        return text
+
+
 def _sort_key(f: Finding) -> tuple:
     return (_RANK[f.severity], -(f.cvss or 0.0), f.host, f.port or 0, f.title)
 
@@ -92,6 +102,7 @@ class ReportContext:
     engagement: str | None = None        # договор / проект
     run_id: str | int | None = None
     previous_run_id: str | int | None = None
+    group: str | None = None             # группа активов, если отчёт — разрез по группе
     generated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -346,6 +357,7 @@ class Report:
             "meta": {
                 "title": c.title, "customer": c.customer, "engagement": c.engagement,
                 "run_id": c.run_id, "previous_run_id": c.previous_run_id,
+                "group": c.group,
                 "generated_at": c.generated_at.isoformat(),
                 "variant": self.variant,
             },
@@ -468,6 +480,7 @@ def build_report(
     resolver: RemediationResolver | None = None,
     context: ReportContext | None = None,
     false_positives: Mapping[str, FalsePositiveMark] | None = None,
+    hosts: Collection[str] | None = None,
 ) -> Report:
     """Строит модель отчёта.
 
@@ -476,10 +489,17 @@ def build_report(
     (для определения regression, см. diff_runs).
     false_positives — {dedup_key: отметка}: такие находки исключаются из обоих
     прогонов (не считаются ни открытыми, ни устранёнными) и идут в отдельный раздел.
+    hosts — адреса хостов (например, активов группы): в отчёт попадают только
+    находки этих хостов; None — без фильтра (поведение по умолчанию).
     """
     resolver = resolver or RemediationResolver()
     context = context or ReportContext()
     fp = false_positives or {}
+    if hosts is not None:
+        allowed = {_host_key(h) for h in hosts}
+        current = [f for f in current if _host_key(f.host) in allowed]
+        if previous is not None:
+            previous = [f for f in previous if _host_key(f.host) in allowed]
     cur_all = sorted(current, key=_sort_key)
     cur = [f for f in cur_all if f.dedup_key() not in fp]
     fp_views = [FalsePositiveView(f, fp[f.dedup_key()])

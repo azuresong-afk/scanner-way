@@ -1,6 +1,6 @@
 // Русские подписи для значений API и справочники модулей/профилей.
 
-import type { FindingStatus, RunOut, RunStatus, ScheduleOut, Severity, VulnEngine } from "../api/types";
+import type { Criticality, FindingStatus, RunOut, RunStatus, ScheduleOut, Severity, VulnEngine } from "../api/types";
 
 export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
 
@@ -243,3 +243,12 @@ export function osSourceHint(source: string | null | undefined, accuracy: number
   if (source === "nmap") return `Отпечаток стека nmap -O${accuracy != null ? `, точность ${accuracy}%` : ""}: ядро без дистрибутива`;
   return "ОС не определена: нужен discovery с -O или учётная запись";
 }
+
+export const CRITICALITIES: Criticality[] = ["critical", "high", "medium", "low"];
+
+export const CRITICALITY_LABEL: Record<Criticality, string> = {
+  critical: "Критическая",
+  high: "Высокая",
+  medium: "Средняя",
+  low: "Низкая",
+};

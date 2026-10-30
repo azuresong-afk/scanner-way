@@ -80,7 +80,7 @@ export function RunDetailPage() {
               <Square size={14} /> Остановить
             </button>
           )}
-          {finished && has("view_report") && <ReportMenu runId={r.id} runs={engRuns.data ?? []} />}
+          {finished && has("view_report") && <ReportMenu runId={r.id} runs={engRuns.data ?? []} engagementId={r.engagement_id} />}
         </div>
       </div>
 

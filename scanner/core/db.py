@@ -16,11 +16,13 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Column,
     DateTime,
     ForeignKey,
     Integer,
     Numeric,
     String,
+    Table,
     Text,
     UniqueConstraint,
     create_engine,
@@ -270,6 +272,48 @@ class AuditLogRow(Base):
     target: Mapped[str | None] = mapped_column(Text)
     result: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict | None] = mapped_column(Jsonb)
+
+
+# ========== Активы (R7) ==========
+asset_tags = Table(
+    "asset_tags", Base.metadata,
+    Column("asset_id", PK, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag", Text, primary_key=True),
+)
+
+asset_group_members = Table(
+    "asset_group_members", Base.metadata,
+    Column("asset_id", PK, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True),
+    Column("group_id", PK, ForeignKey("asset_groups.id", ondelete="CASCADE"),
+           primary_key=True),
+)
+
+
+class AssetRow(Base):
+    """Актив (хост) договора: владелец, критичность, заметки. Теги и группы — в
+    asset_tags / asset_group_members."""
+    __tablename__ = "assets"
+    __table_args__ = (UniqueConstraint("engagement_id", "address"),)
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    address: Mapped[str] = mapped_column(Inet)
+    hostname: Mapped[str | None] = mapped_column(Text)
+    owner: Mapped[str | None] = mapped_column(Text)
+    criticality: Mapped[str] = mapped_column(Text, default="medium")
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+
+
+class AssetGroupRow(Base):
+    __tablename__ = "asset_groups"
+    __table_args__ = (UniqueConstraint("engagement_id", "name"),)
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
 
 
 def make_engine(url: str | None = None, **kwargs) -> Engine:

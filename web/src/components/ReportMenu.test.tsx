@@ -85,3 +85,30 @@ it("без более ранних прогонов выбора сравнен�
   render(<ReportMenu runId={7} runs={[run(7, "done")]} />);
   expect(screen.queryByRole("combobox", { name: "Сравнить с прогоном" })).toBeNull();
 });
+
+it("выбор группы активов добавляет group_id в запрос отчёта", async () => {
+  setToken("t");
+  const seen: (string | null)[] = [];
+  mockApi({
+    "GET /engagements/5/asset-groups": [
+      { id: 3, engagement_id: 5, name: "ДМЗ", asset_count: 2, created_at: null },
+      { id: 4, engagement_id: 5, name: "Пустая", asset_count: 0, created_at: null },
+    ],
+    "GET /runs/7/report": (_init: RequestInit | undefined, url: URL) => {
+      seen.push(url.searchParams.get("group_id"));
+      return new Response("x");
+    },
+  });
+  const save = vi.spyOn(download, "saveBlob").mockImplementation(() => {});
+  render(<ReportMenu runId={7} engagementId={5} />);
+
+  const select = await screen.findByRole("combobox", { name: "Группа активов" });
+  expect(screen.queryByRole("option", { name: "Пустая" })).toBeNull(); // пустые группы не предлагаем
+  await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  await userEvent.selectOptions(select, "ДМЗ");
+  await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(seen).toEqual([null, "3"]);
+  expect(save.mock.calls[1][1]).toBe("report-run-7-group-3.pdf");
+});

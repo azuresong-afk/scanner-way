@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, Eye } from "lucide-react";
 import { api } from "../api/client";
-import type { ReportFormat, ReportVariant, RunOut } from "../api/types";
+import type { AssetGroupOut, ReportFormat, ReportVariant, RunOut } from "../api/types";
 import { saveBlob } from "../lib/download";
 import { fmtDate } from "../lib/format";
 import { Modal } from "./ui";
@@ -34,27 +34,37 @@ export function ReportMenu({
   compact,
   small,
   runs,
+  engagementId,
 }: {
   runId: number;
   disabled?: boolean;
   compact?: boolean;
   small?: boolean;
   runs?: RunOut[];
+  /** Договор: если задан и в нём есть группы активов, появляется «Группа» — отчёт только по её хостам. */
+  engagementId?: number;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [html, setHtml] = useState<string | null>(null);
   const [variant, setVariant] = useState<ReportVariant>("full");
   const [compareTo, setCompareTo] = useState<number | null>(null);
+  const [groupId, setGroupId] = useState<number | null>(null);
+  const [groups, setGroups] = useState<AssetGroupOut[]>([]);
+  useEffect(() => {
+    if (engagementId === undefined) return;
+    // Группы нужны только для необязательного разреза; без права на активы отчёт остаётся полным.
+    api.assetGroups(engagementId).then((g) => setGroups(g.filter((x) => x.asset_count > 0)), () => setGroups([]));
+  }, [engagementId]);
   // Сравнивать можно только с более ранним успешно завершённым прогоном — так же проверяет API.
   const baselines = (runs ?? []).filter((r) => r.id < runId && r.status === "done").sort((a, b) => b.id - a.id);
-  const suffix = (variant === "brief" ? "-brief" : "") + (compareTo === null ? "" : `-vs-${compareTo}`);
+  const suffix = (variant === "brief" ? "-brief" : "") + (compareTo === null ? "" : `-vs-${compareTo}`) + (groupId === null ? "" : `-group-${groupId}`);
 
   const download = async (fmt: ReportFormat) => {
     setBusy(fmt);
     setError(null);
     try {
-      saveBlob(await api.report(runId, fmt, variant, compareTo), `report-run-${runId}${suffix}.${fmt}`);
+      saveBlob(await api.report(runId, fmt, variant, compareTo, groupId), `report-run-${runId}${suffix}.${fmt}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -68,7 +78,7 @@ export function ReportMenu({
     setBusy("view");
     setError(null);
     try {
-      setHtml(await (await api.report(runId, "html", variant, compareTo)).text());
+      setHtml(await (await api.report(runId, "html", variant, compareTo, groupId)).text());
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -119,6 +129,27 @@ export function ReportMenu({
             </select>
           </label>
         )}
+        {groups.length > 0 && (
+          <label className={`inline report-compare${small ? " sm" : ""}`} style={{ gap: 8 }}>
+            <span className="faint nowrap" style={{ fontSize: 13 }}>
+              Группа
+            </span>
+            <select
+              className="select"
+              aria-label="Группа активов"
+              value={groupId ?? ""}
+              disabled={disabled || !!busy}
+              onChange={(e) => setGroupId(e.target.value === "" ? null : Number(e.target.value))}
+            >
+              <option value="">все активы</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {!compact && (
           <button type="button" className={`${btn} btn-report-view`} disabled={disabled || !!busy} onClick={preview}>
             {busy === "view" ? <span className="spinner" style={{ width: icon, height: icon }} /> : <Eye size={icon} />}
@@ -142,7 +173,7 @@ export function ReportMenu({
       {error && <span style={{ color: "var(--danger)", fontSize: 12 }}>{error}</span>}
       {html !== null && (
         <Modal
-          title={`${variant === "brief" ? "Краткий отчёт" : "Отчёт"} по прогону №${runId}${compareTo === null ? "" : ` · сравнение с №${compareTo}`}`}
+          title={`${variant === "brief" ? "Краткий отчёт" : "Отчёт"} по прогону №${runId}${compareTo === null ? "" : ` · сравнение с №${compareTo}`}${groupId === null ? "" : ` · ${groups.find((g) => g.id === groupId)?.name ?? "группа"}`}`}
           onClose={() => setHtml(null)}
           wide
         >

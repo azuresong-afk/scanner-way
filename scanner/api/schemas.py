@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -401,3 +402,80 @@ class ReachabilityOut(BaseModel):
     ports: list[PortStateOut]
     elapsed_ms: float
     checked_at: datetime
+
+
+# ---- активы (R7) ----
+Criticality = Literal["low", "medium", "high", "critical"]
+
+
+class AssetGroupRef(BaseModel):
+    id: int
+    name: str
+
+
+class AssetIn(BaseModel):
+    address: str = Field(min_length=1, max_length=64)
+    hostname: str | None = Field(default=None, max_length=253)
+    owner: str | None = Field(default=None, max_length=256)
+    criticality: Criticality = "medium"
+    notes: str | None = Field(default=None, max_length=4000)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+    group_ids: list[int] = Field(default_factory=list, max_length=100)
+
+
+class AssetUpdate(BaseModel):
+    """Частичная правка: меняются только переданные поля."""
+    address: str | None = Field(default=None, min_length=1, max_length=64)
+    hostname: str | None = Field(default=None, max_length=253)
+    owner: str | None = Field(default=None, max_length=256)
+    criticality: Criticality | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+    tags: list[str] | None = Field(default=None, max_length=50)
+    group_ids: list[int] | None = Field(default=None, max_length=100)
+
+
+class AssetOut(BaseModel):
+    id: int
+    engagement_id: int
+    address: str
+    hostname: str | None
+    owner: str | None
+    criticality: Criticality
+    notes: str | None
+    tags: list[str]
+    groups: list[AssetGroupRef]
+    created_at: datetime | None
+    # из последних прогонов (если хост в них встречался)
+    os_guess: str | None = None
+    os_family: str | None = None
+    os_family_label: str | None = None
+    last_run_id: int | None = None
+    finding_counts: dict[str, int] = Field(default_factory=dict)
+    findings_total: int = 0
+
+
+class AssetBulkIn(BaseModel):
+    asset_ids: list[int] = Field(min_length=1, max_length=2000)
+    add_tags: list[str] = Field(default_factory=list, max_length=50)
+    remove_tags: list[str] = Field(default_factory=list, max_length=50)
+    add_group_ids: list[int] = Field(default_factory=list, max_length=100)
+    remove_group_ids: list[int] = Field(default_factory=list, max_length=100)
+    criticality: Criticality | None = None
+    owner: str | None = Field(default=None, max_length=256)
+
+
+class AssetGroupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+
+
+class AssetGroupOut(BaseModel):
+    id: int
+    engagement_id: int
+    name: str
+    asset_count: int
+    created_at: datetime | None
+
+
+class AssetTagOut(BaseModel):
+    tag: str
+    count: int

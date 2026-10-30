@@ -43,7 +43,8 @@ def test_migrations_create_schema(pg_factory):
     assert {"engagements", "targets_allowlist", "scan_runs", "host_results",
             "service_results", "findings", "audit_log", "reference_bdu_entry",
             "reference_nvd_cve", "reference_nvd_cpe_match", "scan_schedules",
-            "false_positives",
+            "false_positives", "assets", "asset_tags", "asset_groups",
+            "asset_group_members",
             "alembic_version"} <= tables
     engine.dispose()
 
@@ -112,3 +113,22 @@ def test_pg_credentials_and_packages_round_trip(pg_factory):
         assert hosts[0]["os_guess"] == "Debian GNU/Linux 12 (bookworm)"
         assert (hosts[0]["packages_run_id"], hosts[0]["package_count"]) == (rid, 1)
         assert "pw-123" not in s.scalar(text("SELECT secret_enc FROM host_credentials"))
+
+
+def test_pg_assets_round_trip(pg_factory):
+    from scanner.core import assets as svc
+    from scanner.core import repository as repo
+    from scanner.core.db import session_scope
+
+    with session_scope(pg_factory) as s:
+        eid = repo.create_engagement(s, name="pg-assets")
+        g = svc.create_group(s, eid, "DMZ")
+        a = svc.create_asset(s, eid, address="10.0.0.5", owner="ИТ", tags=["Prod"],
+                             group_ids=[g.id], criticality="high")
+        with pytest.raises(svc.DuplicateError):
+            svc.create_asset(s, eid, address="10.0.0.5")
+        views = svc.asset_views(s, eid, svc.list_assets(s, eid, tag="prod", group_id=g.id))
+        assert [(v["address"], v["criticality"]) for v in views] == [("10.0.0.5", "high")]
+        assert svc.group_hosts(s, g.id) == {"10.0.0.5"}
+        svc.delete_asset(s, a)
+        assert svc.group_views(s, eid)[0]["asset_count"] == 0

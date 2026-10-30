@@ -423,6 +423,8 @@ class ReportRenderer:
         meta = []
         if c.engagement:
             meta.append(f"Договор / проект: {c.engagement}")
+        if c.group:
+            meta.append(f"Группа активов: {c.group}")
         if c.run_id is not None:
             meta.append(f"Прогон: {c.run_id}")
         if c.previous_run_id is not None:

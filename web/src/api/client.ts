@@ -2,6 +2,13 @@
 
 import type {
   AllowlistIn,
+  AssetBulkIn,
+  AssetFilters,
+  AssetGroupOut,
+  AssetIn,
+  AssetOut,
+  AssetTagOut,
+  AssetUpdate,
   AllowlistOut,
   AuditExportFormat,
   AuditFilters,
@@ -164,6 +171,33 @@ export const api = {
   deleteCredential: (engagementId: number, credentialId: number) =>
     request(`/engagements/${engagementId}/credentials/${credentialId}`, { method: "DELETE" }).then(() => undefined),
 
+  assets: (engagementId: number, f: AssetFilters = {}) => {
+    const p = new URLSearchParams();
+    if (f.tag) p.set("tag", f.tag);
+    if (f.group_id !== undefined) p.set("group_id", String(f.group_id));
+    if (f.criticality) p.set("criticality", f.criticality);
+    if (f.q) p.set("q", f.q);
+    const qs = p.toString();
+    return json<AssetOut[]>(`/engagements/${engagementId}/assets${qs ? `?${qs}` : ""}`);
+  },
+  createAsset: (engagementId: number, data: AssetIn) =>
+    json<AssetOut>(`/engagements/${engagementId}/assets`, { method: "POST", ...body(data) }),
+  updateAsset: (engagementId: number, id: number, data: AssetUpdate) =>
+    json<AssetOut>(`/engagements/${engagementId}/assets/${id}`, { method: "PATCH", ...body(data) }),
+  deleteAsset: (engagementId: number, id: number) =>
+    request(`/engagements/${engagementId}/assets/${id}`, { method: "DELETE" }).then(() => undefined),
+  bulkAssets: (engagementId: number, data: AssetBulkIn) =>
+    json<AssetOut[]>(`/engagements/${engagementId}/assets/bulk`, { method: "POST", ...body(data) }),
+  importAssets: (engagementId: number) =>
+    json<AssetOut[]>(`/engagements/${engagementId}/assets/import-discovered`, { method: "POST" }),
+  assetTags: (engagementId: number) => json<AssetTagOut[]>(`/engagements/${engagementId}/asset-tags`),
+  assetGroups: (engagementId: number) => json<AssetGroupOut[]>(`/engagements/${engagementId}/asset-groups`),
+  createAssetGroup: (engagementId: number, name: string) =>
+    json<AssetGroupOut>(`/engagements/${engagementId}/asset-groups`, { method: "POST", ...body({ name }) }),
+  renameAssetGroup: (engagementId: number, id: number, name: string) =>
+    json<AssetGroupOut>(`/engagements/${engagementId}/asset-groups/${id}`, { method: "PATCH", ...body({ name }) }),
+  deleteAssetGroup: (engagementId: number, id: number) =>
+    request(`/engagements/${engagementId}/asset-groups/${id}`, { method: "DELETE" }).then(() => undefined),
   credSets: (engagementId: number) => json<CredSetOut[]>(`/engagements/${engagementId}/cred-sets`),
   createCredSet: (engagementId: number, data: CredSetIn) =>
     json<CredSetOut>(`/engagements/${engagementId}/cred-sets`, { method: "POST", ...body(data) }),
@@ -202,9 +236,11 @@ export const api = {
     format: ReportFormat,
     variant: ReportVariant = "full",
     compareTo: number | null = null,
+    groupId: number | null = null,
   ): Promise<Blob> => {
     const cmp = compareTo === null ? "" : `&compare_to=${compareTo}`;
-    const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}${cmp}`);
+    const grp = groupId === null ? "" : `&group_id=${groupId}`;
+    const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}${cmp}${grp}`);
     return res.blob();
   },
 
