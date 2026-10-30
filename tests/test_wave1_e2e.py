@@ -30,6 +30,7 @@ from scanner.feeds.nvd import parse_cve_item
 from scanner.feeds.sources import FeedSource, load_bdu
 from scanner.feeds.store import SqlReferenceStore
 from scanner.modules.auth_inventory import AuthInventoryModule
+from scanner.modules.base import ScanContext, ScanModule
 from scanner.modules.config_audit import ConfigAuditModule, ConfigAuditOptions
 from scanner.modules.cred_audit import AuthOutcome, AuthResult, CredentialAuditModule
 from scanner.modules.password_policy import PasswordPolicyModule
@@ -43,6 +44,14 @@ from tests.test_matcher import nvd_item
 
 HOST = "10.0.0.5"
 HOST_PASSWORD = "Host-Pa55-wave1-no-leak"
+
+
+class _InertModule(ScanModule):
+    """win_inventory-заглушка: без WinRM-учётки находок нет."""
+    name = "win_inventory"
+
+    def run(self, ctx: ScanContext) -> list:
+        return []
 SET_SECRET = "Set-Pa55-wave1-no-leak"
 # Политика хоста: длина 6 (< 8), срок 99999 дней, сложность не задана,
 # блокировка после 5 неудачных входов настроена.
@@ -106,6 +115,9 @@ def world(sqlite_factory, tmp_path, monkeypatch):
         "auth_inventory": lambda: AuthInventoryModule(
             matcher=matcher, connector=lambda h, c, o: DpkgShell(DPKG_OUT),
             sleep=lambda s: None),
+        # win_inventory входит в движок «По учётной записи»; без WinRM-учётки
+        # инертен — в этом прогоне учётка SSH.
+        "win_inventory": _InertModule,
         "config_audit": lambda: ConfigAuditModule(
             ConfigAuditOptions(scap_dir=str(scap), lynis_bundle=str(lynis)),
             connector=net, sleep=lambda s: None),
@@ -171,8 +183,8 @@ def test_wave1_run_end_to_end(world, sqlite_factory):
     run = r.json()
     assert run["status"] == "done", run
     # password_policy поставлен автоматически вместе с config_audit, в имени его нет
-    assert run["modules"] == ["discovery", "auth_inventory", "config_audit",
-                              "password_policy", "cred_audit"]
+    assert run["modules"] == ["discovery", "auth_inventory", "win_inventory",
+                              "config_audit", "password_policy", "cred_audit"]
     assert "password_policy" not in run["name"]
 
     findings = api.c.get(f"/runs/{run['id']}/findings", headers=op).json()
