@@ -418,6 +418,7 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
     from scanner.core.db import Engagement, session_scope
     from scanner.reporting.model import ReportContext, build_report
     from scanner.reporting.render import ReportRenderer
+    from scanner.reporting.risk import build_risk_context
 
     with session_scope(env.sessions) as s:
         run = repo.get_scan_run(s, args.run_id)
@@ -439,10 +440,11 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
         context = ReportContext(customer=eng.client, engagement=eng.contract_ref or eng.name,
                                 run_id=args.run_id, previous_run_id=prev_id)
         marks = repo.false_positive_marks(s, eng.id)
+        risk = build_risk_context(s, current, eng.id)
 
     report = build_report(current, previous=previous, historically_fixed=hist,
                           resolver=_resolver(env, current), context=context,
-                          false_positives=marks)
+                          false_positives=marks, risk=risk)
     variant = "brief" if args.brief else "full"
     try:
         body = ReportRenderer().render(report, args.format, variant=variant)

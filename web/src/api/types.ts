@@ -262,6 +262,25 @@ export interface FalsePositiveMark {
   marked_at: string | null;
 }
 
+export type PriorityLabel = "critical" | "high" | "medium" | "low";
+
+/** Приоритет исправления (R6): ранг в прогоне, балл 0–100 и факторы, из которых он сложился. */
+export interface PriorityOut {
+  rank: number;
+  score: number;
+  label: PriorityLabel;
+  label_ru: string;
+  reasons: string[];
+  factors: {
+    cvss: number | null;
+    in_kev: boolean;
+    epss: number | null;
+    epss_percentile: number | null;
+    exploit_available: boolean;
+    asset_criticality: string;
+  };
+}
+
 export interface FindingOut {
   id: number;
   dedup_key: string;
@@ -283,6 +302,8 @@ export interface FindingOut {
   software?: string | null;
   software_version?: string | null;
   software_source?: "service" | "package" | null;
+  /** null — информационная находка или ложное срабатывание. */
+  priority?: PriorityOut | null;
 }
 
 export interface ServiceOut {

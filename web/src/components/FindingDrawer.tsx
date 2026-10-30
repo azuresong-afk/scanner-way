@@ -6,7 +6,7 @@ import { useAuth } from "../auth/AuthContext";
 import { fmtDateFull } from "../lib/format";
 import { FINDING_TYPE_LABEL, MODULE_LABEL } from "../lib/labels";
 import { bduUrl, cveUrl } from "../lib/refs";
-import { Drawer, FindingStatusPill, SeverityBadge } from "./ui";
+import { Drawer, FindingStatusPill, PriorityBadge, SeverityBadge } from "./ui";
 
 /** Карточка находки: идентификаторы БДУ/CVE, хост, доказательство и ссылки на устранение. */
 export function FindingDrawer({
@@ -40,6 +40,20 @@ export function FindingDrawer({
       }
     >
       <FalsePositiveSection key={finding.id} finding={finding} onChanged={onChanged} />
+      {finding.priority && (
+        <section className="stack" style={{ gap: 8 }} aria-label="Приоритет исправления">
+          <h3>Приоритет исправления</h3>
+          <div className="inline">
+            <PriorityBadge priority={finding.priority} />
+            <span>{finding.priority.label_ru}</span>
+          </div>
+          <ul className="faint" style={{ margin: 0, paddingLeft: 18 }}>
+            {finding.priority.reasons.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        </section>
+      )}
       <dl className="kv">
         <dt>БДУ ФСТЭК</dt>
         <dd>

@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     # Если задан, автообновление скачивает выгрузку БДУ отсюда (в закрытом
     # контуре оставьте пустым: обновляйте файл по bdu_fstec_feed_path вручную).
     bdu_fstec_feed_url: str = ""
+    # Приоритизация риска (R6). В закрытом контуре задайте *_PATH и обновляйте файл вручную.
+    epss_feed_url: str = "https://epss.cyentia.com/epss_scores-current.csv.gz"
+    epss_feed_path: str = ""
+    kev_feed_url: str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    kev_feed_path: str = ""
     # Каталог шаблонов Nuclei; пусто — $HOME/nuclei-templates, как у самого Nuclei.
     nuclei_templates_dir: str = ""
 

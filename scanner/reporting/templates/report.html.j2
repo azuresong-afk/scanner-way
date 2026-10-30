@@ -255,6 +255,35 @@
   {% endfor %}
 </table></div>
 
+{% if r.has_priority %}
+<h2><span class="n">{{ "%02d"|format(num.priority) }}</span>Исправить в первую очередь</h2>
+<p class="lead">{{ r.priority_formula }}</p>
+{% if r.priority %}
+<div class="wrap"><table class="plan">
+  <tr><th></th><th>Приоритет</th><th class="num">Балл</th><th>Уязвимость</th><th>Хост</th><th>Почему</th></tr>
+  {% for p in r.priority %}
+  <tr>
+    <td class="idx">{{ p.risk.rank }}</td>
+    <td>{{ p.risk.label_ru }}</td>
+    <td class="num">{{ "%.0f"|format(p.risk.score) }}</td>
+    <td class="action"><b>{{ p.view.finding.title }}</b><span class="src">{{ p.view.finding.vuln_id or "" }}</span></td>
+    <td class="mono">{{ p.view.target }}</td>
+    <td class="src">{{ p.risk.reasons|join("; ") }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+<h3>Разбивка по хостам</h3>
+<div class="wrap"><table>
+  <tr><th>Хост</th><th class="num">Критический</th><th class="num">Высокий</th><th class="num">Средний</th><th class="num">Низкий</th></tr>
+  {% for h in r.priority_hosts %}
+  <tr><td class="mono">{{ h.host }}</td>{{ n(h.counts.critical) }}{{ n(h.counts.high) }}{{ n(h.counts.medium) }}{{ n(h.counts.low) }}</tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<p>Находок для ранжирования нет.</p>
+{% endif %}
+{% endif %}
+
 {% if not r.brief %}
 <h2><span class="n">{{ "%02d"|format(num.plan) }}</span>План устранения</h2>
 {% if r.plan %}

@@ -192,6 +192,21 @@ bdu_cve = Table(
     Column("cve_id", Text, primary_key=True, index=True),
 )
 
+# Приоритизация риска (R6): EPSS и CISA KEV. Полностью заменяются при загрузке.
+epss_score = Table(
+    "epss_score", metadata,
+    Column("cve", Text, primary_key=True),
+    Column("score", Numeric(7, 6), nullable=False),
+    Column("percentile", Numeric(7, 6)),
+    Column("as_of", Text),
+)
+
+kev = Table(
+    "kev", metadata,
+    Column("cve", Text, primary_key=True),
+    Column("added", Text),
+)
+
 # Поле BduRecord -> колонка таблицы (где имена различаются)
 _BDU_RENAME = {"cvss2": "cvss2_vector"}
 _BDU_SKIP = {"fix_method"}  # нет в схеме reference_bdu_entry
