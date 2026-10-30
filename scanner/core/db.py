@@ -16,11 +16,13 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Column,
     DateTime,
     ForeignKey,
     Integer,
     Numeric,
     String,
+    Table,
     Text,
     UniqueConstraint,
     create_engine,
@@ -97,6 +99,25 @@ class HostCredentialRow(Base):
     become: Mapped[str] = mapped_column(Text, default="sudo", server_default="sudo")
 
 
+# ========== Наборы проверки учёток (аудит паролей) ==========
+class CredAuditSetRow(Base):
+    """Набор проверяемых пар логин/секрет, заданный оператором под договор.
+
+    Секреты — только в entries_enc (зашифрованы CredentialVault), наружу не
+    отдаются. Встроенных словарей нет: набор целиком вводит оператор."""
+    __tablename__ = "cred_audit_sets"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    # Сервисы, к которым применять набор; пусто — все поддерживаемые.
+    services: Mapped[list[str]] = mapped_column(TextArray, default=list)
+    secret_enc: Mapped[str] = mapped_column("entries_enc", Text)
+    entry_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+
+
 # ========== Расписания ==========
 class ScanSchedule(Base):
     """Прогон по расписанию: параметры прогона + когда его ставить в очередь.
@@ -113,6 +134,8 @@ class ScanSchedule(Base):
     modules: Mapped[list[str]] = mapped_column(TextArray)
     rate_profile: Mapped[str] = mapped_column(Text, default="gentle")
     credential_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
+    # Наборы проверки учёток (cred_audit_sets.id) для модуля cred_audit.
+    cred_set_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
     kind: Mapped[str] = mapped_column(Text)               # once|daily|weekly|monthly
     time_of_day: Mapped[str | None] = mapped_column(Text)  # ЧЧ:ММ в timezone
     weekdays: Mapped[list[int]] = mapped_column(Jsonb, default=list)
@@ -164,6 +187,8 @@ class ScanRun(Base):
     rate_profile: Mapped[str] = mapped_column(Text, default="gentle")
     # Учётные записи активов, выбранные для прогона (host_credentials.id).
     credential_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
+    # Наборы проверки учёток (cred_audit_sets.id) для модуля cred_audit.
+    cred_set_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
     # Имя по выбранным опциям (scanner.core.naming) или заданное оператором;
     # у прогонов до миграции 0006 — NULL.
     name: Mapped[str | None] = mapped_column(Text)
@@ -273,6 +298,48 @@ class AuditLogRow(Base):
     target: Mapped[str | None] = mapped_column(Text)
     result: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict | None] = mapped_column(Jsonb)
+
+
+# ========== Активы (R7) ==========
+asset_tags = Table(
+    "asset_tags", Base.metadata,
+    Column("asset_id", PK, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag", Text, primary_key=True),
+)
+
+asset_group_members = Table(
+    "asset_group_members", Base.metadata,
+    Column("asset_id", PK, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True),
+    Column("group_id", PK, ForeignKey("asset_groups.id", ondelete="CASCADE"),
+           primary_key=True),
+)
+
+
+class AssetRow(Base):
+    """Актив (хост) договора: владелец, критичность, заметки. Теги и группы — в
+    asset_tags / asset_group_members."""
+    __tablename__ = "assets"
+    __table_args__ = (UniqueConstraint("engagement_id", "address"),)
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    address: Mapped[str] = mapped_column(Inet)
+    hostname: Mapped[str | None] = mapped_column(Text)
+    owner: Mapped[str | None] = mapped_column(Text)
+    criticality: Mapped[str] = mapped_column(Text, default="medium")
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+
+
+class AssetGroupRow(Base):
+    __tablename__ = "asset_groups"
+    __table_args__ = (UniqueConstraint("engagement_id", "name"),)
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
 
 
 def make_engine(url: str | None = None, **kwargs) -> Engine:

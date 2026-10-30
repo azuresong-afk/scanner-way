@@ -5,6 +5,7 @@ import { useAuth, type Perm } from "./auth/AuthContext";
 import { EngagementProvider } from "./auth/EngagementContext";
 import { Layout } from "./components/Layout";
 import { Empty, Loading } from "./components/ui";
+import { AssetsPage } from "./pages/AssetsPage";
 import { AuditPage } from "./pages/AuditPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EngagementDetailPage } from "./pages/EngagementDetailPage";
@@ -73,6 +74,7 @@ export function App() {
         <Route index element={<Home />} />
         <Route path="engagements" element={<RequirePerm perm="view_engagements"><EngagementsPage /></RequirePerm>} />
         <Route path="engagements/:id" element={<RequirePerm perm="view_engagements"><EngagementDetailPage /></RequirePerm>} />
+        <Route path="assets" element={<RequirePerm perm="view_engagements"><AssetsPage /></RequirePerm>} />
         <Route path="runs" element={<RequirePerm perm="view_report"><RunsPage /></RequirePerm>} />
         <Route path="runs/:id" element={<RequirePerm perm="view_report"><RunDetailPage /></RequirePerm>} />
         <Route path="schedules" element={<RequirePerm perm="view_report"><SchedulesPage /></RequirePerm>} />

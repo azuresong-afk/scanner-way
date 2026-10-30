@@ -58,8 +58,8 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
     get_engagement(session, engagement_id)
     modules = with_engine(body.modules, body.vuln_engine)
     check_run_options(engagement_id, modules=modules, rate_profile=body.rate_profile,
-                      credential_ids=body.credential_ids, user=user, request=request,
-                      audit=audit, runs=runs)
+                      credential_ids=body.credential_ids, cred_set_ids=body.cred_set_ids,
+                      user=user, request=request, audit=audit, runs=runs)
     plan, denied = check_targets(engagement_id, body.targets, user=user, audit=audit,
                                  runs=runs)
 
@@ -67,7 +67,8 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
     run_id = runs.submit(engagement_id=engagement_id, modules=modules,
                          rate_profile=body.rate_profile, requested_targets=body.targets,
                          actor=user.subject, started_by=user.id,
-                         credential_ids=body.credential_ids, name=body.name)
+                         credential_ids=body.credential_ids,
+                         cred_set_ids=body.cred_set_ids, name=body.name)
     session.expire_all()
     run = _get_run(session, run_id)
     return RunCreated(**RunOut.model_validate(run).model_dump(),
@@ -76,9 +77,11 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
 
 def check_run_options(engagement_id: int, *, modules: list[str], rate_profile: str,
                       credential_ids: list[int], user: Principal, request: Request,
-                      audit: AuditSink, runs: RunService) -> None:
-    """Модули, профиль, права и учётки прогона — до постановки (и сохранения
-    расписания). Ошибки — HTTPException 422/403."""
+                      audit: AuditSink, runs: RunService,
+                      cred_set_ids: list[int] | None = None) -> None:
+    """Модули, профиль, права, учётки и наборы проверки прогона — до постановки
+    (и сохранения расписания). Ошибки — HTTPException 422/403."""
+    cred_set_ids = cred_set_ids or []
     unknown = [m for m in modules if m not in runs.registry]
     if unknown:
         raise HTTPException(422,
@@ -89,22 +92,27 @@ def check_run_options(engagement_id: int, *, modules: list[str], rate_profile: s
                             f"unknown rate profile: {rate_profile}; "
                             f"available: {', '.join(PROFILES)}")
     # Права на отдельные модули — до постановки прогона в очередь.
-    missing = missing_permissions(user, modules, credential_ids)
+    missing = missing_permissions(user, modules, credential_ids, cred_set_ids)
     if missing:
         deny(audit, user, request, missing)
     try:
         runs.check_credentials(engagement_id, modules, credential_ids)
+        runs.check_cred_sets(engagement_id, cred_set_ids)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
 
 
 def missing_permissions(user: Principal, modules: list[str],
-                        credential_ids: list[int]) -> list[str]:
+                        credential_ids: list[int],
+                        cred_set_ids: list[int] | None = None) -> list[str]:
     """Права, которых не хватает пользователю для такого прогона (кроме run_scan)."""
     missing = {str(MODULE_PERMISSIONS[m]) for m in modules
                if m in MODULE_PERMISSIONS and not user.has(MODULE_PERMISSIONS[m])}
     if credential_ids and not user.has(Perm.HOST_CREDENTIALS):
         missing.add(str(Perm.HOST_CREDENTIALS))
+    # Выбор набора проверки учёток требует права cred_audit (как и сам модуль).
+    if cred_set_ids and not user.has(Perm.CRED_AUDIT):
+        missing.add(str(Perm.CRED_AUDIT))
     return sorted(missing)
 
 
@@ -224,9 +232,11 @@ def get_report(run_id: int, request: Request,
                session: SessionDep, audit: AuditDep,
                format: Annotated[str, Query(pattern="^(html|pdf|docx|json)$")] = "html",
                variant: Annotated[str, Query(pattern="^(full|brief)$")] = "full",
-               compare_to: int | None = None) -> Response:
+               compare_to: int | None = None,
+               group_id: int | None = None) -> Response:
     """Отчёт по прогону. По умолчанию — только по этому прогону, без сравнения;
     compare_to=<id> — сравнить с выбранным более ранним прогоном договора.
+    group_id=<id> — разрез по группе активов: только хосты группы.
     variant=brief — краткая версия: без плана устранения,
     по находкам вместо рекомендаций только ссылки на устранение."""
     from scanner.reporting.model import ReportContext, build_report
@@ -242,6 +252,13 @@ def get_report(run_id: int, request: Request,
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"scan run is {run.status}; report is available after it ends")
     eng = get_engagement(session, run.engagement_id)
+    group = hosts = None
+    if group_id is not None:
+        from scanner.core import assets as asset_svc
+        group = asset_svc.get_group(session, eng.id, group_id)
+        if group is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "asset group not found")
+        hosts = asset_svc.group_hosts(session, group_id)
     current = repo.get_findings(session, run_id)
     prev_id = None
     if compare_to is not None:
@@ -258,14 +275,17 @@ def get_report(run_id: int, request: Request,
         resolver=request.app.state.resolver_factory(current),
         context=ReportContext(customer=eng.client,
                               engagement=eng.contract_ref or eng.name,
-                              run_id=run_id, previous_run_id=prev_id),
-        false_positives=repo.false_positive_marks(session, eng.id))
+                              run_id=run_id, previous_run_id=prev_id,
+                              group=group.name if group else None),
+        false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts)
     fmt, var = ReportFormat(format), ReportVariant(variant)
     body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",
                  result="ok", details={"format": fmt.value, "variant": var.value,
-                                       "previous_run_id": prev_id, "findings": len(current)})
-    suffix = ("-brief" if var is ReportVariant.BRIEF else "") + (
+                                       "previous_run_id": prev_id, "findings": len(current),
+                                       "group_id": group_id})
+    suffix = (f"-group-{group_id}" if group_id is not None else "") + (
+        "-brief" if var is ReportVariant.BRIEF else "") + (
         f"-vs-{prev_id}" if prev_id is not None else "")
     return Response(content=body, media_type=CONTENT_TYPES[fmt], headers={
         "Content-Disposition":

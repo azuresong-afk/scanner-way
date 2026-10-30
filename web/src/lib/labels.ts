@@ -1,6 +1,6 @@
 // Русские подписи для значений API и справочники модулей/профилей.
 
-import type { FindingStatus, RunOut, RunStatus, ScheduleOut, Severity, VulnEngine } from "../api/types";
+import type { Criticality, FindingStatus, RunOut, RunStatus, ScheduleOut, Severity, VulnEngine } from "../api/types";
 
 export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
 
@@ -248,4 +248,13 @@ export const FEED_RESULT_LABEL: Record<string, string> = {
   ok: "Обновлено",
   unchanged: "Без изменений",
   error: "Ошибка",
+};
+
+export const CRITICALITIES: Criticality[] = ["critical", "high", "medium", "low"];
+
+export const CRITICALITY_LABEL: Record<Criticality, string> = {
+  critical: "Критическая",
+  high: "Высокая",
+  medium: "Средняя",
+  low: "Низкая",
 };

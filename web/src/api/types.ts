@@ -75,6 +75,8 @@ export interface RunCreate {
   rate_profile: string;
   vuln_engine?: VulnEngine;
   credential_ids?: number[];
+  /** Наборы проверки учёток для модуля cred_audit (аудит паролей). */
+  cred_set_ids?: number[];
   /** Своё имя; пусто — имя по выбранным опциям. */
   name?: string;
 }
@@ -106,6 +108,7 @@ export interface ScheduleOut {
   modules: string[];
   rate_profile: string;
   credential_ids: number[];
+  cred_set_ids: number[];
   kind: ScheduleKind;
   time_of_day: string | null;
   weekdays: number[];
@@ -196,6 +199,32 @@ export interface PackageOut {
   arch: string | null;
 }
 
+/** Одна проверяемая пара логин/секрет. Пустой секрет — проверка пустого пароля. */
+export interface CredSetEntry {
+  username: string;
+  secret: string;
+}
+
+/** Набор проверки учёток на вход. Секреты API принимает, но никогда не отдаёт. */
+export interface CredSetIn {
+  name: string;
+  /** Сервисы, к которым применять набор; пусто — все поддерживаемые. */
+  services?: string[];
+  entries: CredSetEntry[];
+}
+
+export interface CredSetOut {
+  id: number;
+  engagement_id: number;
+  name: string;
+  services: string[];
+  entry_count: number;
+  /** Маскированные логины (секреты не раскрываются). */
+  masked_usernames: string[];
+  created_by: number | null;
+  created_at: string | null;
+}
+
 export interface DeniedTarget {
   target: string;
   reason: string;
@@ -208,6 +237,7 @@ export interface RunOut {
   modules: string[];
   rate_profile: string;
   credential_ids: number[];
+  cred_set_ids: number[];
   /** Имя по выбранным опциям (модули и цели) или заданное оператором. */
   name: string;
   targets: string[];
@@ -324,4 +354,74 @@ export interface ReachabilityOut {
   ports: { port: number; state: PortState; rtt_ms: number | null }[];
   elapsed_ms: number;
   checked_at: string;
+}
+
+// ---- активы (R7) ----
+export type Criticality = "low" | "medium" | "high" | "critical";
+
+export interface AssetGroupRef {
+  id: number;
+  name: string;
+}
+
+export interface AssetOut {
+  id: number;
+  engagement_id: number;
+  address: string;
+  hostname: string | null;
+  owner: string | null;
+  criticality: Criticality;
+  notes: string | null;
+  tags: string[];
+  groups: AssetGroupRef[];
+  created_at: string | null;
+  /** Из последних прогонов; null — хост в прогонах не встречался. */
+  os_guess: string | null;
+  os_family: string | null;
+  os_family_label: string | null;
+  last_run_id: number | null;
+  finding_counts: Partial<Record<Severity, number>>;
+  findings_total: number;
+}
+
+export interface AssetIn {
+  address: string;
+  hostname?: string | null;
+  owner?: string | null;
+  criticality?: Criticality;
+  notes?: string | null;
+  tags?: string[];
+  group_ids?: number[];
+}
+
+export type AssetUpdate = Partial<AssetIn>;
+
+export interface AssetBulkIn {
+  asset_ids: number[];
+  add_tags?: string[];
+  remove_tags?: string[];
+  add_group_ids?: number[];
+  remove_group_ids?: number[];
+  criticality?: Criticality;
+  owner?: string | null;
+}
+
+export interface AssetGroupOut {
+  id: number;
+  engagement_id: number;
+  name: string;
+  asset_count: number;
+  created_at: string | null;
+}
+
+export interface AssetTagOut {
+  tag: string;
+  count: number;
+}
+
+export interface AssetFilters {
+  tag?: string;
+  group_id?: number;
+  criticality?: Criticality;
+  q?: string;
 }

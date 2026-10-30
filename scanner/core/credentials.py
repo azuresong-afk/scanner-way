@@ -87,6 +87,23 @@ class CredentialVault:
             raise VaultUnavailable("не удалось расшифровать учётную запись: "
                                    "ключ шифрования изменился?") from e
 
+    def encrypt_entries(self, entries: list[tuple[str, str]]) -> str:
+        """Шифрует список пар логин/секрет набора проверки учёток.
+
+        В отличие от `encrypt`, не отбрасывает пустые значения: пустой пароль —
+        допустимая и важная для проверки запись, он должен сохраниться.
+        """
+        data = json.dumps([[u, s] for u, s in entries]).encode()
+        return self._fernet.encrypt(data).decode()
+
+    def decrypt_entries(self, token: str) -> list[tuple[str, str]]:
+        try:
+            raw = json.loads(self._fernet.decrypt(token.encode()))
+            return [(str(u), str(s)) for u, s in raw]
+        except (InvalidToken, ValueError, TypeError) as e:
+            raise VaultUnavailable("не удалось расшифровать набор проверки учёток: "
+                                   "ключ шифрования изменился?") from e
+
 
 def load_vault(material: str | None = None) -> CredentialVault | None:
     """Хранилище из окружения: SCANNER_CREDENTIALS_KEY, иначе SCANNER_API_SECRET.
@@ -149,6 +166,47 @@ def validate_username(username: str) -> str:
     if not _USER_RE.match(username):
         raise CredentialError(f"недопустимый логин: {username!r}")
     return username
+
+
+# ---------- наборы проверки учёток (аудит паролей) ----------
+
+# Жёсткий лимит записей в одном наборе: набор задаёт оператор под договор,
+# встроенных словарей нет; лимит отсекает попытку залить массовый список.
+MAX_CRED_SET_ENTRIES = 200
+
+
+def validate_cred_set_entries(
+        entries: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Проверяет пары логин/секрет набора. Секрет в текст ошибки не попадает.
+
+    Логин проверяется мягче, чем у учёток активов (допускаются доменные формы);
+    пустой секрет допустим — это проверка пустого пароля. CredentialError —
+    недопустимые данные или превышение лимита записей.
+    """
+    out: list[tuple[str, str]] = []
+    for username, secret in entries:
+        u = (username or "").strip()
+        if not u or any(c in u for c in "\x00\r\n"):
+            raise CredentialError("логин: пустой или содержит управляющие символы")
+        if any(c in secret for c in "\x00\r\n"):
+            raise CredentialError(f"секрет учётки {u!r}: управляющие символы недопустимы")
+        if len(u) > 128 or len(secret) > MAX_SECRET_LEN:
+            raise CredentialError(f"логин или секрет учётки {u!r} слишком длинный")
+        out.append((u, secret))
+    if not out:
+        raise CredentialError("набор пуст: добавьте хотя бы одну запись логин/пароль")
+    if len(out) > MAX_CRED_SET_ENTRIES:
+        raise CredentialError(
+            f"в наборе больше {MAX_CRED_SET_ENTRIES} записей — уменьшите список")
+    return out
+
+
+def mask_username(username: str) -> str:
+    """Маскированный логин для выдачи наружу: видно начало, остальное скрыто."""
+    u = username.strip()
+    if len(u) <= 2:
+        return u[:1] + "*"
+    return u[:2] + "*" * min(len(u) - 2, 6)
 
 
 # ---------- учётка в прогоне ----------

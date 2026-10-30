@@ -190,6 +190,7 @@
   {% if r.context.customer %}<div class="customer">{{ r.context.customer }}</div>{% endif %}
   <div class="meta">
     {% if r.context.engagement %}<span>Договор / проект: <b>{{ r.context.engagement }}</b></span>{% endif %}
+    {% if r.context.group %}<span>Группа активов: <b>{{ r.context.group }}</b></span>{% endif %}
     {% if r.context.run_id is not none %}<span>Прогон: <b>{{ r.context.run_id }}</b></span>{% endif %}
     {% if r.context.previous_run_id is not none %}<span>Сравнение с прогоном: <b>{{ r.context.previous_run_id }}</b></span>{% endif %}
     <span>Сформирован: <b>{{ r.context.generated_at.strftime("%d.%m.%Y %H:%M UTC") }}</b></span>
