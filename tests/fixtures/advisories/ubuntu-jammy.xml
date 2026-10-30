@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oval_definitions xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5"
+    xmlns:linux-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux"
+    xmlns:ind-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#independent">
+  <definitions>
+    <definition class="inventory" id="oval:com.ubuntu.jammy:def:100" version="1">
+      <metadata><title>Check that Ubuntu 22.04 LTS (jammy) is installed.</title></metadata>
+      <criteria><criterion test_ref="oval:com.ubuntu.jammy:tst:100" comment="jammy"/></criteria>
+    </definition>
+    <definition class="patch" id="oval:com.ubuntu.jammy:def:66691000000" version="1">
+      <metadata>
+        <title>USN-6669-1 -- OpenSSL vulnerabilities</title>
+        <reference source="USN" ref_id="USN-6669-1" ref_url="https://ubuntu.com/security/notices/USN-6669-1"/>
+        <reference source="CVE" ref_id="CVE-2024-0727" ref_url="https://ubuntu.com/security/CVE-2024-0727"/>
+        <advisory><severity>Low</severity><cve href="https://ubuntu.com/security/CVE-2023-6129">CVE-2023-6129</cve></advisory>
+      </metadata>
+      <criteria operator="AND">
+        <extend_definition definition_ref="oval:com.ubuntu.jammy:def:100" applicability_check="true"/>
+        <criteria operator="OR">
+          <criterion test_ref="oval:com.ubuntu.jammy:tst:666910000000" comment="Long Term Support"/>
+        </criteria>
+      </criteria>
+    </definition>
+  </definitions>
+  <tests>
+    <ind-def:textfilecontent54_test check="at least one" id="oval:com.ubuntu.jammy:tst:100" version="1">
+      <ind-def:object object_ref="oval:com.ubuntu.jammy:obj:100"/>
+    </ind-def:textfilecontent54_test>
+    <linux-def:dpkginfo_test check="at least one" id="oval:com.ubuntu.jammy:tst:666910000000" version="1">
+      <linux-def:object object_ref="oval:com.ubuntu.jammy:obj:666910000000"/>
+      <linux-def:state state_ref="oval:com.ubuntu.jammy:ste:666910000000"/>
+    </linux-def:dpkginfo_test>
+  </tests>
+  <objects>
+    <linux-def:dpkginfo_object id="oval:com.ubuntu.jammy:obj:666910000000" version="1">
+      <linux-def:name var_ref="oval:com.ubuntu.jammy:var:666910000000" var_check="at least one"/>
+    </linux-def:dpkginfo_object>
+  </objects>
+  <states>
+    <linux-def:dpkginfo_state id="oval:com.ubuntu.jammy:ste:666910000000" version="1">
+      <linux-def:evr datatype="debian_evr_string" operation="less than">0:3.0.2-0ubuntu1.15</linux-def:evr>
+    </linux-def:dpkginfo_state>
+  </states>
+  <variables>
+    <constant_variable id="oval:com.ubuntu.jammy:var:666910000000" version="1" datatype="string">
+      <value>libssl-dev</value>
+      <value>libssl3</value>
+      <value>openssl</value>
+    </constant_variable>
+  </variables>
+</oval_definitions>

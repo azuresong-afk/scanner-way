@@ -86,6 +86,9 @@ cp .env.example .env
 | `NVD_API_KEY` | пусто | ключ NVD API 2.0, ускоряет загрузку CVE ([получить](https://nvd.nist.gov/developers/request-an-api-key)) |
 | `BDU_FSTEC_FEED_URL` | пусто | если задан, автообновление скачивает выгрузку БДУ по этому адресу; пусто — берётся файл `BDU_FSTEC_FEED_PATH` (в закрытом контуре обновляйте файл вручную, а расписание сверит его отпечаток и загрузит, только если он изменился) |
 | `NUCLEI_TEMPLATES_DIR` | `$HOME/nuclei-templates` | каталог шаблонов Nuclei (для подсчёта шаблонов после обновления) |
+| `ADVISORY_RELEASES` | `debian:bullseye,debian:bookworm,ubuntu:focal,ubuntu:jammy,ubuntu:noble,rhel:8,rhel:9,alt:p10` | выпуски ОС, для которых загружаются бюллетени дистрибутивов (учёт бэкпортов, см. раздел 7). Оставьте только те, что есть у заказчика: файлы большие |
+| `ADVISORY_DIR` | `/data/advisories` | каталог файлов бюллетеней (`./data/advisories` на хосте); файл здесь главнее адреса — так работает закрытый контур |
+| `ADVISORY_URL_<СЕМЕЙСТВО>` | пусто | свой адрес выгрузки семейства (`DEBIAN`, `UBUNTU`, `RHEL`, `ALT`, `ASTRA`, `REDOS`), `{release}` подставляется. Пусто — адрес вендора; у Astra Linux и РЕД ОС его нет |
 | `SCANNER_API_FEEDS_TICK_SECONDS` | `60` | как часто планировщик справочников проверяет расписание; `0` — выключить автообновление |
 | `DEFAULT_RATE_PROFILE` | `gentle` | профиль нагрузки по умолчанию |
 | `SCANNER_CREDENTIALS_KEY` | пусто | ключ шифрования учётных записей активов (паролей и ключей SSH), не короче 16 символов. Пусто — берётся `SCANNER_API_SECRET`. Лучше задать отдельно и сохранить: при смене ключа сохранённые учётки перестают расшифровываться, их придётся завести заново |
@@ -285,6 +288,40 @@ docker compose exec app scanner feeds sync-nvd --cve CVE-2021-41773
 # офлайн: заранее скачанные фиды NVD 2.0
 docker compose exec app scanner feeds sync-nvd --file /data/nvdcve-2.0-2024.json.gz
 ```
+
+**Бюллетени дистрибутивов (учёт бэкпортов).** Нужны поиску уязвимостей по
+учётной записи: дистрибутивы закрывают уязвимости в своих ревизиях пакетов, не
+меняя версию апстрима (openssl `3.0.11-1~deb12u2` в Debian 12, openssh
+`1:9.2p1-2+deb12u3`). С бюллетенями сканер сравнивает точную версию пакета с
+версией, в которой вендор исправил CVE, и не показывает уже закрытое.
+
+| Семейство | Источник | Выпуск в `ADVISORY_RELEASES` |
+|---|---|---|
+| `debian` | трекер безопасности Debian (один JSON на все выпуски) | `bookworm`, `bullseye`… |
+| `ubuntu` | OVAL бюллетеней USN, файл на выпуск | `jammy`, `noble`… |
+| `rhel` | OVAL v2 Red Hat; им же сверяются CentOS, Rocky, AlmaLinux, Oracle Linux, МСВСфера | `8`, `9` |
+| `alt` | OVAL errata ALT (zip) | `p10`, `p11` |
+| `astra` | OVAL вендора — адреса по умолчанию нет, файл кладёт оператор | `1.7`, `1.8` |
+| `redos` | OVAL вендора — адреса по умолчанию нет, файл кладёт оператор | `7.3`, `8` |
+
+```bash
+# по ADVISORY_RELEASES (с интернетом или из ./data/advisories)
+docker compose exec app scanner feeds sync-advisories
+
+# отдельные выпуски / свой файл
+docker compose exec app scanner feeds sync-advisories --release debian:bookworm
+docker compose exec app scanner feeds sync-advisories --release astra:1.7 \
+    --file /data/advisories/astra-1.7.xml
+```
+
+В закрытом контуре скачайте файлы на машине с интернетом и положите в
+`./data/advisories` под именами `debian.json` (или `.json.gz`),
+`ubuntu-jammy.xml.bz2`, `rhel-9.xml.bz2`, `alt-p10.zip`, `astra-1.7.xml`,
+`redos-7.3.xml` — сжатие определяется по содержимому. Тот же источник есть в
+«Справочниках» («Бюллетени дистрибутивов»), его можно поставить на расписание.
+
+Если для выпуска ОС хоста бюллетеней нет, находки остаются как раньше (по
+версии апстрима) с пометкой «Нет данных вендора» в доказательстве.
 
 Каждая загрузка пишется в журнал аудита (`feed_sync`).
 

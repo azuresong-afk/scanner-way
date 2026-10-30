@@ -89,7 +89,7 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
             AuthInventoryOptions,
         )
         return AuthInventoryModule(AuthInventoryOptions(ssh=options_from_env()),
-                                   matcher=matcher)
+                                   matcher=matcher, advisories=_advisory_store(matcher))
 
     def config_audit() -> ScanModule:
         from scanner.modules.config_audit import ConfigAuditModule, options_from_env
@@ -109,6 +109,15 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
     return {"discovery": discovery, "vuln": vuln, "auth_inventory": auth_inventory,
             "config_audit": config_audit, "password_policy": password_policy,
             "cred_audit": cred_audit}
+
+
+def _advisory_store(matcher: object | None):
+    """Бюллетени дистрибутивов (R2) из той же БД, что и справочники matcher."""
+    engine = getattr(getattr(matcher, "store", None), "engine", None)
+    if engine is None:
+        return None
+    from scanner.feeds.advisories.store import SqlAdvisoryStore
+    return SqlAdvisoryStore(engine)
 
 
 def with_companions(names: Iterable[str], known: Iterable[str] | None = None) -> list[str]:

@@ -44,7 +44,7 @@ def test_migrations_create_schema(pg_factory):
             "service_results", "findings", "audit_log", "reference_bdu_entry",
             "reference_nvd_cve", "reference_nvd_cpe_match", "scan_schedules",
             "false_positives", "assets", "asset_tags", "asset_groups",
-            "asset_group_members",
+            "asset_group_members", "distro_advisory",
             "alembic_version"} <= tables
     engine.dispose()
 
@@ -132,3 +132,21 @@ def test_pg_assets_round_trip(pg_factory):
         assert svc.group_hosts(s, g.id) == {"10.0.0.5"}
         svc.delete_asset(s, a)
         assert svc.group_views(s, eid)[0]["asset_count"] == 0
+
+
+def test_pg_distro_advisory_round_trip(pg_factory):
+    from scanner.feeds.advisories.base import FIXED, OPEN, Advisory
+    from scanner.feeds.advisories.store import SqlAdvisoryStore
+
+    store = SqlAdvisoryStore(create_engine(PG_URL), batch_size=2)
+    rows = [Advisory("debian", "bookworm", "openssl", "CVE-2024-0727", FIXED,
+                     "3.0.13-1~deb12u1", "DSA-5678-1"),
+            Advisory("debian", "bookworm", "openssl", "CVE-2099-1111", OPEN),
+            Advisory("debian", "bookworm", "openssh", "CVE-2024-6387", FIXED,
+                     "1:9.2p1-2+deb12u3")]
+    assert store.replace_release("debian", "bookworm", rows) == 3
+    assert store.replace_release("debian", "bookworm", rows) == 3   # замена, не дубли
+    got = store.for_packages("debian", "bookworm", ["openssl", "openssh"])
+    assert sorted(a.cve for a in got["openssl"]) == ["CVE-2024-0727", "CVE-2099-1111"]
+    assert store.releases() == {("debian", "bookworm")}
+    store.engine.dispose()
