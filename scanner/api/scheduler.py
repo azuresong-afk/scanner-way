@@ -142,7 +142,8 @@ class Scheduler:
             result = "skipped_no_rights"
         else:
             from scanner.api.routes_runs import missing_permissions
-            if missing_permissions(owner, row.modules, row.credential_ids):
+            if missing_permissions(owner, row.modules, row.credential_ids,
+                                   list(row.cred_set_ids or [])):
                 result = "skipped_no_rights"
         if result == "queued" and prev_status in ACTIVE:
             result = "skipped_overlap"
@@ -152,7 +153,8 @@ class Scheduler:
                     engagement_id=row.engagement_id, modules=list(row.modules),
                     rate_profile=row.rate_profile, requested_targets=list(row.targets),
                     actor=subject, started_by=owner.id,
-                    credential_ids=list(row.credential_ids or []), name=row.name,
+                    credential_ids=list(row.credential_ids or []),
+                    cred_set_ids=list(row.cred_set_ids or []), name=row.name,
                     schedule_id=schedule_id)
             except Exception as e:  # noqa: BLE001 — учётку удалили, модуль пропал и т.п.
                 result, error = "error", f"{type(e).__name__}: {e}"[:300]

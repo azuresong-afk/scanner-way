@@ -124,6 +124,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--allow-credentials", action="store_true",
                      help="подтверждаю: вход на активы по учётным записям согласован "
                           "с заказчиком")
+    run.add_argument("--cred-set", type=int, action="append", default=[],
+                     dest="cred_sets", metavar="ID",
+                     help="набор проверки учёток для cred_audit (можно несколько)")
     run.add_argument("--name", help="имя прогона (по умолчанию — по модулям и целям)")
     run.set_defaults(handler=cmd_run)
 
@@ -154,6 +157,28 @@ def build_parser() -> argparse.ArgumentParser:
     cdel.add_argument("--engagement", required=True, type=int, help="id договора")
     cdel.add_argument("--id", required=True, type=int, dest="credential_id")
     cdel.set_defaults(handler=cmd_credentials_delete)
+
+    # --- cred-sets (наборы проверки учёток для аудита паролей) ---
+    cs = sub.add_parser("cred-sets", help="наборы проверки учёток (аудит паролей)")
+    cssub = cs.add_subparsers(dest="cred_sets_command", required=True, metavar="action")
+    csadd = cssub.add_parser("add", help="завести набор из файла (строки логин:секрет)")
+    csadd.add_argument("--engagement", required=True, type=int, help="id договора")
+    csadd.add_argument("--name", required=True, help="название набора")
+    csadd.add_argument("--file", required=True, type=Path, dest="entries_file",
+                       help="файл: по строке на запись «логин:секрет» "
+                            "(пустой пароль — строка «логин:»); # — комментарий")
+    csadd.add_argument("--service", action="append", default=[], dest="services",
+                       metavar="SERVICE",
+                       help="сервис, к которому применять набор (можно несколько; "
+                            "по умолчанию — все поддерживаемые)")
+    csadd.set_defaults(handler=cmd_cred_sets_add)
+    cslist = cssub.add_parser("list", help="наборы договора (без секретов)")
+    cslist.add_argument("--engagement", required=True, type=int, help="id договора")
+    cslist.set_defaults(handler=cmd_cred_sets_list)
+    csdel = cssub.add_parser("delete", help="удалить набор")
+    csdel.add_argument("--engagement", required=True, type=int, help="id договора")
+    csdel.add_argument("--id", required=True, type=int, dest="set_id")
+    csdel.set_defaults(handler=cmd_cred_sets_delete)
 
     # --- report ---
     rep = sub.add_parser("report", help="выгрузить отчёт по завершённому прогону")
@@ -297,7 +322,8 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
         engine_modules = {m for ms in VULN_ENGINES.values() for m in ms}
         args.modules = [*(m for m in args.modules if m not in engine_modules),
                         *VULN_ENGINES[args.engine]]
-    if "cred_audit" in args.modules and not args.allow_cred_audit:
+    cred_sets = list(getattr(args, "cred_sets", []) or [])
+    if ("cred_audit" in args.modules or cred_sets) and not args.allow_cred_audit:
         raise CliError("cred_audit требует отдельного согласования: добавьте "
                        "--allow-cred-audit")
     if ("auth_inventory" in args.modules or args.credentials) and not args.allow_credentials:
@@ -328,6 +354,7 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
 
     try:
         svc.check_credentials(args.engagement, args.modules, args.credentials)
+        svc.check_cred_sets(args.engagement, cred_sets)
     except ValueError as e:
         raise CliError(str(e)) from e
     print(f"Договор: {eng_label}. Целей к проверке: {len(plan.allowed)}, "
@@ -335,7 +362,7 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
     run_id = svc.submit(engagement_id=args.engagement, modules=args.modules,
                         rate_profile=args.rate, requested_targets=args.targets,
                         actor=env.actor, credential_ids=args.credentials,
-                        name=args.name)
+                        cred_set_ids=cred_sets, name=args.name)
     with session_scope(env.sessions) as s:
         run = repo.get_scan_run(s, run_id)
         status, title = run.status, run.name
@@ -496,6 +523,89 @@ def cmd_credentials_delete(args: argparse.Namespace, env: _Env) -> int:
                      target=f"engagement:{args.engagement}", result="ok",
                      details={"credential_id": args.credential_id, "name": name})
     print(f"Учётная запись {args.credential_id} удалена")
+    return 0
+
+
+# ========== Наборы проверки учёток (аудит паролей) ==========
+def parse_cred_set_file(path: Path) -> list[tuple[str, str]]:
+    """Файл набора -> пары (логин, секрет). По строке на запись «логин:секрет».
+
+    Первое двоеточие делит логин и секрет (секрет может содержать двоеточия);
+    «логин:» — пустой пароль. Пустые строки и строки с # в начале пропускаются.
+    Секрет в сообщения об ошибках и в журнал не попадает.
+    """
+    if not path.is_file():
+        raise CliError(f"файл набора не найден: {path}")
+    entries: list[tuple[str, str]] = []
+    for n, raw in enumerate(path.read_text().splitlines(), start=1):
+        line = raw.rstrip("\n")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if ":" not in line:
+            raise CliError(f"строка {n}: ожидается «логин:секрет» (нет двоеточия)")
+        user, _, secret = line.partition(":")
+        entries.append((user.strip(), secret))
+    if not entries:
+        raise CliError("в файле нет записей логин:секрет")
+    return entries
+
+
+def cmd_cred_sets_add(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.core import repository as repo
+    from scanner.core.credentials import CredentialError
+    from scanner.core.db import session_scope
+
+    vault = _vault()
+    _engagement_or_fail(env, args.engagement)
+    entries = parse_cred_set_file(args.entries_file)
+    try:
+        with session_scope(env.sessions) as s:
+            sid = repo.create_cred_audit_set(
+                s, vault, engagement_id=args.engagement, name=args.name,
+                entries=entries, services=args.services)
+            row = repo.get_cred_audit_set(s, args.engagement, sid)
+            count, services = row.entry_count, list(row.services or [])
+    except CredentialError as e:
+        raise CliError(str(e)) from e
+    env.audit.record(subject=env.actor, action="cred_set_create",
+                     target=f"engagement:{args.engagement}", result="ok",
+                     details={"cred_set_id": sid, "name": args.name,
+                              "services": services, "entry_count": count})
+    svc = ", ".join(services) or "все поддерживаемые"
+    print(f"Набор {sid} «{args.name}» заведён: записей — {count}, сервисы: {svc}")
+    print("Секреты зашифрованы; в журнал и в вывод они не попадают.")
+    return 0
+
+
+def cmd_cred_sets_list(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.core import repository as repo
+    from scanner.core.db import session_scope
+
+    _engagement_or_fail(env, args.engagement)
+    with session_scope(env.sessions) as s:
+        rows = repo.list_cred_audit_sets(s, args.engagement)
+        for r in rows:
+            svc = ", ".join(r.services or []) or "все поддерживаемые"
+            print(f"{r.id}\t{r.name}\tзаписей: {r.entry_count}\t{svc}")
+    if not rows:
+        print("У договора нет наборов проверки учёток.")
+    return 0
+
+
+def cmd_cred_sets_delete(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.core import repository as repo
+    from scanner.core.db import session_scope
+
+    with session_scope(env.sessions) as s:
+        row = repo.get_cred_audit_set(s, args.engagement, args.set_id)
+        if row is None:
+            raise CliError(f"набор {args.set_id} не найден в договоре")
+        name = row.name
+        s.delete(row)
+    env.audit.record(subject=env.actor, action="cred_set_delete",
+                     target=f"engagement:{args.engagement}", result="ok",
+                     details={"cred_set_id": args.set_id, "name": name})
+    print(f"Набор {args.set_id} удалён")
     return 0
 
 

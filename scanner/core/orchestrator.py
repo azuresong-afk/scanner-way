@@ -40,7 +40,7 @@ from scanner.reporting.diff import diff_runs
 # Порядок исполнения: discovery первым — его сервисы (ctx.services) нужны
 # остальным модулям.
 MODULE_ORDER: tuple[str, ...] = ("discovery", "vuln", "auth_inventory", "config_audit",
-                                 "cred_audit")
+                                 "password_policy", "cred_audit")
 
 # Движки поиска уязвимостей (выбор оператора): сетевые проверки Nuclei без
 # учётной записи и/или инвентаризация пакетов по учётной записи.
@@ -90,12 +90,20 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
         from scanner.modules.config_audit import ConfigAuditModule
         return ConfigAuditModule()
 
+    def password_policy() -> ScanModule:
+        from scanner.modules.password_policy import PasswordPolicyModule
+        return PasswordPolicyModule()
+
     def cred_audit() -> ScanModule:
+        from scanner.modules.authenticators import build_default_authenticator
         from scanner.modules.cred_audit import CredentialAuditModule
-        return CredentialAuditModule()
+        # Бэкенды проверки подключаются по умолчанию (SSH на paramiko); модуль всё
+        # равно инертен без согласованного набора проверки (ctx.cred_candidates).
+        return CredentialAuditModule(authenticator=build_default_authenticator())
 
     return {"discovery": discovery, "vuln": vuln, "auth_inventory": auth_inventory,
-            "config_audit": config_audit, "cred_audit": cred_audit}
+            "config_audit": config_audit, "password_policy": password_policy,
+            "cred_audit": cred_audit}
 
 
 def order_modules(names: Iterable[str]) -> list[str]:
@@ -182,15 +190,18 @@ class Orchestrator:
 
     def run(self, *, engagement_id: int, scan_run_id: int, requested_targets: list[str],
             modules: list[ScanModule], rate: RateProfile,
-            credentials: list[HostCredential] | None = None) -> list[Finding]:
+            credentials: list[HostCredential] | None = None,
+            cred_candidates: list[tuple[str, str]] | None = None) -> list[Finding]:
         return self.run_detailed(engagement_id=engagement_id, scan_run_id=scan_run_id,
                                  requested_targets=requested_targets, modules=modules,
-                                 rate=rate, credentials=credentials).findings
+                                 rate=rate, credentials=credentials,
+                                 cred_candidates=cred_candidates).findings
 
     def run_detailed(self, *, engagement_id: int, scan_run_id: int,
                      requested_targets: list[str], modules: list[ScanModule],
                      rate: RateProfile,
-                     credentials: list[HostCredential] | None = None) -> RunOutcome:
+                     credentials: list[HostCredential] | None = None,
+                     cred_candidates: list[tuple[str, str]] | None = None) -> RunOutcome:
         """Гейт + модули по порядку. Ошибка модуля не прерывает остальные."""
         plan = plan_targets(self.gate, requested_targets)
         out = RunOutcome(allowed=plan.allowed, denied=plan.denied)
@@ -203,7 +214,8 @@ class Orchestrator:
 
         ctx = ScanContext(engagement_id=engagement_id, scan_run_id=scan_run_id,
                           targets=list(plan.allowed), rate=rate, audit=self.audit,
-                          credentials=list(credentials or []))
+                          credentials=list(credentials or []),
+                          cred_candidates=list(cred_candidates or []))
         for module in modules:
             if self.should_stop():
                 out.stopped = True
@@ -328,10 +340,28 @@ class RunService:
             raise ValueError(f"учётные записи не найдены в договоре: "
                              f"{', '.join(map(str, missing))}")
 
+    def check_cred_sets(self, engagement_id: int, cred_set_ids: list[int]) -> None:
+        """Наборы проверки учёток принадлежат договору. ValueError — иначе (422).
+
+        Отсутствие набора НЕ ошибка: модуль cred_audit без набора лишь пишет
+        осознанный пропуск (см. его инертность по умолчанию)."""
+        if not cred_set_ids:
+            return
+        if self.vault is None:
+            raise ValueError("не задан ключ шифрования учётных записей "
+                             "(SCANNER_CREDENTIALS_KEY или SCANNER_API_SECRET)")
+        with session_scope(self.sessions) as s:
+            known = {r.id for r in repo.list_cred_audit_sets(s, engagement_id)}
+        missing = sorted(set(cred_set_ids) - known)
+        if missing:
+            raise ValueError(f"наборы проверки учёток не найдены в договоре: "
+                             f"{', '.join(map(str, missing))}")
+
     def submit(self, *, engagement_id: int, modules: list[str], rate_profile: str,
                requested_targets: list[str], actor: str,
                started_by: int | None = None,
                credential_ids: list[int] | None = None,
+               cred_set_ids: list[int] | None = None,
                name: str | None = None, schedule_id: int | None = None) -> int:
         """Создаёт прогон (pending) и отдаёт его исполнителю. Права проверяет API.
 
@@ -344,12 +374,15 @@ class RunService:
             raise ValueError(f"unknown rate profile: {rate_profile}")
         names = order_modules(modules)
         cred_ids = list(dict.fromkeys(credential_ids or []))
+        set_ids = list(dict.fromkeys(cred_set_ids or []))
         self.check_credentials(engagement_id, names, cred_ids)
+        self.check_cred_sets(engagement_id, set_ids)
         title = clean_name(name) or run_title(names, requested_targets)
         with session_scope(self.sessions) as s:
             run_id = repo.create_scan_run(s, engagement_id=engagement_id, modules=names,
                                           rate_profile=rate_profile,
                                           started_by=started_by, credential_ids=cred_ids,
+                                          cred_set_ids=set_ids,
                                           name=title, targets=requested_targets[:1024],
                                           schedule_id=schedule_id)
         self.audit.record(subject=actor, action="scan_queue", target=f"scan_run:{run_id}",
@@ -358,6 +391,7 @@ class RunService:
                                    "schedule_id": schedule_id, "modules": names,
                                    "rate_profile": rate_profile,
                                    "credential_ids": cred_ids,
+                                   "cred_set_ids": set_ids,
                                    "requested_targets": requested_targets[:100]})
         self.executor.submit(self.execute, run_id, list(requested_targets))
         return run_id
@@ -413,27 +447,35 @@ class RunService:
             gate = repo.load_allowlist_gate(s, engagement_id)
             # учётки расшифровываются только на время прогона, в памяти процесса
             cred_ids = list(run.credential_ids or [])
+            set_ids = list(run.cred_set_ids or [])
             credentials = []
+            cred_candidates: list[tuple[str, str]] = []
+            if (cred_ids or set_ids) and self.vault is None:
+                raise RuntimeError("не задан ключ шифрования учётных записей")
             if cred_ids:
-                if self.vault is None:
-                    raise RuntimeError("не задан ключ шифрования учётных записей")
                 credentials = repo.load_host_credentials(s, self.vault, engagement_id,
                                                          cred_ids)
+            if set_ids:
+                cred_candidates = repo.load_cred_set_entries(s, self.vault,
+                                                             engagement_id, set_ids)
             repo.set_scan_run_status(s, scan_run_id, "running")
         self.audit.record(subject="scanner", action="scan_start",
                           target=f"scan_run:{scan_run_id}", result="ok",
                           details={"engagement_id": engagement_id, "modules": names,
                                    "rate_profile": rate.name,
                                    "credentials": [c.describe() for c in credentials]
-                                   or None})
+                                   or None,
+                                   "cred_set_ids": set_ids or None,
+                                   "cred_candidates": len(cred_candidates) or None})
 
         modules = [self.registry[n]() for n in names]
         orch = Orchestrator(gate, self.audit,
                             should_stop=lambda: self._status(scan_run_id) == "stopped")
         out = orch.run_detailed(engagement_id=engagement_id, scan_run_id=scan_run_id,
                                 requested_targets=requested_targets, modules=modules,
-                                rate=rate, credentials=credentials)
-        del credentials     # секреты больше не нужны
+                                rate=rate, credentials=credentials,
+                                cred_candidates=cred_candidates)
+        del credentials, cred_candidates    # секреты больше не нужны
 
         with session_scope(self.sessions) as s:
             if out.hosts:

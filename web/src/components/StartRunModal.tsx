@@ -59,6 +59,9 @@ export function StartRunModal({
   const [credIds, setCredIds] = useState<number[]>(schedule?.credential_ids ?? []);
   const canCreds = has("host_credentials");
   const creds = useAsync(() => api.credentials(engagement.id), [engagement.id], canCreds);
+  const [credSetIds, setCredSetIds] = useState<number[]>(schedule?.cred_set_ids ?? []);
+  const canCredAudit = has("cred_audit");
+  const credSets = useAsync(() => api.credSets(engagement.id), [engagement.id], canCredAudit);
   const [profile, setProfile] = useState(schedule?.rate_profile ?? "gentle");
   const [name, setName] = useState(schedule?.name ?? "");
   const [kind, setKind] = useState<ScheduleKind>(schedule?.kind ?? "daily");
@@ -87,6 +90,8 @@ export function StartRunModal({
 
   const toggle = (id: string) => setModules((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
   const toggleCred = (id: number) => setCredIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
+  const toggleCredSet = (id: number) => setCredSetIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
+  const credAuditOn = modules.includes("cred_audit");
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -100,6 +105,7 @@ export function StartRunModal({
         modules: allModules,
         rate_profile: profile,
         credential_ids: eng.credentials ? credIds : [],
+        cred_set_ids: credAuditOn ? credSetIds : [],
         name: name.trim() || undefined,
       };
       if (scheduled) {
@@ -306,10 +312,43 @@ export function StartRunModal({
               </label>
             ))}
           </div>
-          {modules.includes("cred_audit") && (
+          {credAuditOn && (
             <small style={{ color: "var(--warn)" }}>
               Аудит учётных данных выполняется только в рамках согласованного договора, с лимитом попыток и остановкой при блокировках.
             </small>
+          )}
+          {credAuditOn && (
+            <div className="stack" style={{ gap: 8, marginTop: 4 }}>
+              <span>Наборы проверки учёток</span>
+              {credSets.loading && !credSets.data ? (
+                <small className="muted">Загрузка наборов…</small>
+              ) : credSets.error ? (
+                <ErrorAlert error={credSets.error} onRetry={credSets.reload} />
+              ) : (credSets.data ?? []).length === 0 ? (
+                <small style={{ color: "var(--warn)" }}>
+                  У договора нет наборов проверки учёток — добавьте их на странице договора в разделе «Наборы проверки учёток». Без набора модуль
+                  запишет осознанный пропуск и не сделает ни одной попытки.
+                </small>
+              ) : (
+                <div className="grid-2">
+                  {credSets.data!.map((s) => (
+                    <label key={s.id} className="option-card">
+                      <input type="checkbox" checked={credSetIds.includes(s.id)} onChange={() => toggleCredSet(s.id)} />
+                      <span>
+                        <b style={{ fontWeight: 500 }}>{s.name}</b>
+                        <small>
+                          {s.entry_count} записей · {s.services.length ? s.services.join(", ") : "все поддерживаемые"}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <small className="muted">
+                Проверка создаёт нагрузку входами на хосты и может приводить к блокировке учёток — запускайте только по согласованию. Пароли в
+                журнал не пишутся.
+              </small>
+            </div>
           )}
         </fieldset>
 

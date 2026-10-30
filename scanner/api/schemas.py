@@ -132,6 +132,44 @@ class CredentialOut(_Orm):
         return [str(x) for x in (v or [])]
 
 
+# ---- наборы проверки учёток (аудит паролей) ----
+class CredEntryIn(BaseModel):
+    """Одна проверяемая пара логин/секрет. Пустой секрет допустим (пустой пароль)."""
+    username: str = Field(min_length=1, max_length=128)
+    secret: str = Field(default="", max_length=16384)
+
+    def __repr__(self) -> str:      # секрет не должен попасть в логи
+        return f"CredEntryIn(username={self.username!r})"
+
+    __str__ = __repr__
+
+
+class CredSetIn(BaseModel):
+    """Набор проверки учёток. Секреты только на вход — API их не отдаёт."""
+    name: str = Field(min_length=1, max_length=128)
+    # Сервисы, к которым применять набор; пусто — все поддерживаемые.
+    services: list[str] = Field(default_factory=list, max_length=32)
+    entries: list[CredEntryIn] = Field(min_length=1, max_length=200)
+
+    def __repr__(self) -> str:
+        return (f"CredSetIn(name={self.name!r}, services={self.services!r}, "
+                f"entries={len(self.entries)})")
+
+    __str__ = __repr__
+
+
+class CredSetOut(_Orm):
+    """Набор наружу: без секретов — имя, сервисы, число записей, маскированные логины."""
+    id: int
+    engagement_id: int
+    name: str
+    services: list[str] = Field(default_factory=list)
+    entry_count: int
+    masked_usernames: list[str] = Field(default_factory=list)
+    created_by: int | None
+    created_at: datetime | None
+
+
 # ---- runs ----
 class RunCreate(BaseModel):
     targets: list[str] = Field(min_length=1, max_length=1024)
@@ -141,6 +179,8 @@ class RunCreate(BaseModel):
     # по учётной записи) | both. Если задан — заменяет vuln/auth_inventory в modules.
     vuln_engine: str | None = Field(default=None, pattern="^(nuclei|credentialed|both)$")
     credential_ids: list[int] = Field(default_factory=list, max_length=32)
+    # Наборы проверки учёток для модуля cred_audit (аудит паролей по согласованию).
+    cred_set_ids: list[int] = Field(default_factory=list, max_length=32)
     # Своё имя прогона; пусто — имя по выбранным опциям (модули и цели).
     name: str | None = Field(default=None, max_length=200)
 
@@ -157,6 +197,7 @@ class RunOut(_Orm):
     modules: list[str]
     rate_profile: str
     credential_ids: list[int] = Field(default_factory=list)
+    cred_set_ids: list[int] = Field(default_factory=list)
     name: str | None = None
     targets: list[str] = Field(default_factory=list)
     schedule_id: int | None = None
@@ -187,6 +228,7 @@ class ScheduleIn(BaseModel):
     rate_profile: str = "gentle"
     vuln_engine: str | None = Field(default=None, pattern="^(nuclei|credentialed|both)$")
     credential_ids: list[int] = Field(default_factory=list, max_length=32)
+    cred_set_ids: list[int] = Field(default_factory=list, max_length=32)
     kind: str = Field(pattern="^(once|daily|weekly|monthly)$")
     time_of_day: str | None = None             # ЧЧ:ММ — для daily/weekly/monthly
     weekdays: list[int] = Field(default_factory=list, max_length=7)  # 0 — пн
@@ -209,6 +251,7 @@ class ScheduleOut(_Orm):
     modules: list[str]
     rate_profile: str
     credential_ids: list[int] = Field(default_factory=list)
+    cred_set_ids: list[int] = Field(default_factory=list)
     kind: str
     time_of_day: str | None
     weekdays: list[int] = Field(default_factory=list)
