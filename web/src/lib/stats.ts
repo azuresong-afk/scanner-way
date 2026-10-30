@@ -1,7 +1,7 @@
 // Агрегаты для дашборда, таблиц и раздела по хостам (считаются на клиенте).
 
 import type { FindingOut, FindingStatus, InventoryHostOut, ServiceOut, Severity } from "../api/types";
-import { MODULE_LABEL, SEVERITIES } from "./labels";
+import { MODULE_LABEL, OS_FAMILY_LABEL, OS_FAMILY_ORDER, SEVERITIES } from "./labels";
 
 export const SEVERITY_RANK: Record<Severity, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 
@@ -135,6 +135,40 @@ export interface InventoryRow extends HostRow {
   /** Хост был в выбранном прогоне (иначе счётчики не применимы). */
   inRun: boolean;
   lastRunId: number | null;
+  /** Семейство ОС; "unknown" — не определена. */
+  osFamily: string;
+  osLabel: string;
+  /** Как ОС определена: «Linux 4.15 - 5.8», PRETTY_NAME из os-release. */
+  osName: string | null;
+  osSource: InventoryHostOut["os_source"];
+  osAccuracy: number | null;
+}
+
+export interface OsGroup {
+  family: string;
+  label: string;
+  rows: InventoryRow[];
+  counts: SeverityCounts;
+  total: number;
+}
+
+/** Группы хостов по семейству ОС: отечественные ОС первыми, «не определена» — в конце. */
+export function groupByOs(rows: InventoryRow[]): OsGroup[] {
+  const map = new Map<string, OsGroup>();
+  for (const r of rows) {
+    let g = map.get(r.osFamily);
+    if (!g) map.set(r.osFamily, (g = { family: r.osFamily, label: r.osLabel, rows: [], counts: emptyCounts(), total: 0 }));
+    g.rows.push(r);
+    if (r.inRun) {
+      for (const s of SEVERITIES) g.counts[s] += r.counts[s];
+      g.total += r.total;
+    }
+  }
+  const rank = (f: string) => {
+    const i = OS_FAMILY_ORDER.indexOf(f);
+    return i < 0 ? OS_FAMILY_ORDER.length - 2 : i;
+  };
+  return [...map.values()].sort((a, b) => rank(a.family) - rank(b.family) || a.label.localeCompare(b.label));
 }
 
 /**
@@ -158,6 +192,11 @@ export function inventoryRows(inventory: InventoryHostOut[], findings: FindingOu
         summary: base?.summary ?? "",
         inRun: runId !== null && (h.run_ids.includes(runId) || !!r),
         lastRunId: h.run_ids.length ? h.run_ids[h.run_ids.length - 1] : null,
+        osFamily: h.os_family ?? "unknown",
+        osLabel: h.os_family_label ?? OS_FAMILY_LABEL[h.os_family ?? "unknown"] ?? h.os_family ?? "ОС не определена",
+        osName: h.os_guess,
+        osSource: h.os_source ?? null,
+        osAccuracy: h.os_accuracy ?? null,
       };
     });
 }

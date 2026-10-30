@@ -231,6 +231,14 @@ export interface ServiceOut {
 export interface InventoryHostOut {
   host: string;
   os_guess: string | null;
+  /** Семейство ОС: astra, redos, alt, ubuntu, debian, windows, linux…; null — не определена. */
+  os_family?: string | null;
+  os_family_label?: string;
+  /** Откуда ОС: nmap (-O), banner (баннеры сервисов), ssh (/etc/os-release по учётной записи). */
+  os_source?: "nmap" | "banner" | "ssh" | null;
+  /** Точность nmap, %; 100 — прочитано на хосте. */
+  os_accuracy?: number | null;
+  os_run_id?: number | null;
   /** Прогоны, в которых хост встречался, по возрастанию. */
   run_ids: number[];
   /** Прогон, из которого взяты сервисы (последний, где они были). */

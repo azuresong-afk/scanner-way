@@ -336,6 +336,9 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .table tbody tr.clickable { cursor: pointer; }
 .table tbody tr.clickable:hover td { background: var(--surface-2); }
 .table tbody tr.selected td { background: var(--accent-soft); }
+.table tbody tr.os-group td { background: var(--surface-2); border-top: 1px solid var(--border-strong); padding-top: 8px; padding-bottom: 8px; }
+.table .os-name { display: block; font-size: 12px; margin-top: 2px; }
+.os-filter { padding: 0 20px 13px; gap: 8px; }
 .table th button { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
 .table th button:focus-visible { outline: 2px solid var(--accent); }
 

@@ -198,3 +198,40 @@ export const ROLES = [
 ];
 
 export const ROLE_LABEL: Record<string, string> = Object.fromEntries(ROLES.map((r) => [r.id, r.label]));
+
+/** Семейства ОС в порядке групп — как scanner/core/osfamily.py (отечественные ОС первыми). */
+export const OS_FAMILIES: { id: string; label: string }[] = [
+  { id: "astra", label: "Astra Linux" },
+  { id: "redos", label: "РЕД ОС" },
+  { id: "alt", label: "Альт" },
+  { id: "rosa", label: "РОСА" },
+  { id: "msvsphere", label: "МСВСфера" },
+  { id: "osnova", label: "ОС Основа" },
+  { id: "ubuntu", label: "Ubuntu" },
+  { id: "debian", label: "Debian" },
+  { id: "centos", label: "CentOS" },
+  { id: "rocky", label: "Rocky Linux" },
+  { id: "almalinux", label: "AlmaLinux" },
+  { id: "oracle", label: "Oracle Linux" },
+  { id: "rhel", label: "Red Hat Enterprise Linux" },
+  { id: "fedora", label: "Fedora" },
+  { id: "suse", label: "SUSE / openSUSE" },
+  { id: "alpine", label: "Alpine Linux" },
+  { id: "linux", label: "Linux (дистрибутив не определён)" },
+  { id: "windows", label: "Windows" },
+  { id: "macos", label: "macOS / Apple" },
+  { id: "bsd", label: "BSD" },
+  { id: "network", label: "Сетевое оборудование" },
+  { id: "other", label: "Другая ОС" },
+  { id: "unknown", label: "ОС не определена" },
+];
+export const OS_FAMILY_ORDER = OS_FAMILIES.map((f) => f.id);
+export const OS_FAMILY_LABEL: Record<string, string> = Object.fromEntries(OS_FAMILIES.map((f) => [f.id, f.label]));
+
+/** Подсказка, откуда взята ОС хоста. */
+export function osSourceHint(source: string | null | undefined, accuracy: number | null | undefined): string {
+  if (source === "ssh") return "Прочитано на хосте (/etc/os-release) по учётной записи";
+  if (source === "banner") return "По баннерам сервисов (nmap -sV) — без учётной записи Astra может выглядеть как Debian";
+  if (source === "nmap") return `Отпечаток стека nmap -O${accuracy != null ? `, точность ${accuracy}%` : ""}: ядро без дистрибутива`;
+  return "ОС не определена: нужен discovery с -O или учётная запись";
+}

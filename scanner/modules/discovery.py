@@ -22,7 +22,8 @@ from dataclasses import dataclass
 
 from libnmap.parser import NmapParser, NmapParserException
 
-from scanner.core.models import Finding, FindingType, ServiceInfo, Severity
+from scanner.core.models import Finding, FindingType, HostOs, ServiceInfo, Severity
+from scanner.core.osfamily import GENERIC_LINUX, classify, family_label, is_distro
 from scanner.core.ratelimit import RateProfile
 from scanner.modules.base import ScanContext, ScanModule
 
@@ -96,6 +97,38 @@ def _subprocess_runner(cmd: list[str], timeout: float) -> str:
 def parse_nmap_xml(xml: str, module: str = "discovery"
                    ) -> tuple[list[ServiceInfo], list[Finding]]:
     """Разбирает XML nmap в (ServiceInfo открытых портов, info-находки)."""
+    services, findings, _ = parse_nmap_report(xml, module)
+    return services, findings
+
+
+def host_os(addr: str, os_matches: list, banners: Sequence[str]) -> HostOs:
+    """ОС хоста по nmap -O и баннерам сервисов (-sV).
+
+    -O различает ядро, но не дистрибутив («Linux 4.15 - 5.8»). Баннеры вроде
+    «OpenSSH 8.9p1 Ubuntu 3ubuntu0.6» или «Apache httpd 2.4.57 (Debian)»
+    уточняют дистрибутив; противоречащий -O баннер (Ubuntu на хосте, который
+    -O считает Windows) не учитывается — это может быть проброс порта.
+    """
+    out = HostOs(host=addr)
+    if os_matches:
+        best = os_matches[0]
+        classes = " ".join(f"{c.vendor} {c.osfamily}" for c in best.osclasses)
+        out.name, out.accuracy, out.source = best.name, int(best.accuracy), "nmap"
+        out.family = classify(f"{best.name} {classes}")
+    for banner in banners:
+        fam = classify(banner)
+        if is_distro(fam) and out.family in (None, "other", GENERIC_LINUX):
+            out.family, out.source = fam, "banner"
+            out.name = out.name or family_label(fam)
+            break
+        if out.family is None and fam == "windows":
+            out.family, out.source, out.name = fam, "banner", family_label(fam)
+    return out
+
+
+def parse_nmap_report(xml: str, module: str = "discovery"
+                      ) -> tuple[list[ServiceInfo], list[Finding], list[HostOs]]:
+    """Как parse_nmap_xml, плюс живые хосты с их ОС."""
     try:
         report = NmapParser.parse_fromstring(xml)
     except NmapParserException as e:
@@ -103,6 +136,7 @@ def parse_nmap_xml(xml: str, module: str = "discovery"
 
     services: list[ServiceInfo] = []
     findings: list[Finding] = []
+    hosts: list[HostOs] = []
     for host in report.hosts:
         if not host.is_up():
             continue
@@ -133,10 +167,13 @@ def parse_nmap_xml(xml: str, module: str = "discovery"
                                     severity=Severity.INFO, vuln_id="INFO:os",
                                     evidence="; ".join(lines)))
 
+        banners: list[str] = []
         for svc in host.services:
             if svc.state != "open":
                 continue
             sd = svc.service_dict
+            banners.append(" ".join(sd.get(k) or "" for k in
+                                    ("product", "version", "extrainfo", "ostype")))
             product, version = sd.get("product") or None, sd.get("version") or None
             cpe = svc.cpelist[0].cpestring if svc.cpelist else None
             services.append(ServiceInfo(host=addr, port=svc.port, protocol=svc.protocol,
@@ -152,7 +189,8 @@ def parse_nmap_xml(xml: str, module: str = "discovery"
                                           + (f": {label}" if label else ""),
                                     vuln_id=f"INFO:open-port/{svc.protocol}",
                                     evidence="; ".join(ev) or None))
-    return services, findings
+        hosts.append(host_os(addr, os_matches, banners))
+    return services, findings, hosts
 
 
 class DiscoveryModule(ScanModule):
@@ -184,7 +222,7 @@ class DiscoveryModule(ScanModule):
                              details=shlex.join(cmd))
             try:
                 xml = self._runner(cmd, timeout)
-                services, batch_findings = parse_nmap_xml(xml, self.name)
+                services, batch_findings, hosts = parse_nmap_report(xml, self.name)
             except (DiscoveryError, subprocess.TimeoutExpired, OSError) as e:
                 ctx.audit.record(subject="scanner", action="nmap_exec",
                                  target=",".join(batch), result="error",
@@ -195,5 +233,6 @@ class DiscoveryModule(ScanModule):
                              details=f"hosts_up={sum(f.vuln_id == 'INFO:host-up' for f in batch_findings)} "
                                      f"open_ports={len(services)}")
             ctx.services.extend(services)
+            ctx.hosts.update((h.host, h) for h in hosts)
             findings.extend(batch_findings)
         return findings

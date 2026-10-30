@@ -298,6 +298,13 @@ class ServiceOut(BaseModel):
 class InventoryHostOut(BaseModel):
     host: str
     os_guess: str | None
+    # Семейство ОС (astra, redos, ubuntu, debian, windows, linux…) и подпись к нему;
+    # источник: nmap | banner | ssh; точность nmap в % (100 — прочитано на хосте).
+    os_family: str | None = None
+    os_family_label: str = "ОС не определена"
+    os_source: str | None = None
+    os_accuracy: int | None = None
+    os_run_id: int | None = None
     run_ids: list[int]
     services_run_id: int | None
     services: list[ServiceOut]

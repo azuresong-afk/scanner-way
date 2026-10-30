@@ -17,7 +17,7 @@ from scanner.api.security import (
 from scanner.api.settings import ApiSettings
 from scanner.core.allowlist import AllowlistGate
 from scanner.core.db import AuditLogRow, ScanRun
-from scanner.core.models import Finding, FindingType, ServiceInfo, Severity
+from scanner.core.models import Finding, FindingType, HostOs, ServiceInfo, Severity
 from scanner.core.orchestrator import inline_executor, order_modules, plan_targets
 from scanner.modules.base import ScanContext, ScanModule
 from scanner.reporting.remediation import RemediationResolver
@@ -41,6 +41,7 @@ class FakeDiscovery(ScanModule):
     def run(self, ctx: ScanContext) -> list[Finding]:
         self.rec.seen[self.name] = list(ctx.targets)
         ctx.services = [ServiceInfo(t, 22, "tcp", "ssh", "OpenSSH", "7.4") for t in ctx.targets]
+        ctx.hosts = {t: HostOs(t, "Linux 4.15 - 5.8", "linux", 95, "nmap") for t in ctx.targets}
         return [Finding(module=self.name, host=t, finding_type=FindingType.INFO,
                         title="host up", vuln_id="INFO:host-up") for t in ctx.targets]
 
@@ -588,6 +589,13 @@ def test_engagement_hosts_inventory_spans_all_runs(api):
     assert by["10.0.0.1"]["services_run_id"] == first
     assert by["10.0.0.2"]["services_run_id"] == second
     assert [s["port"] for s in by["10.0.0.2"]["services"]] == [22]
+
+    # ОС из discovery и фильтр по семейству
+    assert (by["10.0.0.2"]["os_family"], by["10.0.0.2"]["os_source"],
+            by["10.0.0.2"]["os_run_id"]) == ("linux", "nmap", second)
+    assert by["10.0.0.2"]["os_family_label"] == "Linux (дистрибутив не определён)"
+    assert len(api.c.get(f"/engagements/{eid}/hosts?os_family=linux", headers=op).json()) == 3
+    assert api.c.get(f"/engagements/{eid}/hosts?os_family=astra", headers=op).json() == []
 
     aud = api.user("aud", "auditor")
     assert api.c.get(f"/engagements/{eid}/hosts", headers=aud).status_code == 200
