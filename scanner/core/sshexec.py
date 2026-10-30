@@ -1,9 +1,11 @@
 """SSH-подключение к цели по учётной записи (пароль или ключ) — paramiko.
 
-Почему не системный `ssh`, как в аудите конфигураций: пароль пришлось бы
-передавать через argv/окружение/sshpass, а ключ — писать во временный файл.
-paramiko берёт пароль и ключ из памяти процесса, на диск и в argv они не
-попадают.
+Используется инвентаризацией (auth_inventory) и аудитом конфигураций
+(config_audit). Почему не системный `ssh`: пароль пришлось бы передавать через
+argv/окружение/sshpass, а ключ — писать во временный файл. paramiko берёт
+пароль и ключ из памяти процесса, на диск и в argv они не попадают. Пароль для
+`sudo -S` уходит в stdin канала (`ParamikoShell.run(..., stdin=...)`), файлы
+на цель — по SFTP (`put`).
 
 Проверка ключа хоста — как `StrictHostKeyChecking=accept-new` (TOFU):
 неизвестный ключ запоминается в known_hosts, ИЗМЕНИВШИЙСЯ ключ — отказ
@@ -49,7 +51,9 @@ class CommandResult:
 
 
 class RemoteShell(Protocol):
-    def run(self, command: str, timeout: float) -> CommandResult: ...
+    def run(self, command: str, timeout: float,
+            stdin: bytes | None = None) -> CommandResult: ...
+    def put(self, path: str, data: bytes, timeout: float) -> None: ...
     def close(self) -> None: ...
 
 
@@ -115,15 +119,22 @@ class ParamikoShell:
         self._client = client
         self._max_output = max_output_bytes
 
-    def run(self, command: str, timeout: float) -> CommandResult:
+    def run(self, command: str, timeout: float,
+            stdin: bytes | None = None) -> CommandResult:
         """Выполнить команду; stdout — не больше max_output_bytes (остальное
-        отбрасывается, truncated=True), stderr — последние 4 КБ."""
+        отбрасывается, truncated=True), stderr — последние 4 КБ.
+
+        stdin — данные для stdin команды (пароль для `sudo -S`): уходят в канал
+        SSH и нигде больше не сохраняются; после них stdin закрывается.
+        """
         import paramiko
 
         try:
             chan = self._client.get_transport().open_session(timeout=timeout)
             chan.settimeout(timeout)
             chan.exec_command(command)
+            if stdin:
+                chan.sendall(stdin)
             chan.shutdown_write()
             deadline = time.monotonic() + timeout
             out, err = bytearray(), bytearray()
@@ -150,6 +161,28 @@ class ParamikoShell:
         except (paramiko.SSHException, OSError, EOFError) as e:
             raise SshError(f"{type(e).__name__}: {e}") from e
         return CommandResult(rc, bytes(out), err.decode("utf-8", "replace"), truncated)
+
+    def put(self, path: str, data: bytes, timeout: float) -> None:
+        """Записать файл на цель по SFTP (права 0600). path — путь, построенный
+        сканером (не из ввода цели)."""
+        import paramiko
+
+        try:
+            sftp = self._client.open_sftp()
+        except (paramiko.SSHException, OSError, EOFError) as e:
+            raise SshError(f"SFTP недоступен: {type(e).__name__}: {e}") from e
+        try:
+            sftp.get_channel().settimeout(timeout)
+            with sftp.open(path, "wb") as fh:
+                fh.set_pipelined(True)
+                fh.write(data)
+            sftp.chmod(path, 0o600)
+        except TimeoutError as e:
+            raise SshError(f"передача по SFTP не уложилась в {timeout:.0f} с") from e
+        except (paramiko.SSHException, OSError, EOFError) as e:
+            raise SshError(f"SFTP: {type(e).__name__}: {e}") from e
+        finally:
+            sftp.close()
 
     def close(self) -> None:
         self._client.close()

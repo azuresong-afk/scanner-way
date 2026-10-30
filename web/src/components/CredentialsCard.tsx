@@ -1,13 +1,13 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { KeyRound, Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
-import type { CredentialAuth, CredentialOut } from "../api/types";
+import type { CredentialAuth, CredentialBecome, CredentialOut } from "../api/types";
 import { fmtDate } from "../lib/format";
 import { parseTargets } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
 import { Empty, ErrorAlert, Loading, Modal } from "./ui";
 
-/** Учётные записи активов договора: для поиска уязвимостей по учётной записи (SSH). */
+/** Учётные записи активов договора: поиск уязвимостей по учётной записи и аудит конфигураций (SSH). */
 export function CredentialsCard({ engagementId }: { engagementId: number }) {
   const list = useAsync(() => api.credentials(engagementId), [engagementId]);
   const [adding, setAdding] = useState(false);
@@ -22,8 +22,8 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
         </button>
       </div>
       <p className="muted" style={{ margin: "0 20px 14px", fontSize: 13 }}>
-        Для движка «По учётной записи»: сканер входит на хост по SSH и сопоставляет установленные пакеты с БДУ ФСТЭК и CVE. Пароли и ключи
-        хранятся зашифрованными и никогда не показываются.
+        Для движка «По учётной записи» (пакеты на хосте → БДУ ФСТЭК и CVE) и для аудита конфигураций (CIS, ФСТЭК/ГОСТ — нужен sudo). Пароли и
+        ключи хранятся зашифрованными и никогда не показываются.
       </p>
       {list.loading && !list.data ? (
         <Loading />
@@ -33,7 +33,7 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
         </div>
       ) : list.data!.length === 0 ? (
         <Empty title="Учётных записей нет" icon={<KeyRound size={20} />}>
-          Добавьте учётку, чтобы искать уязвимости по пакетам на хостах.
+          Добавьте учётку, чтобы искать уязвимости по пакетам и проверять конфигурации хостов.
         </Empty>
       ) : (
         <div className="table-wrap">
@@ -43,6 +43,7 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
                 <th>Название</th>
                 <th>Логин</th>
                 <th>Вход</th>
+                <th>Повышение прав</th>
                 <th>Область действия</th>
                 <th>Добавлена</th>
                 <th />
@@ -64,6 +65,7 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
                       </div>
                     )}
                   </td>
+                  <td className="muted">{c.become === "none" ? "нет" : "sudo"}</td>
                   <td className="mono muted">{c.targets.length ? c.targets.join(", ") : "все цели прогона"}</td>
                   <td className="muted nowrap">{fmtDate(c.created_at)}</td>
                   <td className="right">
@@ -111,6 +113,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
   const [key, setKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [scope, setScope] = useState("");
+  const [become, setBecome] = useState<CredentialBecome>("sudo");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -139,6 +142,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
         auth,
         ...(auth === "password" ? { password } : { private_key: key, passphrase: passphrase || undefined }),
         targets: parsed.targets,
+        become,
       });
       onDone();
     } catch (err) {
@@ -225,6 +229,25 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
             </label>
           </>
         )}
+        <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+          <span>Повышение прав (для аудита конфигураций)</span>
+          <div className="grid-2">
+            <label className="option-card">
+              <input type="radio" name="become" checked={become === "sudo"} onChange={() => setBecome("sudo")} />
+              <span>
+                <b style={{ fontWeight: 500 }}>sudo</b>
+                <small>{auth === "password" ? "Пароль учётки подаётся sudo скрыто, через stdin" : "Для ключа нужен NOPASSWD в sudoers"}</small>
+              </span>
+            </label>
+            <label className="option-card">
+              <input type="radio" name="become" checked={become === "none"} onChange={() => setBecome("none")} />
+              <span>
+                <b style={{ fontWeight: 500 }}>Нет</b>
+                <small>Вход сразу под root или проверка без root (часть правил не проверится)</small>
+              </span>
+            </label>
+          </div>
+        </fieldset>
         <label className="field">
           <span>Область действия (необязательно)</span>
           <textarea className="textarea mono" value={scope} onChange={(e) => setScope(e.target.value)} placeholder={"10.0.0.0/24\n10.0.1.15"} spellCheck={false} />
@@ -232,8 +255,8 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
           {parsed.invalid.length > 0 && <small style={{ color: "var(--danger)" }}>Не IP/подсеть: {parsed.invalid.slice(0, 5).join(", ")}</small>}
         </label>
         <small className="muted">
-          Учётке достаточно обычных прав: команды выполняются только на чтение, без sudo. Вход и его результат пишутся в журнал аудита — без
-          пароля и ключа.
+          Поиску уязвимостей по учётной записи хватает обычных прав: команды только на чтение, без sudo. Аудиту конфигураций нужны права root —
+          через sudo. Вход, sudo и их результат пишутся в журнал аудита — без пароля и ключа.
         </small>
         {error && <ErrorAlert error={error} />}
       </form>
