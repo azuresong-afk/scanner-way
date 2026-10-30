@@ -125,6 +125,39 @@ export interface ScheduleOut {
   created_at: string | null;
 }
 
+export type FeedKind = "daily" | "weekly" | "monthly";
+
+/** Справочник (БДУ, NVD, шаблоны Nuclei) и его автообновление. */
+export interface FeedOut {
+  source: string;
+  title: string;
+  description: string;
+  kind: FeedKind;
+  time_of_day: string;
+  weekdays: number[];
+  month_day: number | null;
+  timezone: string;
+  enabled: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  /** ok | unchanged | error */
+  last_result: string | null;
+  last_count: number | null;
+  message: string | null;
+  /** Обновление идёт прямо сейчас. */
+  running: boolean;
+}
+
+export interface FeedScheduleIn {
+  enabled: boolean;
+  kind: FeedKind;
+  time_of_day: string;
+  weekdays?: number[];
+  month_day?: number;
+  timezone?: string;
+}
+
 export type CredentialAuth = "password" | "key";
 
 /** Повышение прав для аудита конфигураций: sudo (пароль учётки / NOPASSWD) или без него. */

@@ -19,6 +19,8 @@ import type {
   CredSetOut,
   EngagementIn,
   EngagementOut,
+  FeedOut,
+  FeedScheduleIn,
   FindingOut,
   InventoryHostOut,
   MeOut,
@@ -213,6 +215,9 @@ export const api = {
     json<ScheduleOut>(`/engagements/${engagementId}/schedules`, { method: "POST", ...body(data) }),
   updateSchedule: (id: number, data: ScheduleIn) => json<ScheduleOut>(`/schedules/${id}`, { method: "PUT", ...body(data) }),
   toggleSchedule: (id: number, enabled: boolean) => json<ScheduleOut>(`/schedules/${id}`, { method: "PATCH", ...body({ enabled }) }),
+  feeds: () => json<FeedOut[]>("/feeds"),
+  updateFeed: (source: string, data: FeedScheduleIn) => json<FeedOut>(`/feeds/${source}`, { method: "PUT", ...body(data) }),
+  runFeedNow: (source: string) => json<FeedOut>(`/feeds/${source}/run`, { method: "POST" }),
   runScheduleNow: (id: number) => json<ScheduleOut>(`/schedules/${id}/run`, { method: "POST" }),
   deleteSchedule: (id: number) => request(`/schedules/${id}`, { method: "DELETE" }).then(() => undefined),
   checkReachability: (engagementId: number, data: ReachabilityIn) =>

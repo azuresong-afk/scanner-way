@@ -244,6 +244,12 @@ export function osSourceHint(source: string | null | undefined, accuracy: number
   return "ОС не определена: нужен discovery с -O или учётная запись";
 }
 
+export const FEED_RESULT_LABEL: Record<string, string> = {
+  ok: "Обновлено",
+  unchanged: "Без изменений",
+  error: "Ошибка",
+};
+
 export const CRITICALITIES: Criticality[] = ["critical", "high", "medium", "low"];
 
 export const CRITICALITY_LABEL: Record<Criticality, string> = {
