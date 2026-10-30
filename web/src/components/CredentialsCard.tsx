@@ -1,7 +1,9 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { KeyRound, Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
-import type { CredentialAuth, CredentialBecome, CredentialOut } from "../api/types";
+import type { CredentialAuth, CredentialBecome, CredentialOut, CredentialProtocol } from "../api/types";
+
+const DEFAULT_PORT: Record<CredentialProtocol, string> = { ssh: "22", winrm: "5986" };
 import { fmtDate } from "../lib/format";
 import { parseTargets } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
@@ -22,8 +24,8 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
         </button>
       </div>
       <p className="muted" style={{ margin: "0 20px 14px", fontSize: 13 }}>
-        Для движка «По учётной записи» (пакеты на хосте → БДУ ФСТЭК и CVE) и для аудита конфигураций (CIS, ФСТЭК/ГОСТ — нужен sudo). Пароли и
-        ключи хранятся зашифрованными и никогда не показываются.
+        Для движка «По учётной записи»: Linux по SSH (пакеты → БДУ ФСТЭК и CVE) и Windows по WinRM (обновления и ПО → KB/CVE и БДУ), а также для
+        аудита конфигураций (CIS, ФСТЭК/ГОСТ — нужен sudo). Пароли и ключи хранятся зашифрованными и никогда не показываются.
       </p>
       {list.loading && !list.data ? (
         <Loading />
@@ -55,10 +57,10 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
                   <td>{c.name}</td>
                   <td className="mono">
                     {c.username}
-                    {c.port !== 22 ? `:${c.port}` : ""}
+                    {c.port !== Number(DEFAULT_PORT[c.protocol ?? "ssh"]) ? `:${c.port}` : ""}
                   </td>
                   <td className="muted">
-                    {c.auth === "key" ? "Ключ SSH" : "Пароль"}
+                    {c.protocol === "winrm" ? "WinRM · пароль" : c.auth === "key" ? "SSH · ключ" : "SSH · пароль"}
                     {c.key_fingerprint && (
                       <div className="mono faint" style={{ fontSize: 11 }} title={c.key_fingerprint}>
                         {c.key_fingerprint.slice(0, 22)}…
@@ -106,8 +108,11 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
 
 function CredentialForm({ engagementId, onClose, onDone }: { engagementId: number; onClose: () => void; onDone: () => void }) {
   const [name, setName] = useState("");
+  const [protocol, setProtocol] = useState<CredentialProtocol>("ssh");
   const [username, setUsername] = useState("");
-  const [port, setPort] = useState("22");
+  const [domain, setDomain] = useState("");
+  const [port, setPort] = useState(DEFAULT_PORT.ssh);
+  const [portTouched, setPortTouched] = useState(false);
   const [auth, setAuth] = useState<CredentialAuth>("password");
   const [password, setPassword] = useState("");
   const [key, setKey] = useState("");
@@ -117,10 +122,19 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isWinrm = protocol === "winrm";
+  // WinRM входит только по паролю (NTLM); при переключении на WinRM возвращаем пароль.
+  const effectiveAuth: CredentialAuth = isWinrm ? "password" : auth;
+
+  const switchProtocol = (p: CredentialProtocol) => {
+    setProtocol(p);
+    if (!portTouched) setPort(DEFAULT_PORT[p]);   // порт по умолчанию, пока его не трогали
+  };
+
   const parsed = parseTargets(scope);
   const portNum = Number(port);
   const portOk = Number.isInteger(portNum) && portNum > 0 && portNum < 65536;
-  const secretOk = auth === "password" ? password.length > 0 : key.trim().length > 0;
+  const secretOk = effectiveAuth === "password" ? password.length > 0 : key.trim().length > 0;
   const canSubmit = name.trim() && username.trim() && portOk && secretOk && parsed.invalid.length === 0 && !busy;
 
   const readKey = async (ev: ChangeEvent<HTMLInputElement>) => {
@@ -139,10 +153,13 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
         name: name.trim(),
         username: username.trim(),
         port: portNum,
-        auth,
-        ...(auth === "password" ? { password } : { private_key: key, passphrase: passphrase || undefined }),
+        auth: effectiveAuth,
+        protocol,
+        ...(isWinrm && domain.trim() ? { domain: domain.trim() } : {}),
+        ...(effectiveAuth === "password" ? { password } : { private_key: key, passphrase: passphrase || undefined }),
         targets: parsed.targets,
-        become,
+        // WinRM не повышает права — sudo только для SSH-аудита конфигураций.
+        become: isWinrm ? "none" : become,
       });
       onDone();
     } catch (err) {
@@ -171,37 +188,79 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
           <span>Название</span>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Сервисная учётка серверов ДМЗ" maxLength={128} />
         </label>
-        <div className="inline" style={{ alignItems: "flex-end" }}>
-          <label className="field" style={{ flex: "3 1 200px" }}>
-            <span>Логин на хосте</span>
-            <input className="input mono" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="audit" maxLength={128} />
-          </label>
-          <label className="field" style={{ flex: "1 1 90px" }}>
-            <span>Порт SSH</span>
-            <input className="input mono" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
-          </label>
-        </div>
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
-          <span>Вход</span>
+          <span>Способ входа</span>
           <div className="grid-2">
             <label className="option-card">
-              <input type="radio" name="auth" checked={auth === "password"} onChange={() => setAuth("password")} />
+              <input type="radio" name="protocol" checked={!isWinrm} onChange={() => switchProtocol("ssh")} />
               <span>
-                <b style={{ fontWeight: 500 }}>Пароль</b>
+                <b style={{ fontWeight: 500 }}>SSH</b>
+                <small>Linux: пакеты, аудит конфигураций</small>
               </span>
             </label>
             <label className="option-card">
-              <input type="radio" name="auth" checked={auth === "key"} onChange={() => setAuth("key")} />
+              <input type="radio" name="protocol" checked={isWinrm} onChange={() => switchProtocol("winrm")} />
               <span>
-                <b style={{ fontWeight: 500 }}>Ключ SSH</b>
-                <small>Ed25519, ECDSA или RSA</small>
+                <b style={{ fontWeight: 500 }}>WinRM</b>
+                <small>Windows: обновления и ПO (HTTPS, NTLM)</small>
               </span>
             </label>
           </div>
         </fieldset>
-        {auth === "password" ? (
+        <div className="inline" style={{ alignItems: "flex-end" }}>
+          <label className="field" style={{ flex: "3 1 200px" }}>
+            <span>{isWinrm ? "Логин Windows" : "Логин на хосте"}</span>
+            <input
+              className="input mono"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder={isWinrm ? "svc_scan" : "audit"}
+              maxLength={128}
+            />
+          </label>
+          <label className="field" style={{ flex: "1 1 90px" }}>
+            <span>{isWinrm ? "Порт WinRM" : "Порт SSH"}</span>
+            <input
+              className="input mono"
+              value={port}
+              onChange={(e) => {
+                setPortTouched(true);
+                setPort(e.target.value);
+              }}
+              inputMode="numeric"
+            />
+          </label>
+        </div>
+        {isWinrm && (
           <label className="field">
-            <span>Пароль</span>
+            <span>Домен Windows (необязательно)</span>
+            <input className="input mono" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="CORP" maxLength={64} />
+            <small>Логин будет сохранён как ДОМЕН\user. Пусто — локальная учётная запись хоста.</small>
+          </label>
+        )}
+        {!isWinrm && (
+          <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+            <span>Аутентификация</span>
+            <div className="grid-2">
+              <label className="option-card">
+                <input type="radio" name="auth" checked={auth === "password"} onChange={() => setAuth("password")} />
+                <span>
+                  <b style={{ fontWeight: 500 }}>Пароль</b>
+                </span>
+              </label>
+              <label className="option-card">
+                <input type="radio" name="auth" checked={auth === "key"} onChange={() => setAuth("key")} />
+                <span>
+                  <b style={{ fontWeight: 500 }}>Ключ SSH</b>
+                  <small>Ed25519, ECDSA или RSA</small>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+        )}
+        {effectiveAuth === "password" ? (
+          <label className="field">
+            <span>{isWinrm ? "Пароль Windows" : "Пароль"}</span>
             <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
           </label>
         ) : (
@@ -229,6 +288,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
             </label>
           </>
         )}
+        {!isWinrm && (
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
           <span>Повышение прав (для аудита конфигураций)</span>
           <div className="grid-2">
@@ -248,6 +308,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
             </label>
           </div>
         </fieldset>
+        )}
         <label className="field">
           <span>Область действия (необязательно)</span>
           <textarea className="textarea mono" value={scope} onChange={(e) => setScope(e.target.value)} placeholder={"10.0.0.0/24\n10.0.1.15"} spellCheck={false} />

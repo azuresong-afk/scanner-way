@@ -82,6 +82,7 @@ it("закрытый раздел без права показывает отк�
 const CRED = {
   id: 5, engagement_id: 1, name: "Серверы ДМЗ", username: "audit", auth: "key", port: 22,
   targets: ["10.0.0.0/24"], key_fingerprint: "SHA256:abc", created_by: 1, created_at: null, become: "sudo",
+  protocol: "ssh",
 };
 
 describe("модуль cred_audit в форме запуска", () => {
@@ -129,7 +130,7 @@ describe("модуль cred_audit в форме запуска", () => {
     await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")).toBe(true));
     const call = api.calls.find((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")!;
     const sent = JSON.parse(String(call.init!.body));
-    expect(sent.modules).toEqual(["discovery", "auth_inventory"]);
+    expect(sent.modules).toEqual(["discovery", "auth_inventory", "win_inventory"]);
     expect(sent.credential_ids).toEqual([5]);
   });
 

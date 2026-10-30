@@ -97,11 +97,17 @@ export const VULN_ENGINES: EngineInfo[] = [
   {
     id: "credentialed",
     label: "По учётной записи",
-    description: "Вход по SSH, пакеты и версии ПО → БДУ/CVE",
-    modules: ["auth_inventory"],
+    description: "Linux по SSH (пакеты) и Windows по WinRM (обновления, ПО) → БДУ/CVE",
+    modules: ["auth_inventory", "win_inventory"],
     credentials: true,
   },
-  { id: "both", label: "Оба движка", description: "Nuclei и инвентаризация по учётной записи", modules: ["vuln", "auth_inventory"], credentials: true },
+  {
+    id: "both",
+    label: "Оба движка",
+    description: "Nuclei и инвентаризация по учётной записи (Linux и Windows)",
+    modules: ["vuln", "auth_inventory", "win_inventory"],
+    credentials: true,
+  },
   { id: "none", label: "Не искать", description: "Только выбранные ниже модули", modules: [], credentials: false },
 ];
 
@@ -109,6 +115,7 @@ export const MODULE_SHORT: Record<string, string> = {
   discovery: "Обнаружение",
   vuln: "Уязвимости (Nuclei)",
   auth_inventory: "Уязвимости (учётка)",
+  win_inventory: "Windows (WinRM)",
   config_audit: "Конфигурации",
   password_policy: "Парольная политика",
   cred_audit: "Учётные данные",
