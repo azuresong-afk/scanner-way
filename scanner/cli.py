@@ -106,6 +106,16 @@ def build_parser() -> argparse.ArgumentParser:
     nvd.add_argument("--batch-size", type=int, default=1000)
     nvd.set_defaults(handler=cmd_sync_nvd)
 
+    msrc = fsub.add_parser("sync-msrc", help="загрузить бюллетени обновлений Microsoft "
+                                             "(MSRC CVRF: KB, CVE, замещение)")
+    msrc.add_argument("--file", dest="files", action="append", type=Path, default=[],
+                      help="документ CVRF JSON или каталог с *.json; можно несколько "
+                           "раз. Без --file — загрузка через API MSRC")
+    msrc.add_argument("--since", default=None,
+                      help="с какого бюллетеня грузить через API, напр. 2023-Jan "
+                           "(по умолчанию SCANNER_MSRC_SINCE)")
+    msrc.set_defaults(handler=cmd_sync_msrc)
+
     auto = fsub.add_parser("auto-enabled", help="включено ли автообновление источника "
                                                 "по расписанию (код 0 — да, 1 — нет)")
     auto.add_argument("source", help="bdu | nvd | nuclei")
@@ -316,6 +326,35 @@ def cmd_sync_nvd(args: argparse.Namespace, env: _Env) -> int:
     env.audit.record(subject=env.actor, action="feed_sync", target="nvd", result="ok",
                      details={**details, "records": n})
     print(f"NVD: загружено CVE — {n}")
+    return 0
+
+
+def cmd_sync_msrc(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.feeds.msrc import MsrcFeed, MsrcStore, msrc_settings
+
+    missing = [str(f) for f in args.files if not f.exists()]
+    if missing:
+        raise CliError(f"файл не найден: {', '.join(missing)}")
+    cfg = msrc_settings()
+    store = MsrcStore(env.engine)
+    if env.engine.dialect.name == "sqlite":
+        store.create_schema()
+    feed = MsrcFeed(cfg.api_url)
+    if args.files:
+        docs, details = feed.iter_files(args.files), {"files": [f.name for f in args.files]}
+    else:
+        since = args.since or cfg.since
+        docs, details = feed.iter_api(since=since), {"source": "api", "since": since}
+    try:
+        n_docs, n_fixes = feed.sync(store, docs)
+    except Exception as e:
+        env.audit.record(subject=env.actor, action="feed_sync", target="msrc",
+                         result="error",
+                         details={**details, "error": f"{type(e).__name__}: {e}"[:500]})
+        raise
+    env.audit.record(subject=env.actor, action="feed_sync", target="msrc", result="ok",
+                     details={**details, "releases": n_docs, "records": n_fixes})
+    print(f"MSRC: бюллетеней — {n_docs}, исправлений для Windows — {n_fixes}")
     return 0
 
 
