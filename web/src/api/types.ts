@@ -287,3 +287,73 @@ export interface ReachabilityOut {
   elapsed_ms: number;
   checked_at: string;
 }
+
+// ---- активы (R7) ----
+export type Criticality = "low" | "medium" | "high" | "critical";
+
+export interface AssetGroupRef {
+  id: number;
+  name: string;
+}
+
+export interface AssetOut {
+  id: number;
+  engagement_id: number;
+  address: string;
+  hostname: string | null;
+  owner: string | null;
+  criticality: Criticality;
+  notes: string | null;
+  tags: string[];
+  groups: AssetGroupRef[];
+  created_at: string | null;
+  /** Из последних прогонов; null — хост в прогонах не встречался. */
+  os_guess: string | null;
+  os_family: string | null;
+  os_family_label: string | null;
+  last_run_id: number | null;
+  finding_counts: Partial<Record<Severity, number>>;
+  findings_total: number;
+}
+
+export interface AssetIn {
+  address: string;
+  hostname?: string | null;
+  owner?: string | null;
+  criticality?: Criticality;
+  notes?: string | null;
+  tags?: string[];
+  group_ids?: number[];
+}
+
+export type AssetUpdate = Partial<AssetIn>;
+
+export interface AssetBulkIn {
+  asset_ids: number[];
+  add_tags?: string[];
+  remove_tags?: string[];
+  add_group_ids?: number[];
+  remove_group_ids?: number[];
+  criticality?: Criticality;
+  owner?: string | null;
+}
+
+export interface AssetGroupOut {
+  id: number;
+  engagement_id: number;
+  name: string;
+  asset_count: number;
+  created_at: string | null;
+}
+
+export interface AssetTagOut {
+  tag: string;
+  count: number;
+}
+
+export interface AssetFilters {
+  tag?: string;
+  group_id?: number;
+  criticality?: Criticality;
+  q?: string;
+}

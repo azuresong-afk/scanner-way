@@ -224,9 +224,11 @@ def get_report(run_id: int, request: Request,
                session: SessionDep, audit: AuditDep,
                format: Annotated[str, Query(pattern="^(html|pdf|docx|json)$")] = "html",
                variant: Annotated[str, Query(pattern="^(full|brief)$")] = "full",
-               compare_to: int | None = None) -> Response:
+               compare_to: int | None = None,
+               group_id: int | None = None) -> Response:
     """Отчёт по прогону. По умолчанию — только по этому прогону, без сравнения;
     compare_to=<id> — сравнить с выбранным более ранним прогоном договора.
+    group_id=<id> — разрез по группе активов: только хосты группы.
     variant=brief — краткая версия: без плана устранения,
     по находкам вместо рекомендаций только ссылки на устранение."""
     from scanner.reporting.model import ReportContext, build_report
@@ -242,6 +244,13 @@ def get_report(run_id: int, request: Request,
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"scan run is {run.status}; report is available after it ends")
     eng = get_engagement(session, run.engagement_id)
+    group = hosts = None
+    if group_id is not None:
+        from scanner.core import assets as asset_svc
+        group = asset_svc.get_group(session, eng.id, group_id)
+        if group is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "asset group not found")
+        hosts = asset_svc.group_hosts(session, group_id)
     current = repo.get_findings(session, run_id)
     prev_id = None
     if compare_to is not None:
@@ -258,14 +267,17 @@ def get_report(run_id: int, request: Request,
         resolver=request.app.state.resolver_factory(current),
         context=ReportContext(customer=eng.client,
                               engagement=eng.contract_ref or eng.name,
-                              run_id=run_id, previous_run_id=prev_id),
-        false_positives=repo.false_positive_marks(session, eng.id))
+                              run_id=run_id, previous_run_id=prev_id,
+                              group=group.name if group else None),
+        false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts)
     fmt, var = ReportFormat(format), ReportVariant(variant)
     body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",
                  result="ok", details={"format": fmt.value, "variant": var.value,
-                                       "previous_run_id": prev_id, "findings": len(current)})
-    suffix = ("-brief" if var is ReportVariant.BRIEF else "") + (
+                                       "previous_run_id": prev_id, "findings": len(current),
+                                       "group_id": group_id})
+    suffix = (f"-group-{group_id}" if group_id is not None else "") + (
+        "-brief" if var is ReportVariant.BRIEF else "") + (
         f"-vs-{prev_id}" if prev_id is not None else "")
     return Response(content=body, media_type=CONTENT_TYPES[fmt], headers={
         "Content-Disposition":
