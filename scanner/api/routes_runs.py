@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from scanner.api.deps import AuditDep, Principal, SessionDep, deny, require
 from scanner.api.rbac import MODULE_PERMISSIONS, Perm
 from scanner.api.routes_engagements import get_engagement
-from scanner.api.routes_findings import finding_out
+from scanner.api.routes_findings import finding_out, services_by_port
 from scanner.api.schemas import (
     DeniedTargetOut,
     FindingOut,
@@ -183,7 +183,9 @@ def list_findings(run_id: int,
     """Находки прогона; отмеченные как ложные срабатывания — с полем false_positive."""
     run = _get_run(session, run_id)
     marks = repo.false_positive_marks(session, run.engagement_id)
-    return [finding_out(r, marks) for r in repo.get_finding_rows(session, run_id, module)]
+    services = services_by_port(session, run_id)
+    return [finding_out(r, marks, services)
+            for r in repo.get_finding_rows(session, run_id, module)]
 
 
 @router.get("/runs/{run_id}/services", response_model=list[ServiceOut])

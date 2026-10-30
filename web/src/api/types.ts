@@ -211,6 +211,10 @@ export interface FindingOut {
   status: FindingStatus | null;
   detected_at: string;
   false_positive: FalsePositiveMark | null;
+  /** ПО находки: продукт сервиса на порту или ПО установленного пакета; null — не определено. */
+  software?: string | null;
+  software_version?: string | null;
+  software_source?: "service" | "package" | null;
 }
 
 export interface ServiceOut {

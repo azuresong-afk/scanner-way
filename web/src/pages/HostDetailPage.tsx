@@ -11,10 +11,34 @@ import { FindingsTable } from "../components/FindingsTable";
 import { ReachabilityCheck } from "../components/ReachabilityCheck";
 import { RunPicker } from "../components/RunPicker";
 import { ServicesTable } from "../components/ServicesTable";
+import { SoftwareTable } from "../components/SoftwareTable";
 import { Empty, ErrorAlert, Kpi, Loading, Modal } from "../components/ui";
 import { byHost, isFalsePositive, isIssue, replaceFinding } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
 import { useRunSelection } from "../lib/useRunSelection";
+
+type VulnView = "software" | "list";
+const VIEWS: { id: VulnView; label: string }[] = [
+  { id: "software", label: "По ПО" },
+  { id: "list", label: "Списком" },
+];
+const VIEW_KEY = "scanner.host.vulnView";
+
+function loadView(): VulnView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "software";
+  } catch {
+    return "software";
+  }
+}
+
+function saveView(v: VulnView) {
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    // без localStorage — просто не запоминаем
+  }
+}
 
 /** Детальная информация по хосту: сервисы и все его уязвимости в выбранном прогоне. */
 export function HostDetailPage() {
@@ -35,6 +59,7 @@ export function HostDetailPage() {
   );
   const [open, setOpen] = useState<FindingOut | null>(null);
   const [checking, setChecking] = useState(false);
+  const [view, setView] = useState<VulnView>(loadView);
   const { has } = useAuth();
   const { current } = useEngagement();
   const row = useMemo(() => (data.data ? byHost(data.data.findings.filter(isIssue), data.data.services)[0] : undefined), [data.data]);
@@ -98,8 +123,30 @@ export function HostDetailPage() {
           <section className="card" style={{ overflow: "hidden" }}>
             <div className="card-head">
               <h2>Уязвимости хоста</h2>
+              <div className="seg seg-sm" role="radiogroup" aria-label="Вид списка уязвимостей">
+                {VIEWS.map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={view === v.id}
+                    onClick={() => {
+                      setView(v.id);
+                      saveView(v.id);
+                    }}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            {row.findings.length ? <FindingsTable findings={row.findings} onOpen={setOpen} selected={open} hideHost /> : <Empty title="Уязвимостей не найдено" />}
+            {!row.findings.length ? (
+              <Empty title="Уязвимостей не найдено" />
+            ) : view === "software" ? (
+              <SoftwareTable findings={row.findings} services={row.services} onOpen={setOpen} selected={open} />
+            ) : (
+              <FindingsTable findings={row.findings} onOpen={setOpen} selected={open} hideHost />
+            )}
           </section>
           {falsePositives.length > 0 && (
             <details className="card">
