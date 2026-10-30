@@ -127,6 +127,23 @@ def test_create_list_delete_never_exposes_secrets(api, sqlite_factory):
     assert all(HOST_PASSWORD not in r.secret_enc for r in rows)
 
 
+def test_create_winrm_credential(api):
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    r = _cred(api, eid, holder, name="Windows ДМЗ", username="svc", protocol="winrm",
+              domain="CORP", targets=["10.0.0.10"])
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["protocol"] == "winrm" and body["port"] == 5986   # порт по умолчанию
+    assert body["username"] == "CORP\\svc"                        # домен в логине
+    assert body["become"] == "none"                               # у WinRM нет sudo
+    assert HOST_PASSWORD not in r.text
+    # WinRM входит только по паролю (NTLM)
+    bad = _cred(api, eid, holder, name="win-key", username="svc", protocol="winrm",
+                auth="key", private_key=make_key(), password=None)
+    assert bad.status_code == 422
+
+
 def test_create_validates_scope_and_key(api):
     eid = api.engagement("10.0.0.0/24")
     holder = api.user("keeper", "operator", "host_credentials")

@@ -82,6 +82,21 @@ def test_credentials_for_host_prefers_narrow_scope():
     assert "x" not in repr(one) and "password='x'" not in repr(one)
 
 
+def test_credentials_for_host_filters_by_protocol():
+    from scanner.core.credentials import PROTOCOL_SSH, PROTOCOL_WINRM
+
+    ssh = HostCredential(1, "ssh", "password", "root", password="x")
+    win = HostCredential(2, "win", "password", "DOMAIN\\svc", port=5986, password="x",
+                         protocol=PROTOCOL_WINRM)
+    creds = [ssh, win]
+    # SSH-модули по умолчанию не видят WinRM-учётку, и наоборот
+    assert [c.id for c in credentials_for_host("10.0.0.5", creds)] == [1]
+    assert [c.id for c in credentials_for_host("10.0.0.5", creds,
+                                               protocol=PROTOCOL_WINRM)] == [2]
+    assert [c.id for c in credentials_for_host("10.0.0.5", creds,
+                                               protocol=PROTOCOL_SSH)] == [1]
+
+
 # ---------- хранение ----------
 def _engagement(s, *cidrs):
     eid = repo.create_engagement(s, name="Д-1")
