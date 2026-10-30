@@ -55,6 +55,9 @@ class Finding:
     cvss: float | None = None
     evidence: str | None = None
     detected_at: datetime = field(default_factory=datetime.utcnow)
+    # Рекомендация от самого модуля (fixtext правила бенчмарка, решение Lynis);
+    # у RemediationResolver она главнее общих текстов.
+    remediation: str | None = None
 
     def dedup_key(self) -> str:
         """Стабильный ключ для сравнения прогонов: host+port+vuln_id+module."""

@@ -203,3 +203,77 @@ def test_run_credential_checks(api):
     assert r.status_code == 422 and str(foreign) in r.json()["detail"]
     # учётка без модуля, который её использует
     assert run(holder, credential_ids=[cid]).status_code == 422
+
+
+# ---------- аудит конфигураций на учётках договора (R1a) ----------
+@pytest.fixture
+def cfg_api(sqlite_factory, rec, tmp_path):
+    """API с настоящим модулем config_audit поверх фейкового SSH."""
+    from scanner.modules.config_audit import ConfigAuditModule, ConfigAuditOptions
+    from tests.test_config_audit import FakeNet
+
+    bundle = tmp_path / "lynis.tar.gz"
+    bundle.write_bytes(b"lynis")
+    net = FakeNet()
+    registry = {"discovery": lambda: FakeDiscovery(rec),
+                "config_audit": lambda: ConfigAuditModule(
+                    ConfigAuditOptions(backends=("lynis",), lynis_bundle=str(bundle)),
+                    connector=net, sleep=lambda s: None)}
+    settings = ApiSettings(secret=SECRET, bootstrap_admin="root",
+                           bootstrap_password=PASSWORD)
+    app = create_app(session_factory=sqlite_factory, settings=settings, registry=registry,
+                     executor=inline_executor(),
+                     resolver_factory=lambda findings: RemediationResolver())
+    with TestClient(app) as c:
+        api = Api(c)
+        api.net = net
+        yield api
+
+
+def test_credential_become_field(api):
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    assert _cred(api, eid, holder).json()["become"] == "sudo"            # по умолчанию
+    assert _cred(api, eid, holder, become="none").json()["become"] == "none"
+    assert _cred(api, eid, holder, become="su").status_code == 422
+    listed = api.c.get(f"/engagements/{eid}/credentials", headers=holder).json()
+    assert [c["become"] for c in listed] == ["sudo", "none"]
+
+
+def test_config_audit_needs_credential_and_permission(cfg_api):
+    api = cfg_api
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    op = api.user("op", "operator")
+    body = {"targets": ["10.0.0.5"], "modules": ["discovery", "config_audit"]}
+    assert api.c.post(f"/engagements/{eid}/runs", headers=op, json=body).status_code == 403
+    r = api.c.post(f"/engagements/{eid}/runs", headers=holder, json=body)
+    assert r.status_code == 422
+    assert "config_audit" in r.json()["detail"] and "учётная запись" in r.json()["detail"]
+
+
+def test_config_audit_run_uses_saved_credential(cfg_api, sqlite_factory):
+    from scanner.core.db import FindingRow
+
+    api = cfg_api
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    cid = _cred(api, eid, holder).json()["id"]
+    r = api.c.post(f"/engagements/{eid}/runs", headers=holder,
+                   json={"targets": ["10.0.0.5"], "modules": ["discovery", "config_audit"],
+                         "credential_ids": [cid]})
+    assert r.status_code == 202, r.text
+    run = r.json()
+    assert run["status"] == "done" and run["credential_ids"] == [cid]
+    audit = api.audit(sqlite_factory)
+    assert not any(res == "no_credentials" for _, _, _, res in audit)
+    assert ("scanner", "config_audit_become", "10.0.0.5", "ok") in audit
+    # пароль учётки ушёл только в stdin sudo на «хосте»
+    assert any(s == (HOST_PASSWORD + "\n").encode() for *_, s in api.net.calls)
+    findings = api.c.get(f"/runs/{run['id']}/findings", headers=holder).json()
+    assert any(f["vuln_id"] == "LYNIS:SSH-7408" for f in findings)
+    assert HOST_PASSWORD not in repr(audit) and HOST_PASSWORD not in repr(findings)
+    # рекомендация правила сохранена в БД — отчёт по прогону её увидит
+    with sqlite_factory() as s:
+        row = s.scalars(select(FindingRow).where(FindingRow.vuln_id == "LYNIS:SSH-7408")).one()
+    assert row.remediation.startswith("Set PermitRootLogin to no")

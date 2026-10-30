@@ -93,6 +93,8 @@ class HostCredentialRow(Base):
     key_fingerprint: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    # Повышение прав для аудита конфигураций: sudo | none (миграция 0008).
+    become: Mapped[str] = mapped_column(Text, default="sudo", server_default="sudo")
 
 
 # ========== Расписания ==========
@@ -237,6 +239,8 @@ class FindingRow(Base):
     status: Mapped[str] = mapped_column(Text, default="open")
     dedup_key: Mapped[str] = mapped_column(Text)
     detected_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    # Рекомендация модуля (fixtext правила бенчмарка и т. п.), миграция 0008.
+    remediation: Mapped[str | None] = mapped_column(Text)
 
 
 class FalsePositiveRow(Base):

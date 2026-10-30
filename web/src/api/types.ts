@@ -157,6 +157,9 @@ export interface FeedScheduleIn {
 
 export type CredentialAuth = "password" | "key";
 
+/** Повышение прав для аудита конфигураций: sudo (пароль учётки / NOPASSWD) или без него. */
+export type CredentialBecome = "sudo" | "none";
+
 /** Учётка актива на вход. Секреты API принимает, но никогда не отдаёт. */
 export interface CredentialIn {
   name: string;
@@ -167,6 +170,7 @@ export interface CredentialIn {
   private_key?: string;
   passphrase?: string;
   targets?: string[];
+  become?: CredentialBecome;
 }
 
 export interface CredentialOut {
@@ -181,6 +185,7 @@ export interface CredentialOut {
   key_fingerprint: string | null;
   created_by: number | null;
   created_at: string | null;
+  become: CredentialBecome;
 }
 
 export interface PackageOut {

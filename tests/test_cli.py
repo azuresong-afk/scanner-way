@@ -244,6 +244,37 @@ def test_run_requires_cred_audit_flag(engagement):
              "--modules", "cred_audit", "--confirm-authorized")
 
 
+def test_run_config_audit_requires_credentials_flag(engagement):
+    url, eid = engagement
+    with pytest.raises(cli.CliError, match="--allow-credentials"):
+        _run(url, "--engagement", str(eid), "--targets", "10.10.0.1",
+             "--modules", "discovery", "config_audit", "--confirm-authorized")
+
+
+def test_credentials_add_with_become(engagement, capsys, monkeypatch):
+    url, eid = engagement
+    monkeypatch.setenv("SCANNER_CREDENTIALS_KEY", "k" * 32)
+    monkeypatch.setenv("HOST_PW", "Cli-Pa55-not-in-audit")
+    args = cli.build_parser().parse_args([
+        "--db-url", url, "credentials", "add", "--engagement", str(eid), "--name", "аудит",
+        "--user", "audit", "--password-env", "HOST_PW", "--become", "none"])
+    env = cli._Env(args)
+    try:
+        assert cli.cmd_credentials_add(args, env) == 0
+        with session_scope(env.sessions) as s:
+            [row] = repo.list_host_credentials(s, eid)
+            assert row.become == "none"
+    finally:
+        env.engine.dispose()
+    assert "повышение прав: none" in capsys.readouterr().out
+    [rec] = _audit(url, "credential_create")
+    assert rec.details["become"] == "none" and "Cli-Pa55" not in repr(rec.details)
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["credentials", "add", "--engagement", "1", "--name",
+                                       "x", "--user", "a", "--ask-password",
+                                       "--become", "su"])
+
+
 def test_run_unknown_engagement(db_url):
     with pytest.raises(cli.CliError, match="не найден"):
         _run(db_url, "--engagement", "999", "--targets", "10.10.0.1", "--confirm-authorized")
