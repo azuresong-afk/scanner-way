@@ -54,6 +54,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Perm]] = {
 # Модуль -> дополнительное право сверх run_scan.
 MODULE_PERMISSIONS: dict[str, Perm] = {"cred_audit": Perm.CRED_AUDIT,
                                        "auth_inventory": Perm.HOST_CREDENTIALS,
+                                       "win_inventory": Perm.HOST_CREDENTIALS,
                                        "config_audit": Perm.HOST_CREDENTIALS}
 
 

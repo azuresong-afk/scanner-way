@@ -186,6 +186,35 @@ def load_nuclei(ctx: FeedContext) -> FeedResult:
     return FeedResult(count=total, message=f"Шаблонов Nuclei на диске: {total}")
 
 
+# ---------- Обновления Microsoft (MSRC) ----------
+def load_msrc(ctx: FeedContext) -> FeedResult:
+    """Бюллетени MSRC (CVRF): какая KB закрывает какую CVE продукта Windows.
+
+    Из закрытого контура — из файлов CVRF (`SCANNER_MSRC_FEED_PATH`); иначе с
+    API MSRC. Инкремент: при повторной загрузке берутся только бюллетени,
+    переизданные после прошлой успешной загрузки."""
+    from scanner.feeds.msrc import MsrcError, MsrcFeed, MsrcStore, msrc_settings
+
+    cfg = msrc_settings()
+    store = MsrcStore(ctx.engine)
+    feed = MsrcFeed(cfg.api_url)
+    try:
+        if cfg.feed_path.strip():
+            paths = [Path(cfg.feed_path.strip())]
+            docs = feed.iter_files(paths)
+        else:
+            docs = feed.iter_api(since=cfg.since, modified_after=ctx.last_success_at)
+        n_docs, n_fixes = feed.sync(store, docs)
+    except MsrcError as e:
+        raise FeedError(str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise FeedError(f"MSRC: {type(e).__name__}: {e}") from e
+    if n_docs == 0:
+        return FeedResult(message="Новых бюллетеней MSRC нет", unchanged=True)
+    return FeedResult(count=n_fixes,
+                      message=f"MSRC: бюллетеней — {n_docs}, исправлений — {n_fixes}")
+
+
 SOURCES: dict[str, FeedSource] = {s.id: s for s in (
     FeedSource("bdu", "БДУ ФСТЭК", load_bdu, kind="weekly", time_of_day="04:00",
                weekdays=(0,), description="Выгрузка vullist.xlsx → справочник БДУ"),
@@ -193,4 +222,7 @@ SOURCES: dict[str, FeedSource] = {s.id: s for s in (
                description="Инкрементально: только изменённые с прошлой загрузки CVE"),
     FeedSource("nuclei", "Шаблоны Nuclei", load_nuclei, kind="daily", time_of_day="05:00",
                description="nuclei -update-templates"),
+    FeedSource("msrc", "Обновления Microsoft (MSRC)", load_msrc, kind="weekly",
+               time_of_day="04:30", weekdays=(1,),
+               description="Бюллетени MSRC → KB/CVE для аудита Windows"),
 )}
