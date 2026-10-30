@@ -60,6 +60,13 @@ BDU_SOFTWARE_HINTS: dict[str, tuple[list[str], str | None]] = {
 }
 
 
+# Оговорка находки по версии пакета. auth_inventory заменяет её выводом по
+# бюллетеню дистрибутива (R2), когда данные вендора есть.
+BACKPORT_CAVEAT = ("Совпадение по версии установленного пакета: дистрибутив мог "
+                   "перенести исправление в свою ревизию пакета (бэкпорт) — "
+                   "сверьтесь с бюллетенем безопасности дистрибутива.")
+
+
 @dataclass(slots=True)
 class MatchEvidence:
     source: str
@@ -222,9 +229,7 @@ class VulnMatcher:
             lines += [f"[{e.source}] {e.identifier}: {e.detail}"
                       for e in res.evidence
                       if e.identifier in ids and e.source in (SRC_CPE, SRC_BDU_PRODUCT)]
-            lines.append("Совпадение по версии установленного пакета: дистрибутив мог "
-                         "перенести исправление в свою ревизию пакета (бэкпорт) — "
-                         "сверьтесь с бюллетенем безопасности дистрибутива.")
+            lines.append(BACKPORT_CAVEAT)
             return "\n".join(lines)
 
         return self._version_findings(res, host=host, port=None, module=module,

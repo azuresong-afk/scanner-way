@@ -7,7 +7,8 @@ API — вручную. Загрузчики вызывают те же клас
 EPSS, KEV) подключается добавлением записи в `SOURCES` — без правок планировщика.
 
 Адреса и ключи берутся из окружения (`scanner.core.config.settings`):
-NVD_API_KEY, BDU_FSTEC_FEED_PATH, BDU_FSTEC_FEED_URL, NUCLEI_TEMPLATES_DIR.
+NVD_API_KEY, BDU_FSTEC_FEED_PATH, BDU_FSTEC_FEED_URL, NUCLEI_TEMPLATES_DIR,
+ADVISORY_RELEASES, ADVISORY_DIR, ADVISORY_URL_<СЕМЕЙСТВО>.
 """
 from __future__ import annotations
 
@@ -239,6 +240,35 @@ def load_kev(ctx: FeedContext) -> FeedResult:
         raise FeedError("в каталоге KEV нет ни одной записи — справочник не изменён")
     n = sync_kev(ctx.engine, entries)
     return FeedResult(count=n, message=f"Загружено записей KEV: {n}", fingerprint=fingerprint)
+# ---------- Бюллетени дистрибутивов (учёт бэкпортов, R2) ----------
+def load_advisories(ctx: FeedContext) -> FeedResult:
+    """Трекер Debian и OVAL вендоров для выпусков из ADVISORY_RELEASES.
+    Ошибка одного выпуска не мешает остальным; FeedError — если не загрузился
+    ни один."""
+    from scanner.feeds.advisories.store import SqlAdvisoryStore
+    from scanner.feeds.advisories.sync import (
+        AdvisoryError,
+        parse_targets,
+        sync_releases,
+    )
+
+    try:
+        targets = parse_targets(settings.advisory_releases)
+    except AdvisoryError as e:
+        raise FeedError(f"ADVISORY_RELEASES: {e}") from e
+    if not targets:
+        raise FeedError("не заданы выпуски для загрузки (ADVISORY_RELEASES)")
+    directory = Path(settings.advisory_dir) if settings.advisory_dir else None
+    results, fingerprint = sync_releases(SqlAdvisoryStore(ctx.engine), targets,
+                                         directory=directory, urls=settings.advisory_urls())
+    ok = [r for r in results if r.error is None]
+    failed = [r for r in results if r.error is not None]
+    parts = [f"{r.family}:{r.release} — {r.count}" for r in ok]
+    parts += [f"{r.family}:{r.release} — ошибка: {r.error}" for r in failed]
+    if not ok:
+        raise FeedError("; ".join(parts) or "нет данных")
+    return FeedResult(count=sum(r.count for r in ok), message="; ".join(parts),
+                      fingerprint=fingerprint or None)
 
 
 SOURCES: dict[str, FeedSource] = {s.id: s for s in (
@@ -252,4 +282,8 @@ SOURCES: dict[str, FeedSource] = {s.id: s for s in (
                time_of_day="02:00", description="FIRST EPSS: CSV → таблица epss_score"),
     FeedSource("kev", "CISA KEV (эксплуатируемые уязвимости)", load_kev, kind="daily",
                time_of_day="02:30", description="Каталог CISA KEV (JSON) → таблица kev"),
+    FeedSource("advisories", "Бюллетени дистрибутивов", load_advisories, kind="weekly",
+               time_of_day="04:30", weekdays=(0,),
+               description="Трекер Debian, OVAL Ubuntu/RHEL/ALT (+ файлы Astra, РЕД ОС) — "
+                           "учёт бэкпортов"),
 )}
