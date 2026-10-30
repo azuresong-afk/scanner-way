@@ -327,6 +327,46 @@ class AuditLogRow(Base):
     details: Mapped[dict | None] = mapped_column(Jsonb)
 
 
+# ========== Уведомления (R9) ==========
+class IntegrationChannelRow(Base):
+    """Канал уведомлений. Секреты (пароль SMTP, токен бота/Jira) — только в
+    secret_enc (CredentialVault), наружу не отдаются; config — открытые параметры."""
+    __tablename__ = "integration_channel"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    type: Mapped[str] = mapped_column(Text)   # smtp | telegram | syslog_cef | jira
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    config: Mapped[dict] = mapped_column(Jsonb, default=dict)
+    secret_enc: Mapped[str | None] = mapped_column(Text)
+    events: Mapped[list[str]] = mapped_column(Jsonb, default=list)
+    filters: Mapped[dict] = mapped_column(Jsonb, default=dict)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+
+
+class NotificationLogRow(Base):
+    """Доставка «событие × канал»: очередь повторов и журнал исходов."""
+    __tablename__ = "notification_log"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(
+        ForeignKey("integration_channel.id", ondelete="CASCADE"), index=True)
+    event: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="pending")  # pending|retry|sent|failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(TsTz)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict] = mapped_column(Jsonb, default=dict)
+    engagement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("engagements.id", ondelete="SET NULL"))
+    scan_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scan_runs.id", ondelete="SET NULL"))
+    dedup_key: Mapped[str | None] = mapped_column(Text)
+    external_ref: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(TsTz)
+
+
 # ========== Активы (R7) ==========
 asset_tags = Table(
     "asset_tags", Base.metadata,

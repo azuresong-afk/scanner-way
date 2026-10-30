@@ -309,8 +309,12 @@ class RunService:
                  registry: Mapping[str, ModuleFactory] | None = None,
                  executor: Executor | None = None,
                  reference_store: object | None = None,
-                 vault: CredentialVault | None = None):
+                 vault: CredentialVault | None = None,
+                 notifier: Callable[[int], None] | None = None):
         self.sessions = session_factory
+        # Уведомления о завершении прогона (R9): вызывается с id прогона, ошибки
+        # поглощаются — сбой канала не должен менять итог прогона.
+        self.notifier = notifier
         self.audit = audit
         # Ключ шифрования учётных записей; None — учётки недоступны.
         self.vault = vault if vault is not None else load_vault()
@@ -455,6 +459,14 @@ class RunService:
             run = repo.get_scan_run(s, scan_run_id)
             return None if run is None else run.status
 
+    def _notify(self, scan_run_id: int) -> None:
+        if self.notifier is None:
+            return
+        try:
+            self.notifier(scan_run_id)
+        except Exception:  # уведомления вторичны
+            log.exception("scan_run %s: notification failed", scan_run_id)
+
     def execute(self, scan_run_id: int, requested_targets: list[str]) -> str:
         """Исполняет прогон. Возвращает финальный статус. Не бросает исключений."""
         try:
@@ -470,6 +482,7 @@ class RunService:
                         repo.set_scan_run_status(s, scan_run_id, "failed")
             except Exception:  # БД недоступна; след уже в аудите
                 log.exception("scan_run %s: cannot mark as failed", scan_run_id)
+            self._notify(scan_run_id)
             return "failed"
 
     def _execute(self, scan_run_id: int, requested_targets: list[str]) -> str:
@@ -549,4 +562,5 @@ class RunService:
                                    "denied": len(out.denied),
                                    "findings": len(out.findings),
                                    "errors": out.errors or None})
+        self._notify(scan_run_id)
         return final

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   BarChart3,
+  Bell,
   Boxes,
   CalendarClock,
   Database,
@@ -40,6 +41,7 @@ const NAV: NavItem[] = [
   { to: "/hosts", label: "Хосты", icon: <Server size={18} />, perm: "view_report" },
   { to: "/reports", label: "Отчёты", icon: <BarChart3 size={18} />, perm: "view_report" },
   { to: "/feeds", label: "Справочники", icon: <Database size={18} />, perm: "view_engagements", admin: true },
+  { to: "/integrations", label: "Уведомления", icon: <Bell size={18} />, perm: "view_engagements", admin: true },
   { to: "/audit", label: "Журнал аудита", icon: <ListChecks size={18} />, perm: "view_audit", admin: true },
   { to: "/users", label: "Пользователи и роли", icon: <Users size={18} />, perm: "manage_users", admin: true },
 ];

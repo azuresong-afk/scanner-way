@@ -453,3 +453,58 @@ export interface AssetFilters {
   criticality?: Criticality;
   q?: string;
 }
+
+export type ChannelType = "smtp" | "telegram" | "syslog_cef" | "jira";
+export type NotifyEvent = "run_finished" | "new_critical" | "feed_stale";
+
+export interface ChannelFilters {
+  min_severity: Severity | null;
+  min_priority: "critical" | "high" | "medium" | "low" | null;
+  groups: string[];
+  owners: string[];
+  engagements: number[];
+}
+
+/** Канал уведомлений. Секреты API принимает, но никогда не отдаёт (только has_secret). */
+export interface ChannelOut {
+  id: number;
+  name: string;
+  type: ChannelType;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  events: NotifyEvent[];
+  filters: ChannelFilters;
+  has_secret: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChannelIn {
+  name: string;
+  type: ChannelType;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  secrets: Record<string, string>;
+  events: NotifyEvent[];
+  filters: ChannelFilters;
+}
+
+export type ChannelUpdate = Partial<Omit<ChannelIn, "type">>;
+
+export interface DeliveryOut {
+  id: number;
+  channel_id: number;
+  channel_name: string | null;
+  event: NotifyEvent | "test";
+  /** pending | retry | sent | failed */
+  status: string;
+  attempts: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+  engagement_id: number | null;
+  scan_run_id: number | null;
+  external_ref: string | null;
+  summary: string;
+  created_at: string;
+  sent_at: string | null;
+}
