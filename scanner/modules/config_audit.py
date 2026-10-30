@@ -19,6 +19,9 @@ auth_inventory): SSH по паролю или ключу через `scanner.cor
   3. по семейству и версии ОС выбирается datastream SSG и профиль (таблица
      `SSG_CONTENT`); нет контента для семейства (Astra, РЕД ОС, Альт…) или нет
      oscap на цели — только Lynis, причина пишется в находку-сводку;
+  3а. без sudo читаются файлы парольной политики (`POLICY_FILES`: login.defs,
+     pwquality, faillock, PAM) в `ctx.host_policy_configs` — их оценивает
+     следующий модуль password_policy; /etc/shadow не читается;
   4. для каждого бэкенда: `mktemp -d` (0700) от имени учётки -> контент по SFTP
      (stdin занят паролем sudo) -> один `sudo sh -c` со сценарием, который
      удаляет каталог в `trap … EXIT` даже при ошибке; движок ограничен
@@ -81,6 +84,7 @@ from scanner.core.sshexec import (
     connect,
 )
 from scanner.modules.base import ScanContext, ScanModule
+from scanner.modules.password_policy import POLICY_FILES
 
 MODULE = "config_audit"
 OPENSCAP = "openscap"
@@ -191,6 +195,32 @@ echo '@@end'
 """
 PREFLIGHT_COMMAND = "sh -c " + shlex.quote(PREFLIGHT_SCRIPT)
 MKTEMP_COMMAND = "sh -c " + shlex.quote("umask 077; mktemp -d /tmp/scanner-cfg.XXXXXXXX")
+
+# Файлы парольной политики для модуля password_policy: без sudo (они читаемы
+# всем на типовых дистрибутивах), только чтение, не больше POLICY_FILE_LIMIT байт
+# с файла. /etc/shadow и хеши паролей не читаются.
+POLICY_FILE_LIMIT = 64 * 1024
+_POLICY_MARK = "@@scanner-policy-file "
+POLICY_SCRIPT = "LC_ALL=C; export LC_ALL\n" + "".join(
+    f'if [ -r {shlex.quote(p)} ]; then echo {shlex.quote(_POLICY_MARK + p)}; '
+    f'head -c {POLICY_FILE_LIMIT} {shlex.quote(p)}; echo; fi\n'
+    for p in POLICY_FILES) + "echo '@@end'\n"
+POLICY_COMMAND = "sh -c " + shlex.quote(POLICY_SCRIPT)
+
+
+def parse_policy_files(text: str) -> dict[str, str]:
+    """Вывод POLICY_COMMAND -> {путь -> содержимое}; посторонние пути отбрасываются."""
+    files: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in text.splitlines():
+        if line.startswith(_POLICY_MARK):
+            path = line[len(_POLICY_MARK):].strip()
+            current = files.setdefault(path, []) if path in POLICY_FILES else None
+        elif line == "@@end":
+            current = None
+        elif current is not None:
+            current.append(line.rstrip("\r"))
+    return {p: "\n".join(lines).strip("\n") + "\n" for p, lines in files.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -911,7 +941,7 @@ class ConfigAuditModule(ScanModule):
                        evidence=msg[:500])
 
     def _summary(self, host: str, sess: _Session, plan: _Plan, os: HostOsInfo,
-                 findings: list[Finding]) -> Finding:
+                 findings: list[Finding], policy_files: int = 0) -> Finding:
         cred = sess.cred
         lines = [f"ОС: {os.label or family_label(os.family)}"]
         done = [b for b in plan.backends
@@ -926,6 +956,8 @@ class ConfigAuditModule(ScanModule):
                          "/etc/shadow, настройкам аудита и т. п.)")
         n = sum(f.finding_type is FindingType.CONFIG for f in findings)
         lines.append(f"нарушений конфигурации: {n}")
+        lines.append(f"парольная политика: прочитано файлов — {policy_files}"
+                     if policy_files else "парольная политика: файлы не прочитаны")
         label = ", ".join(_BACKEND_LABEL[b] for b in done) or "не выполнен"
         return _info(host, "INFO:config-audit",
                      f"Аудит конфигурации: {os.label or host} — {label}",
@@ -943,6 +975,26 @@ class ConfigAuditModule(ScanModule):
             return HostOsInfo(h.family, None, h.name)
         return pre.os
 
+    def _collect_policy(self, ctx: ScanContext, host: str, sess: _Session) -> int:
+        """Файлы парольной политики хоста -> ctx.host_policy_configs (для модуля
+        password_policy). Ошибка не мешает аудиту конфигурации. Возвращает число
+        прочитанных файлов."""
+        try:
+            res = sess.shell.run(POLICY_COMMAND, 120.0)
+        except SshError as e:
+            self._audit(ctx, "config_audit_policy", host, "error",
+                        {"error": _scrub(str(e), sess.cred)[:300]})
+            return 0
+        configs = parse_policy_files(res.stdout.decode("utf-8", "replace"))
+        if not configs:
+            self._audit(ctx, "config_audit_policy", host, "no_policy_files",
+                        {"rc": res.returncode})
+            return 0
+        with self._lock:
+            ctx.host_policy_configs[host] = configs
+        self._audit(ctx, "config_audit_policy", host, "ok", {"files": sorted(configs)})
+        return len(configs)
+
     def _audit_host(self, ctx: ScanContext, throttle: _Throttle, host: str,
                     creds: list[HostCredential]) -> list[Finding]:
         sess, notes = self._open(ctx, throttle, host, creds)
@@ -951,10 +1003,11 @@ class ConfigAuditModule(ScanModule):
         try:
             os = self._host_os(ctx, host, sess.pre)
             plan = self.plan(os, sess.pre.tools)
+            policy_files = self._collect_policy(ctx, host, sess)
             findings: list[Finding] = []
             for backend in plan.backends:
                 findings += self._run_backend(ctx, host, sess, plan, backend)
-            return [self._summary(host, sess, plan, os, findings), *findings]
+            return [self._summary(host, sess, plan, os, findings, policy_files), *findings]
         finally:
             sess.shell.close()
 

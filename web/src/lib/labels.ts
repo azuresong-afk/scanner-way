@@ -70,7 +70,11 @@ export const MODULES: ModuleInfo[] = [
   },
 ];
 
-export const MODULE_LABEL: Record<string, string> = Object.fromEntries(MODULES.map((m) => [m.id, m.label]));
+export const MODULE_LABEL: Record<string, string> = {
+  ...Object.fromEntries(MODULES.map((m) => [m.id, m.label])),
+  // Ставится автоматически вместе с аудитом конфигураций (COMPANION_MODULES на бэкенде).
+  password_policy: "Парольная политика",
+};
 
 /** Модули поиска уязвимостей — выбираются движком, а не флажками. */
 export const ENGINE_MODULES = ["vuln", "auth_inventory"];
@@ -106,6 +110,7 @@ export const MODULE_SHORT: Record<string, string> = {
   vuln: "Уязвимости (Nuclei)",
   auth_inventory: "Уязвимости (учётка)",
   config_audit: "Конфигурации",
+  password_policy: "Парольная политика",
   cred_audit: "Учётные данные",
 };
 

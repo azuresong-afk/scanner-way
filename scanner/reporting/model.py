@@ -73,6 +73,7 @@ MODULE_LABELS: dict[str, str] = {
     "vuln": "Уязвимости ПО",
     "auth_inventory": "Уязвимости ПО по учётной записи",
     "config_audit": "Аудит конфигураций",
+    "password_policy": "Парольная политика",
     "cred_audit": "Аудит учётных записей",
 }
 

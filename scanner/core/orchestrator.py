@@ -51,6 +51,10 @@ VULN_ENGINES: dict[str, tuple[str, ...]] = {
 }
 # Модули, которые входят на хосты по учётным записям договора (ctx.credentials).
 CREDENTIAL_MODULES = frozenset({"auth_inventory", "config_audit"})
+# Модули-спутники: ставятся в прогон вместе с основным. password_policy оценивает
+# парольную политику, которую собирает config_audit (ctx.host_policy_configs);
+# сам по себе в сеть не ходит и без config_audit инертен.
+COMPANION_MODULES: dict[str, tuple[str, ...]] = {"config_audit": ("password_policy",)}
 
 # Защита от опечатки вида 10.0.0.0/8 в запросе: столько адресов за прогон
 # с запасом покрывает «десятки–сотни хостов».
@@ -105,6 +109,16 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
     return {"discovery": discovery, "vuln": vuln, "auth_inventory": auth_inventory,
             "config_audit": config_audit, "password_policy": password_policy,
             "cred_audit": cred_audit}
+
+
+def with_companions(names: Iterable[str], known: Iterable[str] | None = None) -> list[str]:
+    """Модули прогона плюс их спутники (COMPANION_MODULES); known — реестр,
+    спутник вне его не добавляется."""
+    names = list(names)
+    allowed = None if known is None else set(known)
+    extra = [c for m in names for c in COMPANION_MODULES.get(m, ())
+             if c not in names and (allowed is None or c in allowed)]
+    return list(dict.fromkeys([*names, *extra]))
 
 
 def order_modules(names: Iterable[str]) -> list[str]:
@@ -375,12 +389,13 @@ class RunService:
             raise ValueError(f"unknown modules: {', '.join(unknown)}")
         if rate_profile not in PROFILES:
             raise ValueError(f"unknown rate profile: {rate_profile}")
-        names = order_modules(modules)
+        names = order_modules(with_companions(modules, self.registry))
         cred_ids = list(dict.fromkeys(credential_ids or []))
         set_ids = list(dict.fromkeys(cred_set_ids or []))
         self.check_credentials(engagement_id, names, cred_ids)
         self.check_cred_sets(engagement_id, set_ids)
-        title = clean_name(name) or run_title(names, requested_targets)
+        # имя — по выбору оператора, без автоматически добавленных спутников
+        title = clean_name(name) or run_title(order_modules(modules), requested_targets)
         with session_scope(self.sessions) as s:
             run_id = repo.create_scan_run(s, engagement_id=engagement_id, modules=names,
                                           rate_profile=rate_profile,
