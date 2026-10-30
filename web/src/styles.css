@@ -507,3 +507,14 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 /* Ложное срабатывание: строка приглушена, но остаётся кликабельной */
 .table tr.is-fp td { color: var(--text-3); }
 .table tr.is-fp td .sev, .table tr.is-fp td .tag { opacity: 0.6; }
+
+/* Уязвимости хоста по ПО: строка-группа раскрывает вложенную таблицу находок. */
+.sw-toggle {
+  all: unset; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+  width: 21px; height: 21px; border-radius: var(--radius-sm); color: var(--text-2); cursor: pointer;
+}
+.sw-toggle:hover { color: var(--text); background: var(--accent-soft); }
+.sw-toggle:focus-visible { outline: 2px solid var(--accent); }
+.sw-table tr.sw-detail > td { padding: 0 0 var(--s2) var(--s4); background: var(--surface-2); }
+.sw-table tr.sw-detail:hover > td { background: var(--surface-2); }
+.sw-table tr.sw-detail .table-wrap { border-left: 2px solid var(--accent-soft); }

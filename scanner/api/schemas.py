@@ -278,6 +278,11 @@ class FindingOut(BaseModel):
     status: str | None
     detected_at: datetime
     false_positive: FalsePositiveMarkOut | None = None
+    # ПО, к которому относится находка (сервис на порту или пакет хоста);
+    # None — не определено (аудит конфигурации, паролей, порт без баннера)
+    software: str | None = None
+    software_version: str | None = None
+    software_source: str | None = None      # service | package
 
 
 class ServiceOut(BaseModel):

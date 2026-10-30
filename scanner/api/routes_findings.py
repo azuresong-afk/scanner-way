@@ -22,21 +22,31 @@ from scanner.api.schemas import (
 )
 from scanner.core import repository as repo
 from scanner.core.db import FindingRow
-from scanner.core.models import FalsePositiveMark
+from scanner.core.models import FalsePositiveMark, ServiceInfo
+from scanner.core.software import software_of
 
 router = APIRouter(tags=["findings"])
 
 TriageUser = Annotated[Principal, Depends(require(Perm.TRIAGE_FINDINGS))]
 
 
-def finding_out(row: FindingRow, marks: dict[str, FalsePositiveMark]) -> FindingOut:
+def services_by_port(session: Session, scan_run_id: int) -> dict[tuple[str, int], ServiceInfo]:
+    """Сервисы прогона по (хост, порт) — чтобы назвать ПО находки."""
+    return {(s.host, s.port): s for s in repo.get_services(session, scan_run_id)}
+
+
+def finding_out(row: FindingRow, marks: dict[str, FalsePositiveMark],
+                services: dict[tuple[str, int], ServiceInfo] | None = None) -> FindingOut:
     f = repo.row_to_finding(row)
     mark = marks.get(row.dedup_key)
+    sw = software_of(f, services)
     return FindingOut(
         id=row.id, dedup_key=row.dedup_key, module=f.module, host=f.host, port=f.port,
         finding_type=str(f.finding_type), title=f.title, severity=str(f.severity),
         vuln_id=f.vuln_id, cve_ids=f.cve_ids, bdu_ids=f.bdu_ids, cvss=f.cvss,
         evidence=f.evidence, status=row.status, detected_at=f.detected_at,
+        software=sw.name if sw else None, software_version=sw.version if sw else None,
+        software_source=sw.source if sw else None,
         false_positive=None if mark is None else FalsePositiveMarkOut(
             reason=mark.reason, marked_by=mark.marked_by, marked_at=mark.marked_at))
 
@@ -63,7 +73,8 @@ def mark_false_positive(finding_id: int, body: FalsePositiveIn, user: TriageUser
     audit.record(subject=user.subject, action="false_positive_mark",
                  target=f"engagement:{row.engagement_id}", result="ok",
                  details=_details(row, reason=body.reason))
-    return finding_out(row, repo.false_positive_marks(session, row.engagement_id))
+    return finding_out(row, repo.false_positive_marks(session, row.engagement_id),
+                       services_by_port(session, row.scan_run_id))
 
 
 @router.delete("/findings/{finding_id}/false-positive", response_model=FindingOut)
@@ -79,7 +90,8 @@ def unmark_false_positive(finding_id: int, user: TriageUser, session: SessionDep
     audit.record(subject=user.subject, action="false_positive_unmark",
                  target=f"engagement:{row.engagement_id}", result="ok",
                  details=_details(row, previous_reason=reason))
-    return finding_out(row, repo.false_positive_marks(session, row.engagement_id))
+    return finding_out(row, repo.false_positive_marks(session, row.engagement_id),
+                       services_by_port(session, row.scan_run_id))
 
 
 @router.get("/engagements/{engagement_id}/false-positives",

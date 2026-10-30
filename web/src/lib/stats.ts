@@ -1,7 +1,7 @@
 // Агрегаты для дашборда, таблиц и раздела по хостам (считаются на клиенте).
 
 import type { FindingOut, FindingStatus, InventoryHostOut, ServiceOut, Severity } from "../api/types";
-import { OS_FAMILY_LABEL, OS_FAMILY_ORDER, SEVERITIES } from "./labels";
+import { MODULE_LABEL, OS_FAMILY_LABEL, OS_FAMILY_ORDER, SEVERITIES } from "./labels";
 
 export const SEVERITY_RANK: Record<Severity, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 
@@ -199,6 +199,88 @@ export function inventoryRows(inventory: InventoryHostOut[], findings: FindingOu
         osAccuracy: h.os_accuracy ?? null,
       };
     });
+}
+
+export interface SoftwareRow {
+  key: string;
+  /** Название ПО; для находок без ПО — название модуля или «Сервис на порту N». */
+  name: string;
+  version: string | null;
+  /** ПО определено (сервис/пакет); false — группа по модулю/порту. */
+  known: boolean;
+  /** Где найдено: порты сервиса и/или «пакет». */
+  ports: string[];
+  fromPackage: boolean;
+  counts: SeverityCounts;
+  total: number;
+  maxSeverity: Severity;
+  maxCvss: number | null;
+  findings: FindingOut[];
+}
+
+/**
+ * Уязвимости хоста по ПО (продукт + версия). Одно и то же ПО, найденное и по
+ * баннеру на порту, и по пакету, — одна строка. Находки без ПО (аудит
+ * конфигурации, пароли, порт без баннера) группируются по модулю/порту.
+ * Ложные срабатывания показываются в группе, но не считаются.
+ */
+export function bySoftware(findings: FindingOut[], services: ServiceOut[] = []): SoftwareRow[] {
+  const map = new Map<string, SoftwareRow>();
+  for (const f of findings) {
+    let name = f.software ?? null;
+    let version = f.software_version ?? null;
+    if (!name && f.port != null) {
+      // старый API без поля software — берём сервис на порту
+      const svc = services.find((s) => s.host === f.host && s.port === f.port);
+      name = svc?.product ?? svc?.service ?? null;
+      version = svc?.product ? (svc.version ?? null) : null;
+    }
+    const known = !!name;
+    const key = known
+      ? `sw:${name!.toLowerCase()}|${version ?? ""}`
+      : f.port != null
+        ? `port:${f.port}`
+        : `module:${f.module}`;
+    let row = map.get(key);
+    if (!row) {
+      row = {
+        key,
+        name: name ?? (f.port != null ? `Сервис на порту ${f.port}` : (MODULE_LABEL[f.module] ?? f.module)),
+        version,
+        known,
+        ports: [],
+        fromPackage: false,
+        counts: emptyCounts(),
+        total: 0,
+        maxSeverity: "info",
+        maxCvss: null,
+        findings: [],
+      };
+      map.set(key, row);
+    }
+    row.findings.push(f);
+    if (f.port != null) {
+      const svc = services.find((s) => s.host === f.host && s.port === f.port);
+      const p = `${f.port}/${svc?.protocol ?? "tcp"}`;
+      if (!row.ports.includes(p)) row.ports.push(p);
+    } else if (f.software_source === "package") row.fromPackage = true;
+    if (isFalsePositive(f)) continue;
+    row.counts[f.severity] += 1;
+    if (f.severity !== "info") row.total += 1;
+    if (SEVERITY_RANK[f.severity] > SEVERITY_RANK[row.maxSeverity]) row.maxSeverity = f.severity;
+    if (f.cvss != null && (row.maxCvss == null || f.cvss > row.maxCvss)) row.maxCvss = f.cvss;
+  }
+  for (const row of map.values()) {
+    row.findings.sort(compareFindings);
+    row.ports.sort((a, b) => parseInt(a) - parseInt(b));
+  }
+  return [...map.values()].sort(
+    (a, b) =>
+      compareRisk(a.counts, b.counts) ||
+      b.total - a.total ||
+      Number(b.known) - Number(a.known) ||
+      a.name.localeCompare(b.name, "ru"),
+  );
 }
 
 export function compareFindings(a: FindingOut, b: FindingOut): number {
