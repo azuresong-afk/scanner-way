@@ -19,7 +19,11 @@ from scanner.core.credentials import (
     AUTH_KEY,
     AUTH_KINDS,
     AUTH_PASSWORD,
+    BECOME_NONE,
     BECOME_SUDO,
+    DEFAULT_PORTS,
+    PROTOCOL_SSH,
+    PROTOCOL_WINRM,
     CredentialError,
     CredentialVault,
     HostCredential,
@@ -27,6 +31,7 @@ from scanner.core.credentials import (
     normalize_scope,
     validate_become,
     validate_cred_set_entries,
+    validate_protocol,
     validate_username,
 )
 from scanner.core.db import (
@@ -136,20 +141,30 @@ def load_allowlist_gate(session: Session, engagement_id: int) -> AllowlistGate:
 # ========== Учётные записи активов ==========
 def create_host_credential(session: Session, vault: CredentialVault, *,
                            engagement_id: int, name: str, auth: str, username: str,
-                           port: int = 22, targets: Iterable[str] = (),
+                           port: int | None = None, targets: Iterable[str] = (),
                            password: str | None = None, private_key: str | None = None,
                            passphrase: str | None = None,
                            created_by: int | None = None,
-                           become: str = BECOME_SUDO) -> int:
+                           become: str = BECOME_SUDO,
+                           protocol: str = PROTOCOL_SSH) -> int:
     """Завести учётку договора. Секреты шифруются, в БД открытым текстом не попадают.
 
     Область действия (targets) обязана входить в allowlist договора: учётка не
     должна «расширять» объём работ. CredentialError — недопустимые данные.
+    port=None — стандартный порт протокола (SSH 22, WinRM HTTPS 5986).
+    Учётка WinRM — только по паролю (NTLM), повышения прав у неё нет.
     """
+    protocol = validate_protocol(protocol)
     if auth not in AUTH_KINDS:
         raise CredentialError(f"неизвестный способ аутентификации: {auth}")
+    if port is None:
+        port = DEFAULT_PORTS[protocol]
     if not 0 < port < 65536:
-        raise CredentialError(f"недопустимый порт SSH: {port}")
+        raise CredentialError(f"недопустимый порт: {port}")
+    if protocol == PROTOCOL_WINRM:
+        if auth != AUTH_PASSWORD:
+            raise CredentialError("учётка WinRM входит только по паролю (NTLM)")
+        become = BECOME_NONE
     username = validate_username(username)
     become = validate_become(become)
     scope = normalize_scope(targets)
@@ -172,7 +187,7 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
                             username=username, port=port, targets=scope,
                             secret_enc=vault.encrypt(secrets),
                             key_fingerprint=fingerprint, created_by=created_by,
-                            become=become)
+                            become=become, protocol=protocol)
     session.add(row)
     session.flush()
     return row.id
@@ -205,7 +220,7 @@ def load_host_credentials(session: Session, vault: CredentialVault, engagement_i
             password=sec.get("password") if r.auth == AUTH_PASSWORD else None,
             private_key=sec.get("private_key") if r.auth == AUTH_KEY else None,
             passphrase=sec.get("passphrase") if r.auth == AUTH_KEY else None,
-            become=r.become or BECOME_SUDO))
+            become=r.become or BECOME_SUDO, protocol=r.protocol or PROTOCOL_SSH))
     return out
 
 

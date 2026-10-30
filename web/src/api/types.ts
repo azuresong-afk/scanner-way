@@ -163,6 +163,9 @@ export type CredentialAuth = "password" | "key";
 /** Повышение прав для аудита конфигураций: sudo (пароль учётки / NOPASSWD) или без него. */
 export type CredentialBecome = "sudo" | "none";
 
+/** Способ входа: SSH (Linux) или WinRM (Windows, только пароль). */
+export type CredentialProtocol = "ssh" | "winrm";
+
 /** Учётка актива на вход. Секреты API принимает, но никогда не отдаёт. */
 export interface CredentialIn {
   name: string;
@@ -174,6 +177,9 @@ export interface CredentialIn {
   passphrase?: string;
   targets?: string[];
   become?: CredentialBecome;
+  protocol?: CredentialProtocol;
+  /** Домен Windows для WinRM: логин сохраняется как ДОМЕН\user. */
+  domain?: string;
 }
 
 export interface CredentialOut {
@@ -189,6 +195,7 @@ export interface CredentialOut {
   created_by: number | null;
   created_at: string | null;
   become: CredentialBecome;
+  protocol: CredentialProtocol;
 }
 
 export interface PackageOut {

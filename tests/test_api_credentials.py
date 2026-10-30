@@ -48,6 +48,20 @@ class FakeInventory(ScanModule):
         return out
 
 
+class FakeWinInventory(ScanModule):
+    """Инертный win_inventory для тестов движка: без WinRM-учёток находок нет."""
+    name = "win_inventory"
+
+    def __init__(self, rec: Recorder):
+        self.rec = rec
+
+    def run(self, ctx: ScanContext) -> list[Finding]:
+        winrm = [c for c in ctx.credentials if getattr(c, "protocol", "ssh") == "winrm"]
+        if winrm:
+            self.rec.seen[self.name] = list(ctx.targets)
+        return []
+
+
 @pytest.fixture
 def rec():
     return Recorder()
@@ -57,7 +71,8 @@ def rec():
 def api(sqlite_factory, rec):
     registry = {"discovery": lambda: FakeDiscovery(rec),
                 "vuln": lambda: FakeVuln(rec, ["CVE-2016-6210"]),
-                "auth_inventory": lambda: FakeInventory(rec)}
+                "auth_inventory": lambda: FakeInventory(rec),
+                "win_inventory": lambda: FakeWinInventory(rec)}
     settings = ApiSettings(secret=SECRET, bootstrap_admin="root",
                            bootstrap_password=PASSWORD)
     app = create_app(session_factory=sqlite_factory, settings=settings, registry=registry,
@@ -112,6 +127,23 @@ def test_create_list_delete_never_exposes_secrets(api, sqlite_factory):
     assert all(HOST_PASSWORD not in r.secret_enc for r in rows)
 
 
+def test_create_winrm_credential(api):
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    r = _cred(api, eid, holder, name="Windows ДМЗ", username="svc", protocol="winrm",
+              domain="CORP", targets=["10.0.0.10"])
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["protocol"] == "winrm" and body["port"] == 5986   # порт по умолчанию
+    assert body["username"] == "CORP\\svc"                        # домен в логине
+    assert body["become"] == "none"                               # у WinRM нет sudo
+    assert HOST_PASSWORD not in r.text
+    # WinRM входит только по паролю (NTLM)
+    bad = _cred(api, eid, holder, name="win-key", username="svc", protocol="winrm",
+                auth="key", private_key=make_key(), password=None)
+    assert bad.status_code == 422
+
+
 def test_create_validates_scope_and_key(api):
     eid = api.engagement("10.0.0.0/24")
     holder = api.user("keeper", "operator", "host_credentials")
@@ -149,7 +181,9 @@ def test_run_with_credentialed_engine(api, rec):
     r = api.c.post(f"/engagements/{eid}/runs", headers=holder, json=body)
     assert r.status_code == 202, r.text
     run = r.json()
-    assert run["modules"] == ["discovery", "auth_inventory"]     # vuln заменён движком
+    # vuln заменён движком «По учётной записи» — Linux (auth_inventory) и Windows
+    # (win_inventory); win_inventory инертен без WinRM-учётки.
+    assert run["modules"] == ["discovery", "auth_inventory", "win_inventory"]
     assert run["credential_ids"] == [cid] and run["status"] == "done"
     assert "vuln" not in rec.seen
     assert [c.password for c in rec.creds] == [HOST_PASSWORD]    # расшифровано для модуля
@@ -172,7 +206,7 @@ def test_run_engine_both_and_nuclei(api, rec):
     r = api.c.post(f"/engagements/{eid}/runs", headers=holder,
                    json={"targets": ["10.0.0.5"], "modules": ["discovery"],
                          "vuln_engine": "both", "credential_ids": [cid]})
-    assert r.json()["modules"] == ["discovery", "vuln", "auth_inventory"]
+    assert r.json()["modules"] == ["discovery", "vuln", "auth_inventory", "win_inventory"]
     op = api.user("op", "operator")
     r = api.c.post(f"/engagements/{eid}/runs", headers=op,
                    json={"targets": ["10.0.0.5"], "modules": ["discovery", "auth_inventory"],

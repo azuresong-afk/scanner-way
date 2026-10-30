@@ -5,6 +5,10 @@
 аудита конфигураций (`config_audit`). Для аудита конфигураций нужны права root:
 поле `become` (`sudo` | `none`) говорит, повышать ли права через sudo.
 
+Поле `protocol` (`ssh` | `winrm`) — способ входа. Учётки WinRM (Windows, только
+пароль, логин `ДОМЕН\\user` или `user@домен`) использует модуль `win_inventory`;
+SSH-модули их не видят: `credentials_for_host` по умолчанию отдаёт только SSH.
+
 Безопасность:
 - секреты (пароль, закрытый ключ, парольная фраза) хранятся в БД только
   зашифрованными (`CredentialVault`, Fernet: AES-128-CBC + HMAC-SHA256). Ключ
@@ -40,6 +44,12 @@ AUTH_KINDS = (AUTH_PASSWORD, AUTH_KEY)
 BECOME_SUDO = "sudo"
 BECOME_NONE = "none"
 BECOME_KINDS = (BECOME_SUDO, BECOME_NONE)
+
+# Способ входа на хост: SSH (Linux/Unix) или WinRM (Windows, HTTPS + NTLM).
+PROTOCOL_SSH = "ssh"
+PROTOCOL_WINRM = "winrm"
+PROTOCOLS = (PROTOCOL_SSH, PROTOCOL_WINRM)
+DEFAULT_PORTS = {PROTOCOL_SSH: 22, PROTOCOL_WINRM: 5986}
 
 # Сколько учёток пробовать на одном хосте: учётки задаёт оператор, но
 # серия неудачных входов может заблокировать учётную запись на цели.
@@ -224,6 +234,7 @@ class HostCredential:
     private_key: str | None = field(default=None, repr=False)
     passphrase: str | None = field(default=None, repr=False)
     become: str = BECOME_SUDO                   # sudo | none
+    protocol: str = PROTOCOL_SSH                # ssh | winrm
 
     def scope_prefix(self, host: str) -> int | None:
         """Длина префикса самой узкой подсети области, куда входит хост.
@@ -244,7 +255,7 @@ class HostCredential:
         """Описание для аудита и находок — без секретов."""
         return {"credential_id": self.id, "credential": self.name,
                 "user": self.username, "port": self.port, "auth": self.auth,
-                "become": self.become}
+                "become": self.become, "protocol": self.protocol}
 
 
 def validate_become(become: str) -> str:
@@ -254,10 +265,22 @@ def validate_become(become: str) -> str:
     return become
 
 
+def validate_protocol(protocol: str) -> str:
+    if protocol not in PROTOCOLS:
+        raise CredentialError(f"недопустимый протокол входа: {protocol!r} "
+                              f"(допустимо: {', '.join(PROTOCOLS)})")
+    return protocol
+
+
 def credentials_for_host(host: str, creds: Sequence[HostCredential],
-                         limit: int = MAX_CREDENTIALS_PER_HOST) -> list[HostCredential]:
-    """Учётки, применимые к хосту: сначала с самой узкой областью действия."""
+                         limit: int = MAX_CREDENTIALS_PER_HOST, *,
+                         protocol: str = PROTOCOL_SSH) -> list[HostCredential]:
+    """Учётки, применимые к хосту: сначала с самой узкой областью действия.
+
+    Только учётки нужного протокола: по умолчанию SSH — модули, входящие по
+    SSH, никогда не получат учётку WinRM (и наоборот, если просить winrm).
+    """
     ranked = [(p, i, c) for i, c in enumerate(creds)
-              if (p := c.scope_prefix(host)) is not None]
+              if c.protocol == protocol and (p := c.scope_prefix(host)) is not None]
     ranked.sort(key=lambda x: (-x[0], x[1]))
     return [c for _, _, c in ranked[:limit]]

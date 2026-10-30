@@ -12,6 +12,9 @@
                 --confirm-authorized --allow-credentials
     scanner run --engagement 1 --targets 10.0.0.0/24 --modules discovery config_audit \
                 --credential 1 --confirm-authorized --allow-credentials
+    scanner credentials add --engagement 1 --name "Windows ДМЗ" --protocol winrm \
+                --user 'CORP\audit' --ask-password [--targets 10.0.2.0/24]
+    scanner feeds sync-msrc [--file 2024-Jan.json ...]
 
 БД — `--db-url` / `SCANNER_DATABASE_URL`, иначе Postgres из настроек окружения.
 Перед каждой командой схема поднимается миграциями Alembic (`alembic upgrade
@@ -104,6 +107,16 @@ def build_parser() -> argparse.ArgumentParser:
     nvd.add_argument("--batch-size", type=int, default=1000)
     nvd.set_defaults(handler=cmd_sync_nvd)
 
+    msrc = fsub.add_parser("sync-msrc", help="загрузить бюллетени обновлений Microsoft "
+                                             "(MSRC CVRF: KB, CVE, замещение)")
+    msrc.add_argument("--file", dest="files", action="append", type=Path, default=[],
+                      help="документ CVRF JSON или каталог с *.json; можно несколько "
+                           "раз. Без --file — загрузка через API MSRC")
+    msrc.add_argument("--since", default=None,
+                      help="с какого бюллетеня грузить через API, напр. 2023-Jan "
+                           "(по умолчанию SCANNER_MSRC_SINCE)")
+    msrc.set_defaults(handler=cmd_sync_msrc)
+
     adv = fsub.add_parser("sync-advisories",
                           help="загрузить бюллетени дистрибутивов (учёт бэкпортов)")
     adv.add_argument("--release", dest="releases", action="append", default=[],
@@ -152,11 +165,16 @@ def build_parser() -> argparse.ArgumentParser:
     # --- credentials ---
     cred = sub.add_parser("credentials", help="учётные записи активов договора")
     csub = cred.add_subparsers(dest="credentials_command", required=True, metavar="action")
-    cadd = csub.add_parser("add", help="завести учётку (SSH: пароль или ключ)")
+    cadd = csub.add_parser("add", help="завести учётку (SSH: пароль или ключ; "
+                                       "WinRM: пароль)")
     cadd.add_argument("--engagement", required=True, type=int, help="id договора")
     cadd.add_argument("--name", required=True, help="название учётки")
     cadd.add_argument("--user", required=True, dest="username", help="логин на активе")
-    cadd.add_argument("--port", type=int, default=22, help="порт SSH (по умолчанию 22)")
+    cadd.add_argument("--protocol", choices=("ssh", "winrm"), default="ssh",
+                      help="способ входа: ssh (Linux/Unix) или winrm (Windows, "
+                           "HTTPS + NTLM, логин ДОМЕН\\user); по умолчанию ssh")
+    cadd.add_argument("--port", type=int, default=None,
+                      help="порт (по умолчанию SSH 22, WinRM HTTPS 5986)")
     auth = cadd.add_mutually_exclusive_group(required=True)
     auth.add_argument("--key-file", type=Path, help="закрытый ключ SSH (OpenSSH/PEM)")
     auth.add_argument("--password-env", metavar="VAR",
@@ -323,6 +341,33 @@ def cmd_sync_nvd(args: argparse.Namespace, env: _Env) -> int:
     return 0
 
 
+def cmd_sync_msrc(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.feeds.msrc import MsrcFeed, MsrcStore, msrc_settings
+
+    missing = [str(f) for f in args.files if not f.exists()]
+    if missing:
+        raise CliError(f"файл не найден: {', '.join(missing)}")
+    cfg = msrc_settings()
+    store = MsrcStore(env.engine)
+    if env.engine.dialect.name == "sqlite":
+        store.create_schema()
+    feed = MsrcFeed(cfg.api_url)
+    if args.files:
+        docs, details = feed.iter_files(args.files), {"files": [f.name for f in args.files]}
+    else:
+        since = args.since or cfg.since
+        docs, details = feed.iter_api(since=since), {"source": "api", "since": since}
+    try:
+        n_docs, n_fixes = feed.sync(store, docs)
+    except Exception as e:
+        env.audit.record(subject=env.actor, action="feed_sync", target="msrc",
+                         result="error",
+                         details={**details, "error": f"{type(e).__name__}: {e}"[:500]})
+        raise
+    env.audit.record(subject=env.actor, action="feed_sync", target="msrc", result="ok",
+                     details={**details, "releases": n_docs, "records": n_fixes})
+    print(f"MSRC: бюллетеней — {n_docs}, исправлений для Windows — {n_fixes}")
+    return 0
 def cmd_sync_advisories(args: argparse.Namespace, env: _Env) -> int:
     from scanner.core.config import settings
     from scanner.feeds.advisories import FAMILIES
@@ -565,19 +610,20 @@ def cmd_credentials_add(args: argparse.Namespace, env: _Env) -> int:
                 s, vault, engagement_id=args.engagement, name=args.name, auth=auth,
                 username=args.username, port=args.port, targets=args.targets,
                 password=password, private_key=private_key, passphrase=passphrase,
-                become=args.become)
+                become=args.become, protocol=args.protocol)
             row = repo.list_host_credentials(s, args.engagement)[-1]
             fingerprint, targets = row.key_fingerprint, list(row.targets or [])
+            port, become = row.port, row.become
     except CredentialError as e:
         raise CliError(str(e)) from e
     env.audit.record(subject=env.actor, action="credential_create",
                      target=f"engagement:{args.engagement}", result="ok",
                      details={"credential_id": cid, "name": args.name,
-                              "user": args.username, "port": args.port, "auth": auth,
-                              "become": args.become,
+                              "user": args.username, "port": port, "auth": auth,
+                              "become": become, "protocol": args.protocol,
                               "targets": targets, "key_fingerprint": fingerprint})
-    print(f"Учётная запись {cid} заведена: {args.username}, порт {args.port}, {auth}, "
-          f"повышение прав: {args.become}"
+    print(f"Учётная запись {cid} заведена: {args.protocol} {args.username}, порт {port}, "
+          f"{auth}, повышение прав: {become}"
           + (f", {fingerprint}" if fingerprint else ""))
     return 0
 
@@ -591,7 +637,7 @@ def cmd_credentials_list(args: argparse.Namespace, env: _Env) -> int:
         rows = repo.list_host_credentials(s, args.engagement)
         for r in rows:
             scope = ", ".join(str(t) for t in r.targets or []) or "все цели прогона"
-            print(f"{r.id}\t{r.name}\t{r.username}:{r.port}\t{r.auth}\t"
+            print(f"{r.id}\t{r.name}\t{r.protocol}\t{r.username}:{r.port}\t{r.auth}\t"
                   f"become={r.become}\t{scope}"
                   + (f"\t{r.key_fingerprint}" if r.key_fingerprint else ""))
     if not rows:

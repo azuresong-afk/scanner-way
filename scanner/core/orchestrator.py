@@ -39,18 +39,21 @@ from scanner.reporting.diff import diff_runs
 
 # Порядок исполнения: discovery первым — его сервисы (ctx.services) нужны
 # остальным модулям.
-MODULE_ORDER: tuple[str, ...] = ("discovery", "vuln", "auth_inventory", "config_audit",
-                                 "password_policy", "cred_audit")
+MODULE_ORDER: tuple[str, ...] = ("discovery", "vuln", "auth_inventory", "win_inventory",
+                                 "config_audit", "password_policy", "cred_audit")
 
 # Движки поиска уязвимостей (выбор оператора): сетевые проверки Nuclei без
-# учётной записи и/или инвентаризация пакетов по учётной записи.
+# учётной записи и/или инвентаризация по учётной записи — пакеты Linux
+# (auth_inventory) и обновления/ПО Windows по WinRM (win_inventory). Каждый
+# модуль инертен там, где у него нет подходящей учётки, поэтому в смешанной
+# сети «По учётной записи» покрывает и Linux, и Windows.
 VULN_ENGINES: dict[str, tuple[str, ...]] = {
     "nuclei": ("vuln",),
-    "credentialed": ("auth_inventory",),
-    "both": ("vuln", "auth_inventory"),
+    "credentialed": ("auth_inventory", "win_inventory"),
+    "both": ("vuln", "auth_inventory", "win_inventory"),
 }
 # Модули, которые входят на хосты по учётным записям договора (ctx.credentials).
-CREDENTIAL_MODULES = frozenset({"auth_inventory", "config_audit"})
+CREDENTIAL_MODULES = frozenset({"auth_inventory", "win_inventory", "config_audit"})
 # Модули-спутники: ставятся в прогон вместе с основным. password_policy оценивает
 # парольную политику, которую собирает config_audit (ctx.host_policy_configs);
 # сам по себе в сеть не ходит и без config_audit инертен.
@@ -91,6 +94,15 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
         return AuthInventoryModule(AuthInventoryOptions(ssh=options_from_env()),
                                    matcher=matcher, advisories=_advisory_store(matcher))
 
+    def win_inventory() -> ScanModule:
+        from scanner.core.winexec import options_from_env
+        from scanner.modules.win_inventory import (
+            WinInventoryModule,
+            WinInventoryOptions,
+        )
+        return WinInventoryModule(WinInventoryOptions(winrm=options_from_env()),
+                                  matcher=matcher)
+
     def config_audit() -> ScanModule:
         from scanner.modules.config_audit import ConfigAuditModule, options_from_env
         return ConfigAuditModule(options_from_env())
@@ -107,8 +119,8 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
         return CredentialAuditModule(authenticator=build_default_authenticator())
 
     return {"discovery": discovery, "vuln": vuln, "auth_inventory": auth_inventory,
-            "config_audit": config_audit, "password_policy": password_policy,
-            "cred_audit": cred_audit}
+            "win_inventory": win_inventory, "config_audit": config_audit,
+            "password_policy": password_policy, "cred_audit": cred_audit}
 
 
 def _advisory_store(matcher: object | None):

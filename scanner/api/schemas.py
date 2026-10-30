@@ -98,11 +98,12 @@ class AllowlistOut(_Orm):
 
 # ---- учётные записи активов ----
 class CredentialIn(BaseModel):
-    """Учётка для инвентаризации и аудита конфигураций по SSH. Секреты только на вход — API их не отдаёт."""
+    """Учётка для инвентаризации и аудита конфигураций по SSH или WinRM. Секреты только на вход — API их не отдаёт."""
     name: str = Field(min_length=1, max_length=128)
     username: str = Field(min_length=1, max_length=128)
     auth: str = Field(pattern="^(password|key)$")
-    port: int = Field(default=22, ge=1, le=65535)
+    # Пусто — стандартный порт протокола: SSH 22, WinRM HTTPS 5986.
+    port: int | None = Field(default=None, ge=1, le=65535)
     password: str | None = Field(default=None, min_length=1, max_length=1024)
     private_key: str | None = Field(default=None, min_length=1, max_length=16384)
     passphrase: str | None = Field(default=None, max_length=1024)
@@ -110,10 +111,22 @@ class CredentialIn(BaseModel):
     targets: list[str] = Field(default_factory=list, max_length=256)
     # Повышение прав для аудита конфигураций: sudo (пароль учётки / NOPASSWD) | none
     become: str = Field(default="sudo", pattern="^(sudo|none)$")
+    # Способ входа: ssh | winrm (Windows, только пароль). domain — домен Windows:
+    # логин сохраняется как ДОМЕН\\user.
+    protocol: str = Field(default="ssh", pattern="^(ssh|winrm)$")
+    domain: str | None = Field(default=None, max_length=64,
+                               pattern=r"^[A-Za-z0-9][A-Za-z0-9.\-]*$")
+
+    def login(self) -> str:
+        """Логин для хранения: с доменом Windows, если он задан отдельно."""
+        if self.protocol == "winrm" and self.domain:
+            return f"{self.domain}\\{self.username.strip()}"
+        return self.username
 
     def __repr__(self) -> str:      # секреты не должны попасть в логи
         return (f"CredentialIn(name={self.name!r}, username={self.username!r}, "
-                f"auth={self.auth!r}, become={self.become!r})")
+                f"auth={self.auth!r}, become={self.become!r}, "
+                f"protocol={self.protocol!r})")
 
     __str__ = __repr__
 
@@ -130,6 +143,7 @@ class CredentialOut(_Orm):
     created_by: int | None
     created_at: datetime | None
     become: str = "sudo"
+    protocol: str = "ssh"
 
     @field_validator("targets", mode="before")
     @classmethod
