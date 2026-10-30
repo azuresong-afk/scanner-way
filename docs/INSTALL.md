@@ -84,6 +84,7 @@ cp .env.example .env
 | `SCANNER_BDU_AUTOLOAD` | `1` | загрузить БДУ автоматически при первом старте |
 | `SCANNER_NUCLEI_UPDATE` | `1` | обновлять шаблоны Nuclei при старте. Шаблоны хранятся в томе `nuclei_templates`; без сети обновление пропускается, ошибка видна в логах `app` |
 | `NVD_API_KEY` | пусто | ключ NVD API 2.0, ускоряет загрузку CVE ([получить](https://nvd.nist.gov/developers/request-an-api-key)) |
+| `EPSS_FEED_URL` / `EPSS_FEED_PATH`, `KEV_FEED_URL` / `KEV_FEED_PATH` | `epss.cyentia.com` / `cisa.gov` | источники приоритизации риска: EPSS (CSV `.gz`) и каталог CISA KEV (JSON). Непустой `*_PATH` берётся вместо скачивания — для закрытого контура; расписание включается в «Справочниках» |
 | `BDU_FSTEC_FEED_URL` | пусто | если задан, автообновление скачивает выгрузку БДУ по этому адресу; пусто — берётся файл `BDU_FSTEC_FEED_PATH` (в закрытом контуре обновляйте файл вручную, а расписание сверит его отпечаток и загрузит, только если он изменился) |
 | `NUCLEI_TEMPLATES_DIR` | `$HOME/nuclei-templates` | каталог шаблонов Nuclei (для подсчёта шаблонов после обновления) |
 | `ADVISORY_RELEASES` | `debian:bullseye,debian:bookworm,ubuntu:focal,ubuntu:jammy,ubuntu:noble,rhel:8,rhel:9,alt:p10` | выпуски ОС, для которых загружаются бюллетени дистрибутивов (учёт бэкпортов, см. раздел 7). Оставьте только те, что есть у заказчика: файлы большие |

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from scanner.api.deps import AuditDep, Principal, SessionDep, deny, require
 from scanner.api.rbac import MODULE_PERMISSIONS, Perm
 from scanner.api.routes_engagements import get_engagement
-from scanner.api.routes_findings import finding_out, services_by_port
+from scanner.api.routes_findings import finding_out, run_priorities, services_by_port
 from scanner.api.schemas import (
     DeniedTargetOut,
     FindingOut,
@@ -200,7 +200,8 @@ def list_findings(run_id: int,
     run = _get_run(session, run_id)
     marks = repo.false_positive_marks(session, run.engagement_id)
     services = services_by_port(session, run_id)
-    return [finding_out(r, marks, services)
+    priorities = run_priorities(session, run_id, run.engagement_id, marks)
+    return [finding_out(r, marks, services, priorities)
             for r in repo.get_finding_rows(session, run_id, module)]
 
 
@@ -246,6 +247,7 @@ def get_report(run_id: int, request: Request,
         ReportRenderer,
         ReportVariant,
     )
+    from scanner.reporting.risk import build_risk_context
 
     run = _get_run(session, run_id)
     if run.status not in FINISHED:
@@ -277,7 +279,8 @@ def get_report(run_id: int, request: Request,
                               engagement=eng.contract_ref or eng.name,
                               run_id=run_id, previous_run_id=prev_id,
                               group=group.name if group else None),
-        false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts)
+        false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts,
+        risk=build_risk_context(session, current, eng.id))
     fmt, var = ReportFormat(format), ReportVariant(variant)
     body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",

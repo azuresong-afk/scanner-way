@@ -81,7 +81,7 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _download(url: str, dest: Path) -> None:
+def _download(url: str, dest: Path, what: str = "выгрузку БДУ") -> None:
     import httpx
     try:
         with httpx.stream("GET", url, timeout=120, follow_redirects=True) as resp:
@@ -90,7 +90,7 @@ def _download(url: str, dest: Path) -> None:
                 for chunk in resp.iter_bytes(1 << 20):
                     fh.write(chunk)
     except httpx.HTTPError as e:
-        raise FeedError(f"не удалось скачать выгрузку БДУ: {type(e).__name__}: {e}") from e
+        raise FeedError(f"не удалось скачать {what}: {type(e).__name__}: {e}") from e
 
 
 def load_bdu(ctx: FeedContext) -> FeedResult:
@@ -187,6 +187,59 @@ def load_nuclei(ctx: FeedContext) -> FeedResult:
     return FeedResult(count=total, message=f"Шаблонов Nuclei на диске: {total}")
 
 
+# ---------- EPSS и CISA KEV (приоритизация риска, R6) ----------
+def _fetch_bytes(path: str, url: str, what: str) -> bytes:
+    """Файл из *_PATH (закрытый контур) либо скачивание по *_URL."""
+    if path.strip():
+        p = Path(path.strip())
+        if not p.is_file():
+            raise FeedError(f"файл {what} не найден: {p}")
+        return p.read_bytes()
+    if not url.strip():
+        raise FeedError(f"не задан адрес или путь к {what}")
+    tmpdir = tempfile.mkdtemp(prefix="feed-")
+    try:
+        dest = Path(tmpdir) / "feed.bin"
+        _download(url.strip(), dest, what)
+        return dest.read_bytes()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def load_epss(ctx: FeedContext) -> FeedResult:
+    from scanner.feeds.epss import parse_epss, sync_epss
+
+    data = _fetch_bytes(settings.epss_feed_path, settings.epss_feed_url, "выгрузку EPSS")
+    fingerprint = hashlib.sha256(data).hexdigest()
+    if fingerprint == ctx.fingerprint:
+        return FeedResult(message="Выгрузка EPSS не изменилась с прошлой загрузки",
+                          unchanged=True, fingerprint=fingerprint)
+    try:
+        rows, as_of = parse_epss(data)
+    except (OSError, EOFError, UnicodeDecodeError) as e:
+        raise FeedError(f"выгрузка EPSS не читается: {type(e).__name__}: {e}") from e
+    if not rows:
+        raise FeedError("в выгрузке EPSS нет ни одной записи — справочник не изменён")
+    n = sync_epss(ctx.engine, rows, as_of)
+    return FeedResult(count=n, message=f"Загружено оценок EPSS: {n}", fingerprint=fingerprint)
+
+
+def load_kev(ctx: FeedContext) -> FeedResult:
+    from scanner.feeds.kev import parse_kev, sync_kev
+
+    data = _fetch_bytes(settings.kev_feed_path, settings.kev_feed_url, "каталог CISA KEV")
+    fingerprint = hashlib.sha256(data).hexdigest()
+    if fingerprint == ctx.fingerprint:
+        return FeedResult(message="Каталог KEV не изменился с прошлой загрузки",
+                          unchanged=True, fingerprint=fingerprint)
+    try:
+        entries = parse_kev(data)
+    except ValueError as e:     # JSONDecodeError — его подкласс
+        raise FeedError(f"каталог KEV не читается: {e}") from e
+    if not entries:
+        raise FeedError("в каталоге KEV нет ни одной записи — справочник не изменён")
+    n = sync_kev(ctx.engine, entries)
+    return FeedResult(count=n, message=f"Загружено записей KEV: {n}", fingerprint=fingerprint)
 # ---------- Бюллетени дистрибутивов (учёт бэкпортов, R2) ----------
 def load_advisories(ctx: FeedContext) -> FeedResult:
     """Трекер Debian и OVAL вендоров для выпусков из ADVISORY_RELEASES.
@@ -225,6 +278,10 @@ SOURCES: dict[str, FeedSource] = {s.id: s for s in (
                description="Инкрементально: только изменённые с прошлой загрузки CVE"),
     FeedSource("nuclei", "Шаблоны Nuclei", load_nuclei, kind="daily", time_of_day="05:00",
                description="nuclei -update-templates"),
+    FeedSource("epss", "EPSS (вероятность эксплуатации)", load_epss, kind="daily",
+               time_of_day="02:00", description="FIRST EPSS: CSV → таблица epss_score"),
+    FeedSource("kev", "CISA KEV (эксплуатируемые уязвимости)", load_kev, kind="daily",
+               time_of_day="02:30", description="Каталог CISA KEV (JSON) → таблица kev"),
     FeedSource("advisories", "Бюллетени дистрибутивов", load_advisories, kind="weekly",
                time_of_day="04:30", weekdays=(0,),
                description="Трекер Debian, OVAL Ubuntu/RHEL/ALT (+ файлы Astra, РЕД ОС) — "

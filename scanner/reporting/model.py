@@ -34,6 +34,12 @@ from scanner.core.models import (
 )
 from scanner.reporting.diff import RunDiff, diff_by_module, diff_runs, severity_counts
 from scanner.reporting.remediation import Remediation, RemediationResolver
+from scanner.reporting.risk import (
+    FORMULA_TEXT,
+    RiskAssessment,
+    RiskContext,
+    rank_findings,
+)
 
 SCHEMA_VERSION = "1.0"
 
@@ -112,6 +118,7 @@ class FindingView:
     finding: Finding
     remediation: Remediation
     status: FindingStatus | None = None   # None — нет предыдущего прогона
+    risk: RiskAssessment | None = None    # приоритет (R6); None — не считался или info
 
     @property
     def severity_label(self) -> str:
@@ -151,6 +158,7 @@ class FindingView:
             "evidence": f.evidence,
             "detected_at": f.detected_at.isoformat(),
             "remediation": self.remediation.to_dict(),
+            "priority": self.risk.to_dict() if self.risk else None,
         }
 
 
@@ -294,6 +302,53 @@ class PlanItem:
         }
 
 
+PRIORITY_TOP = 15
+
+
+@dataclass(slots=True)
+class PriorityItem:
+    """Строка раздела «Исправить в первую очередь»."""
+    view: FindingView
+
+    @property
+    def risk(self) -> RiskAssessment:
+        assert self.view.risk is not None
+        return self.view.risk
+
+    def to_dict(self) -> dict:
+        f = self.view.finding
+        return {"rank": self.risk.rank, "score": self.risk.score, "label": self.risk.label,
+                "label_ru": self.risk.label_ru, "reasons": list(self.risk.reasons),
+                "id": f.dedup_key(), "title": f.title, "host": f.host, "port": f.port,
+                "vuln_id": f.vuln_id, "cvss": f.cvss, "severity": str(f.severity),
+                "factors": self.risk.to_dict()["factors"]}
+
+
+@dataclass(slots=True)
+class HostPriority:
+    """Сколько находок каждого приоритета на хосте и его лучший ранг."""
+    host: str
+    counts: dict[str, int]
+    best_rank: int
+
+    def to_dict(self) -> dict:
+        return {"host": self.host, "best_rank": self.best_rank, "counts": dict(self.counts)}
+
+
+PRIORITY_KEYS = ("critical", "high", "medium", "low")
+
+
+def _priority_hosts(views: list[FindingView]) -> list[HostPriority]:
+    per: dict[str, list[FindingView]] = {}
+    for v in views:
+        if v.risk is not None:
+            per.setdefault(v.finding.host, []).append(v)
+    out = [HostPriority(h, {k: sum(1 for v in vs if v.risk.label == k) for k in PRIORITY_KEYS},
+                        min(v.risk.rank for v in vs)) for h, vs in per.items()]
+    out.sort(key=lambda h: (h.best_rank, h.host))
+    return out
+
+
 @dataclass(slots=True)
 class HostRisk:
     host: str
@@ -341,6 +396,13 @@ class Report:
     modules: list[Section]
     brief: bool = False   # краткая версия: без плана и текстов рекомендаций
     false_positives: list[FalsePositiveView] = field(default_factory=list)
+    priority: list[PriorityItem] = field(default_factory=list)   # топ по рангу (R6)
+    priority_hosts: list[HostPriority] = field(default_factory=list)
+    has_priority: bool = False          # приоритизация считалась (передан RiskContext)
+
+    @property
+    def priority_formula(self) -> str:
+        return FORMULA_TEXT
 
     @property
     def has_trend(self) -> bool:
@@ -368,6 +430,10 @@ class Report:
             "modules": [m.to_dict() for m in self.modules],
             "false_positives": [v.to_dict() for v in self.false_positives],
         }
+        if self.has_priority:
+            out["priority"] = {"formula": self.priority_formula,
+                               "items": [p.to_dict() for p in self.priority],
+                               "hosts": [h.to_dict() for h in self.priority_hosts]}
         if self.brief:
             del out["remediation_plan"]
             for sec in [out["combined"], *out["modules"]]:
@@ -482,6 +548,7 @@ def build_report(
     context: ReportContext | None = None,
     false_positives: Mapping[str, FalsePositiveMark] | None = None,
     hosts: Collection[str] | None = None,
+    risk: RiskContext | None = None,
 ) -> Report:
     """Строит модель отчёта.
 
@@ -490,6 +557,8 @@ def build_report(
     (для определения regression, см. diff_runs).
     false_positives — {dedup_key: отметка}: такие находки исключаются из обоих
     прогонов (не считаются ни открытыми, ни устранёнными) и идут в отдельный раздел.
+    risk — справочные данные приоритизации (EPSS, KEV, критичность активов): с ним
+    в отчёте есть ранги находок и раздел «Исправить в первую очередь»; None — без них.
     hosts — адреса хостов (например, активов группы): в отчёт попадают только
     находки этих хостов; None — без фильтра (поведение по умолчанию).
     """
@@ -517,7 +586,9 @@ def build_report(
         combined_trend = _trend(d, prev, cur, resolver)
         module_diffs = diff_by_module(prev, cur, historically_fixed)
 
-    views = [FindingView(f, resolver.resolve(f), statuses.get(f.dedup_key())) for f in cur]
+    ranks = rank_findings(cur, risk) if risk is not None else {}
+    views = [FindingView(f, resolver.resolve(f), statuses.get(f.dedup_key()),
+                         ranks.get(f.dedup_key())) for f in cur]
 
     modules: list[Section] = []
     names = sorted({f.module for f in cur} | set(module_diffs),
@@ -538,4 +609,9 @@ def build_report(
         combined=Section("combined", "Сводно по всем модулям", views, combined_trend),
         modules=modules,
         false_positives=fp_views,
+        priority=[PriorityItem(v) for v in sorted(
+            (v for v in views if v.risk is not None), key=lambda v: v.risk.rank
+        )[:PRIORITY_TOP]],
+        priority_hosts=_priority_hosts(views),
+        has_priority=risk is not None,
     )

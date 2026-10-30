@@ -309,6 +309,16 @@ class FalsePositiveOut(FalsePositiveMarkOut):
     title: str
 
 
+class PriorityOut(BaseModel):
+    """Приоритет исправления (R6): ранг в прогоне, балл, ярлык и факторы."""
+    rank: int
+    score: float
+    label: str                 # critical | high | medium | low
+    label_ru: str
+    reasons: list[str]
+    factors: dict
+
+
 class FindingOut(BaseModel):
     id: int
     dedup_key: str
@@ -331,6 +341,8 @@ class FindingOut(BaseModel):
     software: str | None = None
     software_version: str | None = None
     software_source: str | None = None      # service | package
+    # None — информационная находка или отмечена как ложное срабатывание
+    priority: PriorityOut | None = None
 
 
 class ServiceOut(BaseModel):

@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { AlertTriangle, CalendarClock, Inbox, X } from "lucide-react";
-import type { FindingStatus, RunOut, RunStatus, Severity } from "../api/types";
+import type { FindingStatus, PriorityOut, RunOut, RunStatus, Severity } from "../api/types";
 import { RUN_STATUS_LABEL, SEVERITY_LABEL, SEVERITY_SHORT, STATUS_LABEL, runName } from "../lib/labels";
 import { bduUrl, cveUrl } from "../lib/refs";
 
@@ -9,6 +9,27 @@ export function SeverityBadge({ severity, short }: { severity: Severity; short?:
     <span className={`sev sev-${severity}`}>
       <i aria-hidden="true" />
       {short ? SEVERITY_SHORT[severity] : SEVERITY_LABEL[severity]}
+    </span>
+  );
+}
+
+const PRIORITY_PILL: Record<PriorityOut["label"], string> = {
+  critical: "pill-danger",
+  high: "pill-warn",
+  medium: "pill-info",
+  low: "pill-muted",
+};
+
+/** Подсказка с факторами приоритета: из чего сложился балл. */
+export function priorityTitle(p: PriorityOut): string {
+  return `${p.label_ru}, балл ${p.score.toFixed(0)} из 100\n` + p.reasons.map((r) => `• ${r}`).join("\n");
+}
+
+export function PriorityBadge({ priority }: { priority?: PriorityOut | null }) {
+  if (!priority) return <span className="faint">—</span>;
+  return (
+    <span className={`pill ${PRIORITY_PILL[priority.label]}`} title={priorityTitle(priority)}>
+      #{priority.rank} · {priority.score.toFixed(0)}
     </span>
   );
 }
