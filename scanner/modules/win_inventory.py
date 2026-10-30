@@ -215,9 +215,7 @@ def parse_os(lines: list[str]) -> WindowsOs:
 def parse_kbs(lines: list[str]) -> list[str]:
     seen: dict[str, None] = {}
     for line in lines:
-        s = line.strip().upper()
-        if s.startswith("KB"):
-            s = s[2:]
+        s = line.strip().upper().removeprefix("KB")
         if s.isdigit() and 6 <= len(s) <= 8:
             seen.setdefault(s, None)
     return list(seen)

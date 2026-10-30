@@ -11,7 +11,7 @@ from scanner.core.credentials import PROTOCOL_SSH, PROTOCOL_WINRM, HostCredentia
 from scanner.core.models import Finding, FindingType, Severity
 from scanner.core.ratelimit import RateProfile
 from scanner.core.sshexec import CommandResult
-from scanner.core.winexec import AuthFailed, MAX_COMMAND_LINE, Unreachable, encode_powershell
+from scanner.core.winexec import MAX_COMMAND_LINE, AuthFailed, Unreachable, encode_powershell
 from scanner.feeds.msrc import InMemoryMsrcStore, MsrcFix
 from scanner.modules.base import ScanContext
 from scanner.modules.win_inventory import (
@@ -193,7 +193,7 @@ def test_unreachable_host_reported():
     def connector(h, c, o):
         raise Unreachable("нет WinRM-соединения")
 
-    findings, ctx, _ = _run([_winrm_cred()], connector=connector)
+    findings, _ctx, _ = _run([_winrm_cred()], connector=connector)
     assert {f.vuln_id for f in findings} == {"INFO:win-inventory-unreachable"}
 
 
