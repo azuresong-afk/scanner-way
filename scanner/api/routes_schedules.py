@@ -53,8 +53,8 @@ def _apply(row: ScanSchedule, body: ScheduleIn, *, request: Request, user: Princ
     """Проверяет тело как запуск прогона + расписание и переносит в row."""
     modules = order_modules(with_engine(body.modules, body.vuln_engine))
     check_run_options(row.engagement_id, modules=modules, rate_profile=body.rate_profile,
-                      credential_ids=body.credential_ids, user=user, request=request,
-                      audit=audit, runs=runs)
+                      credential_ids=body.credential_ids, cred_set_ids=body.cred_set_ids,
+                      user=user, request=request, audit=audit, runs=runs)
     check_targets(row.engagement_id, body.targets, user=user, audit=audit, runs=runs)
     tz = body.timezone or request.app.state.default_timezone
     spec = ScheduleSpec(kind=body.kind, timezone=tz,
@@ -74,6 +74,7 @@ def _apply(row: ScanSchedule, body: ScheduleIn, *, request: Request, user: Princ
     row.modules = modules
     row.rate_profile = body.rate_profile
     row.credential_ids = list(dict.fromkeys(body.credential_ids))
+    row.cred_set_ids = list(dict.fromkeys(body.cred_set_ids))
     row.kind, row.timezone = spec.kind, spec.timezone
     row.time_of_day, row.weekdays = spec.time_of_day, spec.weekdays
     row.month_day, row.run_at = spec.month_day, spec.run_at
@@ -89,6 +90,7 @@ def _details(row: ScanSchedule) -> dict:
             "run_at": row.run_at.isoformat() if row.run_at else None,
             "timezone": row.timezone, "modules": row.modules,
             "rate_profile": row.rate_profile, "credential_ids": row.credential_ids,
+            "cred_set_ids": row.cred_set_ids,
             "targets": row.targets[:100], "enabled": row.enabled}
 
 

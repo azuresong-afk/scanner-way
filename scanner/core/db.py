@@ -99,6 +99,25 @@ class HostCredentialRow(Base):
     become: Mapped[str] = mapped_column(Text, default="sudo", server_default="sudo")
 
 
+# ========== Наборы проверки учёток (аудит паролей) ==========
+class CredAuditSetRow(Base):
+    """Набор проверяемых пар логин/секрет, заданный оператором под договор.
+
+    Секреты — только в entries_enc (зашифрованы CredentialVault), наружу не
+    отдаются. Встроенных словарей нет: набор целиком вводит оператор."""
+    __tablename__ = "cred_audit_sets"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    # Сервисы, к которым применять набор; пусто — все поддерживаемые.
+    services: Mapped[list[str]] = mapped_column(TextArray, default=list)
+    secret_enc: Mapped[str] = mapped_column("entries_enc", Text)
+    entry_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+
+
 # ========== Расписания ==========
 class ScanSchedule(Base):
     """Прогон по расписанию: параметры прогона + когда его ставить в очередь.
@@ -115,6 +134,8 @@ class ScanSchedule(Base):
     modules: Mapped[list[str]] = mapped_column(TextArray)
     rate_profile: Mapped[str] = mapped_column(Text, default="gentle")
     credential_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
+    # Наборы проверки учёток (cred_audit_sets.id) для модуля cred_audit.
+    cred_set_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
     kind: Mapped[str] = mapped_column(Text)               # once|daily|weekly|monthly
     time_of_day: Mapped[str | None] = mapped_column(Text)  # ЧЧ:ММ в timezone
     weekdays: Mapped[list[int]] = mapped_column(Jsonb, default=list)
@@ -140,6 +161,8 @@ class ScanRun(Base):
     rate_profile: Mapped[str] = mapped_column(Text, default="gentle")
     # Учётные записи активов, выбранные для прогона (host_credentials.id).
     credential_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
+    # Наборы проверки учёток (cred_audit_sets.id) для модуля cred_audit.
+    cred_set_ids: Mapped[list[int]] = mapped_column(Jsonb, default=list)
     # Имя по выбранным опциям (scanner.core.naming) или заданное оператором;
     # у прогонов до миграции 0006 — NULL.
     name: Mapped[str | None] = mapped_column(Text)

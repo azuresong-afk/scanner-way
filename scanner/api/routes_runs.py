@@ -58,8 +58,8 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
     get_engagement(session, engagement_id)
     modules = with_engine(body.modules, body.vuln_engine)
     check_run_options(engagement_id, modules=modules, rate_profile=body.rate_profile,
-                      credential_ids=body.credential_ids, user=user, request=request,
-                      audit=audit, runs=runs)
+                      credential_ids=body.credential_ids, cred_set_ids=body.cred_set_ids,
+                      user=user, request=request, audit=audit, runs=runs)
     plan, denied = check_targets(engagement_id, body.targets, user=user, audit=audit,
                                  runs=runs)
 
@@ -67,7 +67,8 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
     run_id = runs.submit(engagement_id=engagement_id, modules=modules,
                          rate_profile=body.rate_profile, requested_targets=body.targets,
                          actor=user.subject, started_by=user.id,
-                         credential_ids=body.credential_ids, name=body.name)
+                         credential_ids=body.credential_ids,
+                         cred_set_ids=body.cred_set_ids, name=body.name)
     session.expire_all()
     run = _get_run(session, run_id)
     return RunCreated(**RunOut.model_validate(run).model_dump(),
@@ -76,9 +77,11 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
 
 def check_run_options(engagement_id: int, *, modules: list[str], rate_profile: str,
                       credential_ids: list[int], user: Principal, request: Request,
-                      audit: AuditSink, runs: RunService) -> None:
-    """Модули, профиль, права и учётки прогона — до постановки (и сохранения
-    расписания). Ошибки — HTTPException 422/403."""
+                      audit: AuditSink, runs: RunService,
+                      cred_set_ids: list[int] | None = None) -> None:
+    """Модули, профиль, права, учётки и наборы проверки прогона — до постановки
+    (и сохранения расписания). Ошибки — HTTPException 422/403."""
+    cred_set_ids = cred_set_ids or []
     unknown = [m for m in modules if m not in runs.registry]
     if unknown:
         raise HTTPException(422,
@@ -89,22 +92,27 @@ def check_run_options(engagement_id: int, *, modules: list[str], rate_profile: s
                             f"unknown rate profile: {rate_profile}; "
                             f"available: {', '.join(PROFILES)}")
     # Права на отдельные модули — до постановки прогона в очередь.
-    missing = missing_permissions(user, modules, credential_ids)
+    missing = missing_permissions(user, modules, credential_ids, cred_set_ids)
     if missing:
         deny(audit, user, request, missing)
     try:
         runs.check_credentials(engagement_id, modules, credential_ids)
+        runs.check_cred_sets(engagement_id, cred_set_ids)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
 
 
 def missing_permissions(user: Principal, modules: list[str],
-                        credential_ids: list[int]) -> list[str]:
+                        credential_ids: list[int],
+                        cred_set_ids: list[int] | None = None) -> list[str]:
     """Права, которых не хватает пользователю для такого прогона (кроме run_scan)."""
     missing = {str(MODULE_PERMISSIONS[m]) for m in modules
                if m in MODULE_PERMISSIONS and not user.has(MODULE_PERMISSIONS[m])}
     if credential_ids and not user.has(Perm.HOST_CREDENTIALS):
         missing.add(str(Perm.HOST_CREDENTIALS))
+    # Выбор набора проверки учёток требует права cred_audit (как и сам модуль).
+    if cred_set_ids and not user.has(Perm.CRED_AUDIT):
+        missing.add(str(Perm.CRED_AUDIT))
     return sorted(missing)
 
 

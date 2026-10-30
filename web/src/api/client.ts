@@ -15,6 +15,8 @@ import type {
   AuditOut,
   CredentialIn,
   CredentialOut,
+  CredSetIn,
+  CredSetOut,
   EngagementIn,
   EngagementOut,
   FindingOut,
@@ -196,6 +198,11 @@ export const api = {
     json<AssetGroupOut>(`/engagements/${engagementId}/asset-groups/${id}`, { method: "PATCH", ...body({ name }) }),
   deleteAssetGroup: (engagementId: number, id: number) =>
     request(`/engagements/${engagementId}/asset-groups/${id}`, { method: "DELETE" }).then(() => undefined),
+  credSets: (engagementId: number) => json<CredSetOut[]>(`/engagements/${engagementId}/cred-sets`),
+  createCredSet: (engagementId: number, data: CredSetIn) =>
+    json<CredSetOut>(`/engagements/${engagementId}/cred-sets`, { method: "POST", ...body(data) }),
+  deleteCredSet: (engagementId: number, setId: number) =>
+    request(`/engagements/${engagementId}/cred-sets/${setId}`, { method: "DELETE" }).then(() => undefined),
 
   runs: (engagementId: number) => json<RunOut[]>(`/engagements/${engagementId}/runs`),
   run: (id: number) => json<RunOut>(`/runs/${id}`),

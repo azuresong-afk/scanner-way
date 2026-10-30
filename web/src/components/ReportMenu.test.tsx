@@ -42,7 +42,7 @@ const run = (id: number, status: RunOut["status"]): RunOut => ({
   engagement_id: 1,
   modules: ["vuln"],
   rate_profile: "gentle",
-  credential_ids: [],
+  credential_ids: [], cred_set_ids: [],
   name: "Nuclei",
   targets: [],
   schedule_id: null,

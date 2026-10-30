@@ -220,8 +220,30 @@ class CredentialAuditModule(ScanModule):
 
     # --- отбор учёток под сервис -------------------------------------------------
 
-    def _creds_for(self, service: str) -> list[Credential]:
-        combined = list(self.options.credentials)
+    def _candidates_from_ctx(self, ctx: ScanContext) -> list[Credential]:
+        """Пары (логин, секрет) из набора проверки, переданные оркестратором.
+
+        Применяются ТОЛЬКО если оператор не задал набор в опциях модуля явно.
+        Некорректные записи пропускаются с записью в аудит — набор целиком не
+        роняет прогон."""
+        out: list[Credential] = []
+        for username, secret in ctx.cred_candidates:
+            try:
+                out.append(Credential(username, secret))
+            except ValueError as e:
+                ctx.audit.record(subject="scanner", action="cred_audit_skip",
+                                 target="-", result="invalid_candidate",
+                                 details={"reason": str(e)[:200]})
+        return out
+
+    def _base_credentials(self, ctx: ScanContext) -> list[Credential]:
+        """Набор оператора из опций; если он пуст — кандидаты из ctx.cred_candidates."""
+        if self.options.credentials:
+            return list(self.options.credentials)
+        return self._candidates_from_ctx(ctx)
+
+    def _creds_for(self, service: str, base: Sequence[Credential]) -> list[Credential]:
+        combined = list(base)
         combined += self.options.service_credentials.get(service, [])
         out: list[Credential] = []
         seen: set[tuple[str, str]] = set()
@@ -250,8 +272,11 @@ class CredentialAuditModule(ScanModule):
             ctx.audit.record(subject="scanner", action="cred_audit_deny",
                              target=t, result="not_an_ip_literal")
 
-        # Без осознанного набора учёток модуль не делает ничего.
-        if not self.options.credentials and not self.options.service_credentials:
+        # Набор учёток: либо задан оператором в опциях, либо передан оркестратором
+        # из согласованного набора проверки (ctx.cred_candidates). Нет ни того, ни
+        # другого — модуль не делает ни одной попытки (осознанный пропуск в аудите).
+        base_creds = self._base_credentials(ctx)
+        if not base_creds and not self.options.service_credentials:
             ctx.audit.record(subject="scanner", action="cred_audit_skip",
                              target=",".join(sorted(allowed)) or "-",
                              result="no_credentials")
@@ -278,11 +303,11 @@ class CredentialAuditModule(ScanModule):
             by_host.setdefault(p.host, []).append(p)
 
         for host, host_probes in by_host.items():
-            findings += self._run_host(ctx, host, host_probes, cap, acct_cap)
+            findings += self._run_host(ctx, host, host_probes, cap, acct_cap, base_creds)
         return findings
 
     def _run_host(self, ctx: ScanContext, host: str, probes: list[Probe],
-                  cap: int, acct_cap: int) -> list[Finding]:
+                  cap: int, acct_cap: int, base_creds: Sequence[Credential]) -> list[Finding]:
         findings: list[Finding] = []
         attempts = 0
         per_account: Counter[str] = Counter()
@@ -292,7 +317,7 @@ class CredentialAuditModule(ScanModule):
                            self.options.max_backoff_sec, self._sleep)
 
         for probe in probes:
-            creds = self._creds_for(probe.service)
+            creds = self._creds_for(probe.service, base_creds)
             if not creds:
                 ctx.audit.record(subject="scanner", action="cred_audit_skip",
                                  target=f"{host}:{probe.port}/{probe.service}",
