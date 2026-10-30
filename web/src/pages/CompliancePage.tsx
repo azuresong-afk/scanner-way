@@ -27,7 +27,7 @@ function StatusPill({ status }: { status: ComplianceStatus }) {
   return <span className={`pill ${STATUS_PILL[status]}`}>{STATUS_LABEL[status]}</span>;
 }
 
-/** Профили соответствия ФСТЭК №17/21/239 и CIS (R5): процент по прогону, разбивка, провалы. */
+/** Профили соответствия ФСТЭК №117/21/239 и CIS (R5): процент по прогону, разбивка, провалы. */
 export function CompliancePage() {
   const { engagement, runs, run, setRun, loading, error, reload } = useRunSelection();
   const { has } = useAuth();
@@ -39,7 +39,7 @@ export function CompliancePage() {
   const saved = useAsync(() => api.complianceProfiles(eid!), [eid], !!eid);
   const groups = useAsync(() => api.assetGroups(eid!), [eid], !!eid);
 
-  const [profileId, setProfileId] = useState("fstec-17");
+  const [profileId, setProfileId] = useState("fstec-117");
   const [level, setLevel] = useState<string | null>(null);
   const [groupId, setGroupId] = useState<number | null>(null);
   const [onlyFailed, setOnlyFailed] = useState(false);
@@ -135,7 +135,7 @@ export function CompliancePage() {
           <span className="crumbs">{engagement.client ? `${engagement.client} · ${engagement.name}` : engagement.name}</span>
           <h1>Соответствие требованиям</h1>
           <span className="muted">
-            Приказы ФСТЭК России №17, №21, №239 и CIS. Процент — доля выполненных мер среди проверенных автоматически; организационные и
+            Приказы ФСТЭК России №117, №21, №239 и CIS. Процент — доля выполненных мер среди проверенных автоматически; организационные и
             непроверенные меры в процент не входят и показаны отдельно.
           </span>
         </div>

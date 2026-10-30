@@ -1,4 +1,4 @@
-"""Профили соответствия ФСТЭК №17/21/239 и CIS (R5): каталог, движок, API, отчёт."""
+"""Профили соответствия ФСТЭК №117/21/239 и CIS (R5): каталог, движок, API, отчёт."""
 from __future__ import annotations
 
 import json
@@ -78,15 +78,15 @@ def rows_by(rows, profile, host=None):
 
 # ---------- каталог ----------
 def test_catalog_loads_all_profiles(catalog):
-    assert list(catalog.profiles) == ["fstec-17", "fstec-21", "fstec-239",
+    assert list(catalog.profiles) == ["fstec-117", "fstec-21", "fstec-239",
                                       "cis-controls-v8", "cis-benchmark"]
-    p17 = catalog.profile("fstec-17")
-    assert p17.levels == ("К1", "К2", "К3") and p17.default_level == "К2"
+    p117 = catalog.profile("fstec-117")
+    assert p117.levels == ("К1", "К2", "К3") and p117.default_level == "К2"
     # базовый набор растёт с классом: К3 ⊂ К2 ⊂ К1
-    k3, k2, k1 = ({c.id for c in p17.base_set(lv)} for lv in ("К3", "К2", "К1"))
-    assert k3 <= k2 <= k1 and "ИАФ.2" in k2 and "ИАФ.2" not in k3
+    k3, k2, k1 = ({c.id for c in p117.base_set(lv)} for lv in ("К3", "К2", "К1"))
+    assert k3 <= k2 <= k1 and "УПД.7" in k2 and "УПД.7" not in k3
     # организационные меры помечены как ручные, технические — со ссылками на проверки
-    assert p17.control("ИНЦ.1").manual and not p17.control("УПД.6").manual
+    assert p117.control("ВУ").manual and not p117.control("УПД.4").manual
     for p in catalog.profiles.values():
         for c in p.controls:
             assert all(ch in catalog.checks for ch in c.checks)
@@ -130,40 +130,40 @@ def test_merge_run_facts_marks_coverage():
 
 # ---------- движок ----------
 def test_statuses_per_host(catalog, fixture_run):
-    rows = evaluate_run(catalog, *fixture_run, profiles={"fstec-17"})
-    lin, win, bare = (rows_by(rows, "fstec-17", h) for h in (LINUX, WIN, BARE))
-    assert lin["УПД.6"].status == PASSED          # faillock deny: pass, политика без lockout
-    assert lin["ИАФ.4"].status == FAILED          # minlen fail (OpenSCAP + политика)
-    failures = [f for c in lin["ИАФ.4"].evidence["checks"] for f in c["failures"]]
+    rows = evaluate_run(catalog, *fixture_run, profiles={"fstec-117"})
+    lin, win, bare = (rows_by(rows, "fstec-117", h) for h in (LINUX, WIN, BARE))
+    assert lin["УПД.4"].status == PASSED          # faillock deny: pass, политика без lockout
+    assert lin["ИАФ.3"].status == FAILED          # minlen fail (OpenSCAP + политика)
+    failures = [f for c in lin["ИАФ.3"].evidence["checks"] for f in c["failures"]]
     assert {f.get("vuln_id") for f in failures} >= {R + "accounts_password_pam_minlen",
                                                     "POLICY:password-min-length"}
-    assert lin["УПД.10"].status == NA             # TMOUT notapplicable, sshd idle не в профиле
-    assert win["ЗИС.11"].status == FAILED         # SMB1 = 1
-    assert win["ИАФ.1"].status == PASSED          # LmCompatibilityLevel 5 ≥ 3
-    assert bare["УПД.13"].status == FAILED        # telnet открыт
+    assert lin["УПД.8"].status == NA             # TMOUT notapplicable, sshd idle не в профиле
+    assert win["ЗКС.2"].status == FAILED         # SMB1 = 1
+    assert win["ЗКС.1"].status == PASSED          # LmCompatibilityLevel 5 (только NTLMv2)
+    assert bare["УД"].status == FAILED        # telnet открыт
     # меры без автопроверки — по одной строке на профиль, без хоста
-    manual = rows_by(rows, "fstec-17")
+    manual = rows_by(rows, "fstec-117")
     assert manual and all(r.status == MANUAL for r in manual.values())
-    assert "ИНЦ.1" in manual and "УПД.6" not in manual
+    assert "ВУ" in manual and "УПД.4" not in manual
 
 
 def test_percent_ignores_manual_and_unchecked(catalog, fixture_run):
-    p = catalog.profile("fstec-17")
+    p = catalog.profile("fstec-117")
     rows = evaluate_run(catalog, *fixture_run, profiles={p.id})
     s = summarize(p, catalog, rows, selection=Selection(level="К1"))
     c = s["counts"]
     assert c[MANUAL] > 0 and c[NA] > 0
     assert s["percent"] == round(100 * c[PASSED] / (c[PASSED] + c[FAILED]), 1)
     by_id = {i["id"]: i for i in s["controls"]}
-    assert by_id["ИАФ.4"]["status"] == FAILED and by_id["УПД.6"]["status"] == PASSED
-    assert {m["id"] for m in s["manual"]} >= {"ИНЦ.1", "УКФ.1"}
+    assert by_id["ИАФ.3"]["status"] == FAILED and by_id["УПД.4"]["status"] == PASSED
+    assert {m["id"] for m in s["manual"]} >= {"ВУ", "ФЗ"}
     # ручные и непроверенные меры не меняют процент: исключаем их из набора — то же число
     drop = frozenset(m["id"] for m in s["manual"]) | frozenset(
         i["id"] for i in s["controls"] if i["status"] == NA)
     s2 = summarize(p, catalog, rows, selection=Selection(level="К1", excluded=drop))
     assert s2["percent"] == s["percent"] and s2["counts"][MANUAL] == 0
     # провал — с рекомендацией и хостом
-    fail = next(f for f in s["failures"] if f["id"] == "ИАФ.4")
+    fail = next(f for f in s["failures"] if f["id"] == "ИАФ.3")
     assert fail["failed_hosts"][0]["host"] == LINUX
     assert any(r["check"] == "password_length" and r["remediation"]
                for r in fail["recommendations"])
@@ -172,13 +172,13 @@ def test_percent_ignores_manual_and_unchecked(catalog, fixture_run):
 def test_exact_percent_on_fixture(catalog):
     """Три проверяемые меры: две выполнены, одна нет -> 66.7%."""
     facts = {LINUX: {"openscap": {"profile": "p", "rules": {
-        R + "accounts_passwords_pam_faillock_deny": "pass",      # УПД.6
-        R + "sshd_disable_root_login": "pass",                   # УПД.4
-        R + "accounts_tmout": "fail"}}}}                         # УПД.10
+        R + "accounts_passwords_pam_faillock_deny": "pass",      # УПД.4
+        R + "sshd_disable_root_login": "pass",                   # УПД.2
+        R + "accounts_tmout": "fail"}}}}                         # УПД.8
     findings = [cfg(LINUX, "accounts_tmout")]
-    p = catalog.profile("fstec-17")
+    p = catalog.profile("fstec-117")
     rows = evaluate_run(catalog, facts, findings, profiles={p.id})
-    keep = {"УПД.4", "УПД.6", "УПД.10", "ИНЦ.1"}
+    keep = {"УПД.2", "УПД.4", "УПД.8", "ВУ"}
     sel = Selection(level="К2", excluded=frozenset(c.id for c in p.controls) - keep)
     s = summarize(p, catalog, rows, selection=sel)
     assert s["counts"] == {PASSED: 2, FAILED: 1, MANUAL: 1, NA: 0}
@@ -218,25 +218,25 @@ def test_cis_benchmark_dynamic(catalog):
 
 
 def test_windows_rdp_nla_condition(catalog):
-    p = catalog.profile("fstec-17")
+    p = catalog.profile("fstec-117")
     on = {WIN: {"windows_policy": {"RDP_fDenyTSConnections": "0", "RDP_NLA": "0"}}}
     off = {WIN: {"windows_policy": {"RDP_fDenyTSConnections": "1"}}}
     a = evaluate_run(catalog, on, [], profiles={p.id})
     b = evaluate_run(catalog, off, [], profiles={p.id})
-    chk = lambda rows: next(c for c in rows_by(rows, p.id, WIN)["УПД.13"].evidence["checks"]
+    chk = lambda rows: next(c for c in rows_by(rows, p.id, WIN)["УД"].evidence["checks"]
                             if c["id"] == "rdp_nla")["status"]
     assert chk(a) == FAILED and chk(b) == PASSED
 
 
 # ---------- отчёт ----------
 def test_report_section(catalog, fixture_run):
-    p = catalog.profile("fstec-17")
+    p = catalog.profile("fstec-117")
     rows = evaluate_run(catalog, *fixture_run, profiles={p.id})
     summary = summarize(p, catalog, rows)
     report = build_report(fixture_run[1], compliance=[summary])
     html = ReportRenderer().render(report, "html").decode()
     assert "Соответствие требованиям" in html and "Невыполненные меры" in html
-    assert "Проверяется вручную" in html and "ИАФ.4" in html
+    assert "Проверяется вручную" in html and "ИАФ.3" in html
     data = json.loads(ReportRenderer().render(report, "json"))
     assert data["compliance"][0]["percent"] == summary["percent"]
     brief = json.loads(ReportRenderer().render(report, "json", variant="brief"))
@@ -286,12 +286,12 @@ def test_api_end_to_end(client, sqlite_factory):
         s.commit()
     eid = client.post("/engagements", json={"name": "Д"}).json()["id"]
     client.post(f"/engagements/{eid}/allowlist", json={"cidr": "10.0.0.0/24"})
-    assert client.get("/compliance/profiles").json()[0]["id"] == "fstec-17"
-    r = client.put(f"/engagements/{eid}/compliance-profiles/fstec-17",
+    assert client.get("/compliance/profiles").json()[0]["id"] == "fstec-117"
+    r = client.put(f"/engagements/{eid}/compliance-profiles/fstec-117",
                    json={"level": "К9"})
     assert r.status_code == 422
-    r = client.put(f"/engagements/{eid}/compliance-profiles/fstec-17",
-                   json={"level": "К3", "excluded": ["УПД.13"]})
+    r = client.put(f"/engagements/{eid}/compliance-profiles/fstec-117",
+                   json={"level": "К3", "excluded": ["УД"]})
     assert r.status_code == 200 and r.json()["level"] == "К3"
     assert client.put(f"/engagements/{eid}/compliance-profiles/nope",
                       json={}).status_code == 404
@@ -309,18 +309,18 @@ def test_api_end_to_end(client, sqlite_factory):
                                 "credential_ids": [cred.json()["id"]]})
     assert run.status_code in (200, 201, 202), run.text
     rid = run.json()["id"]
-    s = client.get(f"/runs/{rid}/compliance", params={"profile": "fstec-17"}).json()
+    s = client.get(f"/runs/{rid}/compliance", params={"profile": "fstec-117"}).json()
     assert s["has_results"] and s["level"] == "К3"
     ids = {c["id"]: c["status"] for c in s["controls"]}
-    assert ids["УПД.4"] == FAILED and ids["УПД.6"] == PASSED and "УПД.13" not in ids
-    assert s["adapted"]["excluded"] == ["УПД.13"]
+    assert ids["УПД.2"] == FAILED and ids["УПД.4"] == PASSED and "УД" not in ids
+    assert s["adapted"]["excluded"] == ["УД"]
     assert client.get(f"/runs/{rid}/compliance",
-                      params={"profile": "fstec-17", "level": "Z"}).status_code == 422
+                      params={"profile": "fstec-117", "level": "Z"}).status_code == 422
     assert client.post(f"/runs/{rid}/compliance/recompute").json()["rows"] > 0
     rep = client.get(f"/runs/{rid}/report", params={"format": "json"}).json()
-    assert rep["compliance"][0]["profile"]["id"] == "fstec-17"
+    assert rep["compliance"][0]["profile"]["id"] == "fstec-117"
     # профиль без «в отчёт» — раздела нет
-    client.put(f"/engagements/{eid}/compliance-profiles/fstec-17",
+    client.put(f"/engagements/{eid}/compliance-profiles/fstec-117",
                json={"level": "К3", "in_report": False})
     assert "compliance" not in client.get(f"/runs/{rid}/report",
                                           params={"format": "json"}).json()

@@ -1,7 +1,7 @@
 """Профили соответствия как данные: загрузка и проверка YAML (R5).
 
 Файлы — в `scanner/compliance/profiles/`: `checks.yaml` (каталог технических
-проверок) и по файлу на профиль (fstec-17, fstec-21, fstec-239,
+проверок) и по файлу на профиль (fstec-117, fstec-21, fstec-239,
 cis-controls-v8, cis-benchmark). Профиль ссылается на проверки по id; ссылка на
 несуществующую проверку, повтор id меры или уровня вне списка — ошибка загрузки
 (ловится тестом, а не в отчёте заказчика).
@@ -20,7 +20,7 @@ PLATFORMS = ("linux", "windows", "any")
 WIN_OPS = ("eq", "ne", "ge", "le")
 SEVERITIES = ("low", "medium", "high", "critical")
 # Профили по порядку показа.
-PROFILE_ORDER = ("fstec-17", "fstec-21", "fstec-239", "cis-controls-v8", "cis-benchmark")
+PROFILE_ORDER = ("fstec-117", "fstec-21", "fstec-239", "cis-controls-v8", "cis-benchmark")
 
 
 class CatalogError(ValueError):

@@ -1,4 +1,4 @@
-"""Профили соответствия ФСТЭК №17/21/239 и CIS (R5).
+"""Профили соответствия ФСТЭК №117/21/239 и CIS (R5).
 
 Справочник профилей и сводка соответствия прогона — view_report; выбор
 профилей договора (уровень, адаптация набора мер, «в отчёт») —
@@ -110,7 +110,7 @@ def _run(session, run_id: int):
 @router.get("/runs/{run_id}/compliance")
 def run_compliance(run_id: int,
                    _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
-                   session: SessionDep, profile: str = "fstec-17",
+                   session: SessionDep, profile: str = "fstec-117",
                    level: str | None = None, group_id: int | None = None) -> dict:
     """Сводка соответствия прогона профилю: процент, разбивка по хостам и
     группам активов, провалы с рекомендациями, меры «проверяется вручную».

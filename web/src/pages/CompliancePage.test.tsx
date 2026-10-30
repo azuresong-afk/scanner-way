@@ -18,9 +18,9 @@ afterEach(() => {
 });
 
 const profile: ComplianceProfileDef = {
-  id: "fstec-17",
-  title: "Приказ ФСТЭК России №17 (ГИС)",
-  short: "ФСТЭК №17",
+  id: "fstec-117",
+  title: "Приказ ФСТЭК России №117 (ГИС)",
+  short: "ФСТЭК №117",
   document: "Требования о защите информации в ГИС",
   url: "https://fstec.ru/",
   level_label: "Класс защищённости ГИС",
@@ -45,7 +45,7 @@ const summary: ComplianceSummary = {
   groups: [],
   controls: [
     {
-      id: "УПД.6",
+      id: "УПД.4",
       title: "Ограничение неуспешных попыток входа",
       group: "УПД",
       group_title: "Управление доступом",
@@ -54,8 +54,8 @@ const summary: ComplianceSummary = {
       added: false,
     },
     {
-      id: "ИАФ.4",
-      title: "Управление средствами аутентификации",
+      id: "ИАФ.3",
+      title: "Аутентификация пользователей",
       group: "ИАФ",
       group_title: "Идентификация и аутентификация",
       status: "failed",
@@ -66,7 +66,7 @@ const summary: ComplianceSummary = {
     },
   ],
   failures: [],
-  manual: [{ id: "ИНЦ.1", title: "Определение ответственных", group: "ИНЦ", group_title: "Инциденты" }],
+  manual: [{ id: "ВУ", title: "Выявление и оценка угроз", group: "МРП", group_title: "Мероприятия" }],
 };
 
 function renderPage(p: string[]) {
@@ -78,7 +78,7 @@ function renderPage(p: string[]) {
     "GET /engagements/5/compliance-profiles": [],
     "GET /engagements/5/asset-groups": [],
     "GET /runs/7/compliance": summary,
-    "PUT /engagements/5/compliance-profiles/fstec-17": { profile: "fstec-17", level: "К2", excluded: [], added: [], in_report: true },
+    "PUT /engagements/5/compliance-profiles/fstec-117": { profile: "fstec-117", level: "К2", excluded: [], added: [], in_report: true },
   });
   render(
     <MemoryRouter>
@@ -91,7 +91,7 @@ function renderPage(p: string[]) {
 it("показывает процент, провалы с рекомендацией и меры «вручную»", async () => {
   renderPage(["view_report"]);
   expect((await screen.findAllByText("67%")).length).toBeGreaterThan(0);
-  expect(screen.getByText("ИНЦ.1")).toBeInTheDocument();
+  expect(screen.getByText("ВУ")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: /где и что сделать/ }));
   expect(screen.getByText("Задать minlen ≥ 8")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Включить в отчёт" })).toBeNull();
@@ -101,6 +101,6 @@ it("с правом управления включает профиль в от
   const api = renderPage(["view_report", "manage_engagements"]);
   await userEvent.click(await screen.findByRole("button", { name: "Включить в отчёт" }));
   await waitFor(() =>
-    expect(api.calls.some((c) => c.method === "PUT" && c.path === "/engagements/5/compliance-profiles/fstec-17")).toBe(true),
+    expect(api.calls.some((c) => c.method === "PUT" && c.path === "/engagements/5/compliance-profiles/fstec-117")).toBe(true),
   );
 });
