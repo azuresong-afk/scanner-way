@@ -1,0 +1,24 @@
+{
+  "openssl": {
+    "CVE-2023-0464": {"description": "x509 policy constraints", "releases": {
+      "bookworm": {"status": "resolved", "fixed_version": "3.0.8-1", "urgency": "not yet assigned"},
+      "bullseye": {"status": "resolved", "fixed_version": "1.1.1n-0+deb11u5", "urgency": "not yet assigned"}}},
+    "CVE-2024-0727": {"releases": {
+      "bookworm": {"status": "resolved", "fixed_version": "3.0.13-1~deb12u1", "urgency": "not yet assigned"}}},
+    "CVE-2099-1111": {"releases": {"bookworm": {"status": "open", "urgency": "unimportant"}}},
+    "CVE-2099-2222": {"releases": {"bookworm": {"status": "undetermined"}}},
+    "TEMP-0000000-ABCDEF": {"releases": {"bookworm": {"status": "open"}}}
+  },
+  "openssh": {
+    "CVE-2024-6387": {"releases": {
+      "bookworm": {"status": "resolved", "fixed_version": "1:9.2p1-2+deb12u3", "urgency": "not yet assigned"},
+      "bullseye": {"status": "resolved", "fixed_version": "0", "urgency": "not yet assigned"}}}
+  },
+  "glibc": {
+    "CVE-2023-4911": {"releases": {
+      "bookworm": {"status": "resolved", "fixed_version": "2.36-9+deb12u3", "urgency": "not yet assigned"}}}
+  },
+  "vim": {
+    "CVE-2099-3333": {"releases": {"bookworm": {"status": "resolved", "fixed_version": "0"}}}
+  }
+}
