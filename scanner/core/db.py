@@ -125,6 +125,32 @@ class ScanSchedule(Base):
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
 
 
+class FeedSync(Base):
+    """Автообновление справочника: расписание и итог последней загрузки.
+
+    source — bdu | nvd | nuclei (и другие источники, подключённые
+    в scanner.feeds.sources). last_success_at — граница инкрементальной
+    загрузки NVD; fingerprint — отпечаток последней загруженной выгрузки (БДУ),
+    по нему неизменившийся файл не грузится повторно.
+    """
+    __tablename__ = "feed_sync"
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, default="daily")   # daily|weekly|monthly
+    time_of_day: Mapped[str] = mapped_column(Text, default="03:00")
+    weekdays: Mapped[list[int]] = mapped_column(Jsonb, default=list)
+    month_day: Mapped[int | None] = mapped_column(Integer)
+    timezone: Mapped[str] = mapped_column(Text, default="UTC")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_run_at: Mapped[datetime | None] = mapped_column(TsTz, index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(TsTz)
+    last_success_at: Mapped[datetime | None] = mapped_column(TsTz)
+    last_result: Mapped[str | None] = mapped_column(Text)       # ok|unchanged|error
+    last_count: Mapped[int | None] = mapped_column(BigInteger)
+    message: Mapped[str | None] = mapped_column(Text)
+    fingerprint: Mapped[str | None] = mapped_column(Text)
+    running_since: Mapped[datetime | None] = mapped_column(TsTz)
+
+
 # ========== Прогоны ==========
 class ScanRun(Base):
     __tablename__ = "scan_runs"

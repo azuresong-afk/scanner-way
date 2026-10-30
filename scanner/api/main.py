@@ -26,6 +26,7 @@ from scanner.api import (
     routes_auth,
     routes_credentials,
     routes_engagements,
+    routes_feeds,
     routes_findings,
     routes_reachability,
     routes_runs,
@@ -41,6 +42,8 @@ from scanner.core.db import User, make_engine, make_session_factory, session_sco
 from scanner.core.models import Finding
 from scanner.core.orchestrator import ModuleFactory, RunService
 from scanner.core.reachability import CheckThrottle, ReachabilityResult, check_host
+from scanner.feeds.scheduler import FeedScheduler, seed_feed_sync
+from scanner.feeds.sources import FeedSource
 from scanner.reporting.remediation import RemediationResolver
 
 log = logging.getLogger(__name__)
@@ -94,7 +97,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
                executor: Executor | None = None,
                resolver_factory: ResolverFactory | None = None,
                reachability: ReachabilityCheck | None = None,
-               vault: CredentialVault | None = None) -> FastAPI:
+               vault: CredentialVault | None = None,
+               feed_sources: Mapping[str, FeedSource] | None = None,
+               feed_executor: Executor | None = None) -> FastAPI:
     settings = settings or ApiSettings()
     if session_factory is None:
         session_factory = make_session_factory(make_engine())
@@ -114,9 +119,13 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         bootstrap(session_factory, settings, audit)
+        seed_feed_sync(session_factory, timezone=settings.timezone,
+                       sources=app.state.feed_scheduler.sources)
         app.state.scheduler.start()
+        app.state.feed_scheduler.start()
         yield
         app.state.scheduler.stop()
+        app.state.feed_scheduler.stop()
         if own_executor:
             executor.shutdown(wait=False, cancel_futures=False)
 
@@ -132,6 +141,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
                                 executor=executor, vault=vault)
     app.state.scheduler = Scheduler(session_factory, app.state.runs, audit,
                                     tick_seconds=settings.scheduler_tick_seconds)
+    app.state.feed_scheduler = FeedScheduler(
+        session_factory, audit, sources=feed_sources, executor=feed_executor,
+        tick_seconds=settings.feeds_tick_seconds)
     app.state.default_timezone = settings.timezone
     app.state.resolver_factory = resolver_factory
     app.state.reach_check = reachability or check_host
@@ -155,6 +167,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_runs.router)
     app.include_router(routes_findings.router)
     app.include_router(routes_schedules.router)
+    app.include_router(routes_feeds.router)
     app.include_router(routes_reachability.router)
     app.include_router(routes_audit.router)
     return app

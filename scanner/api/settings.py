@@ -38,6 +38,10 @@ class ApiSettings(BaseSettings):
     scheduler_tick_seconds: float = 30.0
     timezone: str = "Europe/Moscow"
 
+    # Планировщик обновления справочников (БДУ/NVD/Nuclei): период проверки,
+    # секунды; 0 — выключен.
+    feeds_tick_seconds: float = 60.0
+
     # Проверок доступности хоста (без прогона) на пользователя в минуту.
     reachability_per_minute: int = 10
 

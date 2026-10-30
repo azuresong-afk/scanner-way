@@ -13,6 +13,11 @@ class Settings(BaseSettings):
 
     nvd_api_key: str = ""
     bdu_fstec_feed_path: str = "/data/bdu_fstec.xml"
+    # Если задан, автообновление скачивает выгрузку БДУ отсюда (в закрытом
+    # контуре оставьте пустым: обновляйте файл по bdu_fstec_feed_path вручную).
+    bdu_fstec_feed_url: str = ""
+    # Каталог шаблонов Nuclei; пусто — $HOME/nuclei-templates, как у самого Nuclei.
+    nuclei_templates_dir: str = ""
 
     # gentle | normal | aggressive
     default_rate_profile: str = "gentle"

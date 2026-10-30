@@ -101,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
     nvd.add_argument("--batch-size", type=int, default=1000)
     nvd.set_defaults(handler=cmd_sync_nvd)
 
+    auto = fsub.add_parser("auto-enabled", help="включено ли автообновление источника "
+                                                "по расписанию (код 0 — да, 1 — нет)")
+    auto.add_argument("source", help="bdu | nvd | nuclei")
+    auto.set_defaults(handler=cmd_auto_enabled)
+
     # --- run ---
     run = sub.add_parser("run", help="запустить прогон по договору (синхронно)")
     run.add_argument("--engagement", required=True, type=int, help="id договора")
@@ -273,6 +278,16 @@ def cmd_sync_nvd(args: argparse.Namespace, env: _Env) -> int:
                      details={**details, "records": n})
     print(f"NVD: загружено CVE — {n}")
     return 0
+
+
+def cmd_auto_enabled(args: argparse.Namespace, env: _Env) -> int:
+    """Для entrypoint: при включённом расписании старт не дублирует обновление."""
+    from sqlalchemy import select
+
+    from scanner.core.db import FeedSync, session_scope
+    with session_scope(env.sessions) as s:
+        enabled = s.scalar(select(FeedSync.enabled).where(FeedSync.source == args.source))
+    return 0 if enabled else 1
 
 
 def _registry(env: _Env):

@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   BarChart3,
   CalendarClock,
+  Database,
   FileText,
   LayoutDashboard,
   ListChecks,
@@ -36,6 +37,7 @@ const NAV: NavItem[] = [
   { to: "/findings", label: "Находки", icon: <ShieldAlert size={18} />, perm: "view_report" },
   { to: "/hosts", label: "Хосты", icon: <Server size={18} />, perm: "view_report" },
   { to: "/reports", label: "Отчёты", icon: <BarChart3 size={18} />, perm: "view_report" },
+  { to: "/feeds", label: "Справочники", icon: <Database size={18} />, perm: "view_engagements", admin: true },
   { to: "/audit", label: "Журнал аудита", icon: <ListChecks size={18} />, perm: "view_audit", admin: true },
   { to: "/users", label: "Пользователи и роли", icon: <Users size={18} />, perm: "manage_users", admin: true },
 ];

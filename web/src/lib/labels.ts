@@ -235,3 +235,9 @@ export function osSourceHint(source: string | null | undefined, accuracy: number
   if (source === "nmap") return `Отпечаток стека nmap -O${accuracy != null ? `, точность ${accuracy}%` : ""}: ядро без дистрибутива`;
   return "ОС не определена: нужен discovery с -O или учётная запись";
 }
+
+export const FEED_RESULT_LABEL: Record<string, string> = {
+  ok: "Обновлено",
+  unchanged: "Без изменений",
+  error: "Ошибка",
+};
