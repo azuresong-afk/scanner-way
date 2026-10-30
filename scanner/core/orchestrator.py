@@ -215,6 +215,8 @@ class RunOutcome:
     denied: list[DeniedTarget] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)   # модуль -> ошибка
     stopped: bool = False
+    # Факты для профилей соответствия (R5): какие проверки на хосте выполнялись.
+    compliance_facts: dict[str, dict] = field(default_factory=dict)
 
 
 class Orchestrator:
@@ -281,6 +283,12 @@ class Orchestrator:
         out.services = list(ctx.services or [])
         out.hosts = list(ctx.hosts.values())
         out.inventory = list(ctx.inventory.values())
+        from scanner.compliance.facts import merge_run_facts
+        out.compliance_facts = merge_run_facts(
+            ctx.compliance_facts, completed=ctx.completed,
+            discovered={s.host for s in out.services} | set(ctx.hosts),
+            inventory=ctx.inventory, policy_hosts=set(ctx.host_policy_configs),
+            targets=ctx.targets)
         return out
 
 
@@ -472,6 +480,29 @@ class RunService:
                 log.exception("scan_run %s: cannot mark as failed", scan_run_id)
             return "failed"
 
+    def _save_compliance(self, scan_run_id: int, out: RunOutcome) -> None:
+        """Статусы мер профилей соответствия (R5) по итогам прогона. Ошибка
+        расчёта не влияет на итог прогона: она в аудите, а результаты можно
+        пересчитать позже (POST /runs/{id}/compliance/recompute)."""
+        if not out.compliance_facts and not out.findings:
+            return
+        try:
+            from scanner.compliance import store as compliance_store
+            from scanner.compliance.catalog import default_catalog
+            from scanner.compliance.engine import evaluate_run
+            rows = evaluate_run(default_catalog(), out.compliance_facts, out.findings,
+                                out.services)
+            with session_scope(self.sessions) as s:
+                n = compliance_store.save_run(s, scan_run_id, out.compliance_facts, rows)
+            self.audit.record(subject="scanner", action="compliance_eval",
+                              target=f"scan_run:{scan_run_id}", result="ok",
+                              details={"rows": n, "hosts": len(out.compliance_facts)})
+        except Exception as e:  # соответствие вторично к находкам
+            log.exception("scan_run %s: compliance evaluation failed", scan_run_id)
+            self.audit.record(subject="scanner", action="compliance_eval",
+                              target=f"scan_run:{scan_run_id}", result="error",
+                              details={"error": f"{type(e).__name__}: {e}"[:500]})
+
     def _execute(self, scan_run_id: int, requested_targets: list[str]) -> str:
         with session_scope(self.sessions) as s:
             run = repo.get_scan_run(s, scan_run_id)
@@ -533,6 +564,8 @@ class RunService:
                              ("regression", d.regression)) for f in items}
             repo.save_findings(s, engagement_id=engagement_id, scan_run_id=scan_run_id,
                                findings=out.findings, statuses=statuses)
+        self._save_compliance(scan_run_id, out)
+        with session_scope(self.sessions) as s:
             run = repo.get_scan_run(s, scan_run_id)
             s.refresh(run)
             if out.stopped or run.status == "stopped":
