@@ -11,6 +11,9 @@
                 --confirm-authorized --allow-credentials
     scanner run --engagement 1 --targets 10.0.0.0/24 --modules discovery config_audit \
                 --credential 1 --confirm-authorized --allow-credentials
+    scanner credentials add --engagement 1 --name "Windows ДМЗ" --protocol winrm \
+                --user 'CORP\audit' --ask-password [--targets 10.0.2.0/24]
+    scanner feeds sync-msrc [--file 2024-Jan.json ...]
 
 БД — `--db-url` / `SCANNER_DATABASE_URL`, иначе Postgres из настроек окружения.
 Перед каждой командой схема поднимается миграциями Alembic (`alembic upgrade
@@ -140,11 +143,16 @@ def build_parser() -> argparse.ArgumentParser:
     # --- credentials ---
     cred = sub.add_parser("credentials", help="учётные записи активов договора")
     csub = cred.add_subparsers(dest="credentials_command", required=True, metavar="action")
-    cadd = csub.add_parser("add", help="завести учётку (SSH: пароль или ключ)")
+    cadd = csub.add_parser("add", help="завести учётку (SSH: пароль или ключ; "
+                                       "WinRM: пароль)")
     cadd.add_argument("--engagement", required=True, type=int, help="id договора")
     cadd.add_argument("--name", required=True, help="название учётки")
     cadd.add_argument("--user", required=True, dest="username", help="логин на активе")
-    cadd.add_argument("--port", type=int, default=22, help="порт SSH (по умолчанию 22)")
+    cadd.add_argument("--protocol", choices=("ssh", "winrm"), default="ssh",
+                      help="способ входа: ssh (Linux/Unix) или winrm (Windows, "
+                           "HTTPS + NTLM, логин ДОМЕН\\user); по умолчанию ssh")
+    cadd.add_argument("--port", type=int, default=None,
+                      help="порт (по умолчанию SSH 22, WinRM HTTPS 5986)")
     auth = cadd.add_mutually_exclusive_group(required=True)
     auth.add_argument("--key-file", type=Path, help="закрытый ключ SSH (OpenSSH/PEM)")
     auth.add_argument("--password-env", metavar="VAR",
@@ -502,19 +510,20 @@ def cmd_credentials_add(args: argparse.Namespace, env: _Env) -> int:
                 s, vault, engagement_id=args.engagement, name=args.name, auth=auth,
                 username=args.username, port=args.port, targets=args.targets,
                 password=password, private_key=private_key, passphrase=passphrase,
-                become=args.become)
+                become=args.become, protocol=args.protocol)
             row = repo.list_host_credentials(s, args.engagement)[-1]
             fingerprint, targets = row.key_fingerprint, list(row.targets or [])
+            port, become = row.port, row.become
     except CredentialError as e:
         raise CliError(str(e)) from e
     env.audit.record(subject=env.actor, action="credential_create",
                      target=f"engagement:{args.engagement}", result="ok",
                      details={"credential_id": cid, "name": args.name,
-                              "user": args.username, "port": args.port, "auth": auth,
-                              "become": args.become,
+                              "user": args.username, "port": port, "auth": auth,
+                              "become": become, "protocol": args.protocol,
                               "targets": targets, "key_fingerprint": fingerprint})
-    print(f"Учётная запись {cid} заведена: {args.username}, порт {args.port}, {auth}, "
-          f"повышение прав: {args.become}"
+    print(f"Учётная запись {cid} заведена: {args.protocol} {args.username}, порт {port}, "
+          f"{auth}, повышение прав: {become}"
           + (f", {fingerprint}" if fingerprint else ""))
     return 0
 
@@ -528,7 +537,7 @@ def cmd_credentials_list(args: argparse.Namespace, env: _Env) -> int:
         rows = repo.list_host_credentials(s, args.engagement)
         for r in rows:
             scope = ", ".join(str(t) for t in r.targets or []) or "все цели прогона"
-            print(f"{r.id}\t{r.name}\t{r.username}:{r.port}\t{r.auth}\t"
+            print(f"{r.id}\t{r.name}\t{r.protocol}\t{r.username}:{r.port}\t{r.auth}\t"
                   f"become={r.become}\t{scope}"
                   + (f"\t{r.key_fingerprint}" if r.key_fingerprint else ""))
     if not rows:

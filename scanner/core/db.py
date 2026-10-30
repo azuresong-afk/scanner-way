@@ -97,6 +97,8 @@ class HostCredentialRow(Base):
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
     # Повышение прав для аудита конфигураций: sudo | none (миграция 0008).
     become: Mapped[str] = mapped_column(Text, default="sudo", server_default="sudo")
+    # Способ входа: ssh | winrm (миграция 0014, R3).
+    protocol: Mapped[str] = mapped_column(Text, default="ssh", server_default="ssh")
 
 
 # ========== Наборы проверки учёток (аудит паролей) ==========
