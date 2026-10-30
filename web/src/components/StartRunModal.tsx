@@ -4,7 +4,7 @@ import { api, ApiError } from "../api/client";
 import type { DeniedTarget, EngagementOut, RunCreated, ScheduleIn, ScheduleKind, ScheduleOut } from "../api/types";
 import { useAuth, type Perm } from "../auth/AuthContext";
 import { localToIso, toLocalInput } from "../lib/format";
-import { ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, runTitle, type EngineInfo } from "../lib/labels";
+import { CREDENTIAL_MODULES, ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, runTitle, type EngineInfo } from "../lib/labels";
 import { parseTargets } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
 import { ErrorAlert, Modal } from "./ui";
@@ -79,7 +79,10 @@ export function StartRunModal({
   const eng = VULN_ENGINES.find((x) => x.id === engine)!;
   const allModules = [...modules, ...eng.modules];
   const parsed = parseTargets(targets);
-  const credsOk = !eng.credentials || credIds.length > 0;
+  const configAudit = modules.includes("config_audit");
+  // Учётки нужны движку «по учётной записи» и модулям из CREDENTIAL_MODULES (аудит конфигураций).
+  const needsCreds = eng.credentials || modules.some((m) => CREDENTIAL_MODULES.includes(m));
+  const credsOk = !needsCreds || credIds.length > 0;
   const scheduled = when === "schedule";
   const whenOk =
     !scheduled ||
@@ -104,7 +107,7 @@ export function StartRunModal({
         targets: parsed.targets,
         modules: allModules,
         rate_profile: profile,
-        credential_ids: eng.credentials ? credIds : [],
+        credential_ids: needsCreds ? credIds : [],
         cred_set_ids: credAuditOn ? credSetIds : [],
         name: name.trim() || undefined,
       };
@@ -264,39 +267,6 @@ export function StartRunModal({
               );
             })}
           </div>
-          {eng.credentials && (
-            <div className="stack" style={{ gap: 8, marginTop: 4 }}>
-              <span>Учётные записи для входа на хосты</span>
-              {creds.loading && !creds.data ? (
-                <small className="muted">Загрузка учётных записей…</small>
-              ) : creds.error ? (
-                <ErrorAlert error={creds.error} onRetry={creds.reload} />
-              ) : (creds.data ?? []).length === 0 ? (
-                <small style={{ color: "var(--warn)" }}>
-                  У договора нет учётных записей — добавьте их на странице договора в разделе «Учётные записи активов».
-                </small>
-              ) : (
-                <div className="grid-2">
-                  {creds.data!.map((c) => (
-                    <label key={c.id} className="option-card">
-                      <input type="checkbox" checked={credIds.includes(c.id)} onChange={() => toggleCred(c.id)} />
-                      <span>
-                        <b style={{ fontWeight: 500 }}>{c.name}</b>
-                        <small>
-                          {c.username} · {c.auth === "key" ? "ключ SSH" : "пароль"} · порт {c.port} ·{" "}
-                          {c.targets.length ? c.targets.join(", ") : "все цели прогона"}
-                        </small>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              <small className="muted">
-                На хосте выполняется одна команда только на чтение (ОС и список пакетов), без sudo. На хост пробуется не больше трёх учёток —
-                сначала с самой узкой областью действия.
-              </small>
-            </div>
-          )}
         </fieldset>
 
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
@@ -351,6 +321,48 @@ export function StartRunModal({
             </div>
           )}
         </fieldset>
+
+        {needsCreds && (
+          <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+            <span>Учётные записи для входа на хосты</span>
+            {creds.loading && !creds.data ? (
+              <small className="muted">Загрузка учётных записей…</small>
+            ) : creds.error ? (
+              <ErrorAlert error={creds.error} onRetry={creds.reload} />
+            ) : (creds.data ?? []).length === 0 ? (
+              <small style={{ color: "var(--warn)" }}>
+                У договора нет учётных записей — добавьте их на странице договора в разделе «Учётные записи активов».
+              </small>
+            ) : (
+              <div className="grid-2">
+                {creds.data!.map((c) => (
+                  <label key={c.id} className="option-card">
+                    <input type="checkbox" checked={credIds.includes(c.id)} onChange={() => toggleCred(c.id)} />
+                    <span>
+                      <b style={{ fontWeight: 500 }}>{c.name}</b>
+                      <small>
+                        {c.username} · {c.auth === "key" ? "ключ SSH" : "пароль"} · порт {c.port} · {c.become === "none" ? "без sudo" : "sudo"} ·{" "}
+                        {c.targets.length ? c.targets.join(", ") : "все цели прогона"}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {eng.credentials && (
+              <small className="muted">
+                Поиск уязвимостей по учётной записи: на хосте выполняется одна команда только на чтение (ОС и список пакетов), без sudo.
+              </small>
+            )}
+            {configAudit && (
+              <small className="muted">
+                Аудиту конфигураций нужны права root: учётка с повышением прав sudo (пароль учётки подаётся sudo через stdin, для ключа нужен
+                NOPASSWD) или вход под root. OpenSCAP и Lynis передаются во временный каталог и удаляются после проверки.
+              </small>
+            )}
+            <small className="muted">На хост пробуется не больше трёх учёток — сначала с самой узкой областью действия.</small>
+          </fieldset>
+        )}
 
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
           <span>Профиль нагрузки</span>

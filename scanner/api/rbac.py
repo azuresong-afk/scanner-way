@@ -14,7 +14,8 @@
     в одну базовую роль (включая admin) и выдаётся явно, вдобавок к operator;
   * host_credentials — отдельное право на учётные записи активов: заводить и
     удалять учётки договора и запускать с ними инвентаризацию по учётной
-    записи (модуль auth_inventory). Тоже выдаётся только явно.
+    записи (auth_inventory) и аудит конфигураций (config_audit). Тоже
+    выдаётся только явно.
 """
 from __future__ import annotations
 
@@ -52,7 +53,8 @@ ROLE_PERMISSIONS: dict[str, frozenset[Perm]] = {
 
 # Модуль -> дополнительное право сверх run_scan.
 MODULE_PERMISSIONS: dict[str, Perm] = {"cred_audit": Perm.CRED_AUDIT,
-                                       "auth_inventory": Perm.HOST_CREDENTIALS}
+                                       "auth_inventory": Perm.HOST_CREDENTIALS,
+                                       "config_audit": Perm.HOST_CREDENTIALS}
 
 
 user_roles = Table(

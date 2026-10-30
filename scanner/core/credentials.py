@@ -1,7 +1,9 @@
 """Учётные записи активов: хранение секретов и выбор учётки для хоста.
 
 Учётная запись (логин + пароль или SSH-ключ) заводится в договоре и
-используется модулем аутентифицированной инвентаризации (`auth_inventory`).
+используется модулями аутентифицированной инвентаризации (`auth_inventory`) и
+аудита конфигураций (`config_audit`). Для аудита конфигураций нужны права root:
+поле `become` (`sudo` | `none`) говорит, повышать ли права через sudo.
 
 Безопасность:
 - секреты (пароль, закрытый ключ, парольная фраза) хранятся в БД только
@@ -31,6 +33,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 AUTH_PASSWORD = "password"
 AUTH_KEY = "key"
 AUTH_KINDS = (AUTH_PASSWORD, AUTH_KEY)
+
+# Повышение прав на хосте: sudo (пароль учётки подаётся sudo через stdin,
+# для ключа — только NOPASSWD) или без повышения (вход сразу под root либо
+# проверка без root — часть правил аудита конфигураций тогда не проверится).
+BECOME_SUDO = "sudo"
+BECOME_NONE = "none"
+BECOME_KINDS = (BECOME_SUDO, BECOME_NONE)
 
 # Сколько учёток пробовать на одном хосте: учётки задаёт оператор, но
 # серия неудачных входов может заблокировать учётную запись на цели.
@@ -214,6 +223,7 @@ class HostCredential:
     password: str | None = field(default=None, repr=False)
     private_key: str | None = field(default=None, repr=False)
     passphrase: str | None = field(default=None, repr=False)
+    become: str = BECOME_SUDO                   # sudo | none
 
     def scope_prefix(self, host: str) -> int | None:
         """Длина префикса самой узкой подсети области, куда входит хост.
@@ -233,7 +243,15 @@ class HostCredential:
     def describe(self) -> dict[str, object]:
         """Описание для аудита и находок — без секретов."""
         return {"credential_id": self.id, "credential": self.name,
-                "user": self.username, "port": self.port, "auth": self.auth}
+                "user": self.username, "port": self.port, "auth": self.auth,
+                "become": self.become}
+
+
+def validate_become(become: str) -> str:
+    if become not in BECOME_KINDS:
+        raise CredentialError(f"недопустимое повышение прав: {become!r} "
+                              f"(допустимо: {', '.join(BECOME_KINDS)})")
+    return become
 
 
 def credentials_for_host(host: str, creds: Sequence[HostCredential],

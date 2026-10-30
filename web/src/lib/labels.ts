@@ -56,7 +56,12 @@ export const MODULES: ModuleInfo[] = [
     description: "Пакеты и версии ПО на хосте (SSH) → БДУ ФСТЭК и CVE/NVD",
     permission: "host_credentials",
   },
-  { id: "config_audit", label: "Аудит конфигураций", description: "CIS, требования ФСТЭК/ГОСТ (OpenSCAP, Lynis по SSH)" },
+  {
+    id: "config_audit",
+    label: "Аудит конфигураций",
+    description: "CIS, требования ФСТЭК/ГОСТ (OpenSCAP, Lynis) по учётной записи с sudo",
+    permission: "host_credentials",
+  },
   {
     id: "cred_audit",
     label: "Аудит учётных данных",
@@ -69,6 +74,9 @@ export const MODULE_LABEL: Record<string, string> = Object.fromEntries(MODULES.m
 
 /** Модули поиска уязвимостей — выбираются движком, а не флажками. */
 export const ENGINE_MODULES = ["vuln", "auth_inventory"];
+
+/** Модули, которые входят на хосты по учётным записям договора (CREDENTIAL_MODULES на бэкенде). */
+export const CREDENTIAL_MODULES = ["auth_inventory", "config_audit"];
 
 export interface EngineInfo {
   id: VulnEngine | "none";
@@ -193,7 +201,7 @@ export const ROLES = [
   {
     id: "host_credentials",
     label: "Право host_credentials",
-    description: "Учётные записи активов: заводить и запускать с ними поиск уязвимостей по учётной записи",
+    description: "Учётные записи активов: заводить и запускать с ними поиск уязвимостей по учётной записи и аудит конфигураций",
   },
 ];
 

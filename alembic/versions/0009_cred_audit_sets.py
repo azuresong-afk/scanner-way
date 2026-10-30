@@ -7,17 +7,16 @@
 * scan_runs.cred_set_ids / scan_schedules.cred_set_ids — наборы, выбранные для
   прогона (расшифровываются только на время прогона, как учётки активов).
 
-Wave-1 резервирует 0008 за R1a (config_audit на сохранённых учётках). Пока R1a
-не смёржен, цепочка строится от текущей головы 0007; при слиянии после R1a
-down_revision поднимается до "0008" (правило восходящего слияния волны 1).
+Идёт после R1a (0008, config_audit на сохранённых учётках) в линейной цепочке
+миграций волны 1.
 
 Revision ID: 0009
-Revises: 0007
+Revises: 0008
 """
 from alembic import op
 
 revision = "0009"
-down_revision = "0007"
+down_revision = "0008"
 branch_labels = None
 depends_on = None
 

@@ -9,6 +9,8 @@
                 --key-file ~/.ssh/id_ed25519 [--targets 10.0.0.0/24]
     scanner run --engagement 1 --targets 10.0.0.0/24 --engine credentialed --credential 1 \
                 --confirm-authorized --allow-credentials
+    scanner run --engagement 1 --targets 10.0.0.0/24 --modules discovery config_audit \
+                --credential 1 --confirm-authorized --allow-credentials
 
 БД — `--db-url` / `SCANNER_DATABASE_URL`, иначе Postgres из настроек окружения.
 Перед каждой командой схема поднимается миграциями Alembic (`alembic upgrade
@@ -36,7 +38,7 @@ from pathlib import Path
 
 from sqlalchemy.engine import Engine
 
-from scanner.core.orchestrator import MODULE_ORDER, VULN_ENGINES
+from scanner.core.orchestrator import CREDENTIAL_MODULES, MODULE_ORDER, VULN_ENGINES
 from scanner.core.ratelimit import PROFILES
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
@@ -149,6 +151,10 @@ def build_parser() -> argparse.ArgumentParser:
     cadd.add_argument("--targets", nargs="+", default=[],
                       help="область действия: IP/подсети из allowlist договора "
                            "(по умолчанию — все цели прогона)")
+    cadd.add_argument("--become", choices=("sudo", "none"), default="sudo",
+                      help="повышение прав для аудита конфигураций: sudo (пароль "
+                           "учётки через stdin; для ключа — NOPASSWD) или none "
+                           "(по умолчанию sudo)")
     cadd.set_defaults(handler=cmd_credentials_add)
     clist = csub.add_parser("list", help="учётки договора (без секретов)")
     clist.add_argument("--engagement", required=True, type=int, help="id договора")
@@ -326,7 +332,8 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
     if ("cred_audit" in args.modules or cred_sets) and not args.allow_cred_audit:
         raise CliError("cred_audit требует отдельного согласования: добавьте "
                        "--allow-cred-audit")
-    if ("auth_inventory" in args.modules or args.credentials) and not args.allow_credentials:
+    if ((CREDENTIAL_MODULES & set(args.modules)) or args.credentials) \
+            and not args.allow_credentials:
         raise CliError("вход на активы по учётным записям требует отдельного "
                        "согласования: добавьте --allow-credentials")
 
@@ -479,7 +486,8 @@ def cmd_credentials_add(args: argparse.Namespace, env: _Env) -> int:
             cid = repo.create_host_credential(
                 s, vault, engagement_id=args.engagement, name=args.name, auth=auth,
                 username=args.username, port=args.port, targets=args.targets,
-                password=password, private_key=private_key, passphrase=passphrase)
+                password=password, private_key=private_key, passphrase=passphrase,
+                become=args.become)
             row = repo.list_host_credentials(s, args.engagement)[-1]
             fingerprint, targets = row.key_fingerprint, list(row.targets or [])
     except CredentialError as e:
@@ -488,8 +496,10 @@ def cmd_credentials_add(args: argparse.Namespace, env: _Env) -> int:
                      target=f"engagement:{args.engagement}", result="ok",
                      details={"credential_id": cid, "name": args.name,
                               "user": args.username, "port": args.port, "auth": auth,
+                              "become": args.become,
                               "targets": targets, "key_fingerprint": fingerprint})
-    print(f"Учётная запись {cid} заведена: {args.username}, порт {args.port}, {auth}"
+    print(f"Учётная запись {cid} заведена: {args.username}, порт {args.port}, {auth}, "
+          f"повышение прав: {args.become}"
           + (f", {fingerprint}" if fingerprint else ""))
     return 0
 
@@ -503,7 +513,8 @@ def cmd_credentials_list(args: argparse.Namespace, env: _Env) -> int:
         rows = repo.list_host_credentials(s, args.engagement)
         for r in rows:
             scope = ", ".join(str(t) for t in r.targets or []) or "все цели прогона"
-            print(f"{r.id}\t{r.name}\t{r.username}:{r.port}\t{r.auth}\t{scope}"
+            print(f"{r.id}\t{r.name}\t{r.username}:{r.port}\t{r.auth}\t"
+                  f"become={r.become}\t{scope}"
                   + (f"\t{r.key_fingerprint}" if r.key_fingerprint else ""))
     if not rows:
         print("У договора нет учётных записей.")
