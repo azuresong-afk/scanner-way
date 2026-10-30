@@ -26,10 +26,12 @@ from scanner.core.credentials import (
     key_fingerprint,
     normalize_scope,
     validate_become,
+    validate_cred_set_entries,
     validate_username,
 )
 from scanner.core.db import (
     AllowlistEntry,
+    CredAuditSetRow,
     Engagement,
     FalsePositiveRow,
     FindingRow,
@@ -207,14 +209,101 @@ def load_host_credentials(session: Session, vault: CredentialVault, engagement_i
     return out
 
 
+# ========== Наборы проверки учёток (аудит паролей) ==========
+# Поддерживаемые сервисы — из модуля cred_audit (единый источник истины).
+def _supported_services() -> frozenset[str]:
+    from scanner.modules.cred_audit import SUPPORTED_SERVICES
+    return SUPPORTED_SERVICES
+
+
+def create_cred_audit_set(session: Session, vault: CredentialVault, *,
+                          engagement_id: int, name: str,
+                          entries: Iterable[tuple[str, str]],
+                          services: Iterable[str] = (),
+                          created_by: int | None = None) -> int:
+    """Завести набор проверки учёток. Секреты шифруются, открытым текстом не хранятся.
+
+    CredentialError — недопустимые данные (пустой набор, превышение лимита,
+    неизвестный сервис).
+    """
+    pairs = validate_cred_set_entries(entries)
+    svc = []
+    for s in services:
+        s = s.strip().lower()
+        if not s:
+            continue
+        if s not in _supported_services():
+            raise CredentialError(f"неподдерживаемый сервис: {s}")
+        if s not in svc:
+            svc.append(s)
+    row = CredAuditSetRow(engagement_id=engagement_id, name=name.strip(),
+                          services=svc, secret_enc=vault.encrypt_entries(pairs),
+                          entry_count=len(pairs), created_by=created_by)
+    session.add(row)
+    session.flush()
+    return row.id
+
+
+def list_cred_audit_sets(session: Session, engagement_id: int) -> list[CredAuditSetRow]:
+    return list(session.scalars(
+        select(CredAuditSetRow).where(CredAuditSetRow.engagement_id == engagement_id)
+        .order_by(CredAuditSetRow.id)))
+
+
+def get_cred_audit_set(session: Session, engagement_id: int,
+                       set_id: int) -> CredAuditSetRow | None:
+    row = session.get(CredAuditSetRow, set_id)
+    return row if row is not None and row.engagement_id == engagement_id else None
+
+
+def cred_set_masked_usernames(vault: CredentialVault, row: CredAuditSetRow,
+                              limit: int = 20) -> list[str]:
+    """Маскированные логины набора для выдачи наружу (секреты не раскрываются)."""
+    from scanner.core.credentials import mask_username
+    seen: list[str] = []
+    for username, _ in vault.decrypt_entries(row.secret_enc):
+        m = mask_username(username)
+        if m not in seen:
+            seen.append(m)
+        if len(seen) >= limit:
+            break
+    return seen
+
+
+def load_cred_set_entries(session: Session, vault: CredentialVault, engagement_id: int,
+                          ids: Iterable[int]) -> list[tuple[str, str]]:
+    """Расшифрованные пары логин/секрет выбранных наборов (только этого договора).
+
+    Дубликаты (логин, секрет) между наборами убираются."""
+    wanted = list(dict.fromkeys(int(i) for i in ids))
+    if not wanted:
+        return []
+    rows = {r.id: r for r in session.scalars(
+        select(CredAuditSetRow).where(CredAuditSetRow.id.in_(wanted),
+                                      CredAuditSetRow.engagement_id == engagement_id))}
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for sid in wanted:
+        r = rows.get(sid)
+        if r is None:
+            continue
+        for pair in vault.decrypt_entries(r.secret_enc):
+            if pair not in seen:
+                seen.add(pair)
+                out.append(pair)
+    return out
+
+
 # ========== Прогоны ==========
 def create_scan_run(session: Session, *, engagement_id: int, modules: list[str],
                     rate_profile: str = "gentle", started_by: int | None = None,
-                    credential_ids: Iterable[int] = (), name: str | None = None,
+                    credential_ids: Iterable[int] = (),
+                    cred_set_ids: Iterable[int] = (), name: str | None = None,
                     targets: Iterable[str] = (), schedule_id: int | None = None) -> int:
     run = ScanRun(engagement_id=engagement_id, modules=list(modules),
                   rate_profile=rate_profile, started_by=started_by, status="pending",
-                  credential_ids=[int(i) for i in credential_ids], name=name,
+                  credential_ids=[int(i) for i in credential_ids],
+                  cred_set_ids=[int(i) for i in cred_set_ids], name=name,
                   targets=list(targets), schedule_id=schedule_id)
     session.add(run)
     session.flush()

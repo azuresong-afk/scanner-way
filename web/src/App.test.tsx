@@ -115,7 +115,7 @@ describe("модуль cred_audit в форме запуска", () => {
   it("по учётной записи: нужна учётка, в запрос уходят auth_inventory и её id", async () => {
     const { dlg, api } = await openForm([...OPERATOR, "host_credentials"], {
       "GET /engagements/1/credentials": [CRED],
-      "POST /engagements/1/runs": { id: 9, engagement_id: 1, modules: [], rate_profile: "gentle", credential_ids: [5], status: "pending",
+      "POST /engagements/1/runs": { id: 9, engagement_id: 1, modules: [], rate_profile: "gentle", credential_ids: [5], cred_set_ids: [], status: "pending",
         started_by: 1, started_at: null, finished_at: null, created_at: null, accepted_targets: 1, denied_targets: [] },
     });
     await userEvent.click(within(dlg).getByRole("radio", { name: /По учётной записи/ }));
@@ -419,7 +419,7 @@ describe("проверка доступности хоста на страниц
 describe("расписания", () => {
   const SCHED = {
     id: 3, engagement_id: 1, name: null, title: "Обнаружение + Nuclei · 10.0.0.0/24", targets: ["10.0.0.0/24"], modules: ["discovery", "vuln"],
-    rate_profile: "gentle", credential_ids: [], kind: "weekly", time_of_day: "22:00", weekdays: [0, 4], month_day: null, run_at: null,
+    rate_profile: "gentle", credential_ids: [], cred_set_ids: [], kind: "weekly", time_of_day: "22:00", weekdays: [0, 4], month_day: null, run_at: null,
     timezone: "Europe/Moscow", enabled: true, next_run_at: "2026-10-30T19:00:00Z", last_run_at: "2026-10-27T19:00:00Z",
     last_result: "skipped_overlap", last_run_id: 7, owner_id: 1, created_at: null,
   };

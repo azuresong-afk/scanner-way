@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from scanner.api import (
     routes_audit,
     routes_auth,
+    routes_cred_sets,
     routes_credentials,
     routes_engagements,
     routes_findings,
@@ -152,6 +153,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_auth.router)
     app.include_router(routes_engagements.router)
     app.include_router(routes_credentials.router)
+    app.include_router(routes_cred_sets.router)
     app.include_router(routes_runs.router)
     app.include_router(routes_findings.router)
     app.include_router(routes_schedules.router)
