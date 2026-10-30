@@ -97,7 +97,7 @@ class AllowlistOut(_Orm):
 
 # ---- учётные записи активов ----
 class CredentialIn(BaseModel):
-    """Учётка для инвентаризации по SSH. Секреты только на вход — API их не отдаёт."""
+    """Учётка для инвентаризации и аудита конфигураций по SSH. Секреты только на вход — API их не отдаёт."""
     name: str = Field(min_length=1, max_length=128)
     username: str = Field(min_length=1, max_length=128)
     auth: str = Field(pattern="^(password|key)$")
@@ -107,9 +107,12 @@ class CredentialIn(BaseModel):
     passphrase: str | None = Field(default=None, max_length=1024)
     # IP/подсети из allowlist договора; пусто — все цели прогона
     targets: list[str] = Field(default_factory=list, max_length=256)
+    # Повышение прав для аудита конфигураций: sudo (пароль учётки / NOPASSWD) | none
+    become: str = Field(default="sudo", pattern="^(sudo|none)$")
 
     def __repr__(self) -> str:      # секреты не должны попасть в логи
-        return f"CredentialIn(name={self.name!r}, username={self.username!r}, auth={self.auth!r})"
+        return (f"CredentialIn(name={self.name!r}, username={self.username!r}, "
+                f"auth={self.auth!r}, become={self.become!r})")
 
     __str__ = __repr__
 
@@ -125,6 +128,7 @@ class CredentialOut(_Orm):
     key_fingerprint: str | None
     created_by: int | None
     created_at: datetime | None
+    become: str = "sudo"
 
     @field_validator("targets", mode="before")
     @classmethod

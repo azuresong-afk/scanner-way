@@ -81,7 +81,7 @@ it("закрытый раздел без права показывает отк�
 
 const CRED = {
   id: 5, engagement_id: 1, name: "Серверы ДМЗ", username: "audit", auth: "key", port: 22,
-  targets: ["10.0.0.0/24"], key_fingerprint: "SHA256:abc", created_by: 1, created_at: null,
+  targets: ["10.0.0.0/24"], key_fingerprint: "SHA256:abc", created_by: 1, created_at: null, become: "sudo",
 };
 
 describe("модуль cred_audit в форме запуска", () => {
@@ -130,6 +130,37 @@ describe("модуль cred_audit в форме запуска", () => {
     const call = api.calls.find((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")!;
     const sent = JSON.parse(String(call.init!.body));
     expect(sent.modules).toEqual(["discovery", "auth_inventory"]);
+    expect(sent.credential_ids).toEqual([5]);
+  });
+
+  it("аудит конфигураций скрыт без права host_credentials", async () => {
+    const { dlg } = await openForm(OPERATOR);
+    expect(within(dlg).queryByText("Аудит конфигураций")).not.toBeInTheDocument();
+  });
+
+  it("аудит конфигураций требует учётку, в запрос уходят config_audit и её id", async () => {
+    const { dlg, api } = await openForm([...OPERATOR, "host_credentials"], {
+      "GET /engagements/1/credentials": [CRED],
+      "POST /engagements/1/runs": { id: 9, engagement_id: 1, modules: [], rate_profile: "gentle", credential_ids: [5], status: "pending",
+        started_by: 1, started_at: null, finished_at: null, created_at: null, accepted_targets: 1, denied_targets: [] },
+    });
+    await userEvent.click(within(dlg).getByRole("radio", { name: /Не искать/ }));
+    expect(within(dlg).queryByText("Учётные записи для входа на хосты")).not.toBeInTheDocument();
+    await userEvent.click(within(dlg).getByRole("checkbox", { name: /Аудит конфигураций/ }));
+    expect(within(dlg).getByText(/Аудиту конфигураций нужны права root/)).toBeInTheDocument();
+    await userEvent.click(within(dlg).getByRole("button", { name: /Подставить весь allowlist/ }));
+    await userEvent.click(within(dlg).getByRole("checkbox", { name: /Подтверждаю/ }));
+    const submit = screen.getByRole("button", { name: "Запустить" });
+    expect(submit).toBeDisabled();                       // учётка не выбрана
+    const cred = await within(dlg).findByRole("checkbox", { name: /Серверы ДМЗ/ });
+    expect(cred.closest("label")).toHaveTextContent("sudo");
+    await userEvent.click(cred);
+    await waitFor(() => expect(submit).toBeEnabled());
+    await userEvent.click(submit);
+    await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")).toBe(true));
+    const call = api.calls.find((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")!;
+    const sent = JSON.parse(String(call.init!.body));
+    expect(sent.modules).toEqual(["discovery", "config_audit"]);
     expect(sent.credential_ids).toEqual([5]);
   });
 

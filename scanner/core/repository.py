@@ -19,11 +19,13 @@ from scanner.core.credentials import (
     AUTH_KEY,
     AUTH_KINDS,
     AUTH_PASSWORD,
+    BECOME_SUDO,
     CredentialError,
     CredentialVault,
     HostCredential,
     key_fingerprint,
     normalize_scope,
+    validate_become,
     validate_username,
 )
 from scanner.core.db import (
@@ -135,7 +137,8 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
                            port: int = 22, targets: Iterable[str] = (),
                            password: str | None = None, private_key: str | None = None,
                            passphrase: str | None = None,
-                           created_by: int | None = None) -> int:
+                           created_by: int | None = None,
+                           become: str = BECOME_SUDO) -> int:
     """Завести учётку договора. Секреты шифруются, в БД открытым текстом не попадают.
 
     Область действия (targets) обязана входить в allowlist договора: учётка не
@@ -146,6 +149,7 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
     if not 0 < port < 65536:
         raise CredentialError(f"недопустимый порт SSH: {port}")
     username = validate_username(username)
+    become = validate_become(become)
     scope = normalize_scope(targets)
     for cidr in scope:
         net = ipaddress.ip_network(cidr)
@@ -165,7 +169,8 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
     row = HostCredentialRow(engagement_id=engagement_id, name=name.strip(), auth=auth,
                             username=username, port=port, targets=scope,
                             secret_enc=vault.encrypt(secrets),
-                            key_fingerprint=fingerprint, created_by=created_by)
+                            key_fingerprint=fingerprint, created_by=created_by,
+                            become=become)
     session.add(row)
     session.flush()
     return row.id
@@ -197,7 +202,8 @@ def load_host_credentials(session: Session, vault: CredentialVault, engagement_i
             targets=tuple(str(t) for t in r.targets or ()),
             password=sec.get("password") if r.auth == AUTH_PASSWORD else None,
             private_key=sec.get("private_key") if r.auth == AUTH_KEY else None,
-            passphrase=sec.get("passphrase") if r.auth == AUTH_KEY else None))
+            passphrase=sec.get("passphrase") if r.auth == AUTH_KEY else None,
+            become=r.become or BECOME_SUDO))
     return out
 
 
@@ -478,7 +484,8 @@ def save_findings(session: Session, *, engagement_id: int, scan_run_id: int,
             severity=str(f.severity),
             cvss=None if f.cvss is None else Decimal(str(f.cvss)),
             evidence=f.evidence, status=str(statuses.get(key, FindingStatus.OPEN)),
-            dedup_key=key, detected_at=_aware(f.detected_at)))
+            dedup_key=key, detected_at=_aware(f.detected_at),
+            remediation=f.remediation))
         n += 1
     session.flush()
     return n
@@ -490,7 +497,7 @@ def row_to_finding(r: FindingRow) -> Finding:
         title=r.title, severity=Severity(r.severity), port=r.port, vuln_id=r.vuln_id,
         cve_ids=list(r.cve_ids or []), bdu_ids=list(r.bdu_ids or []),
         cvss=None if r.cvss is None else float(r.cvss), evidence=r.evidence,
-        detected_at=r.detected_at)
+        detected_at=r.detected_at, remediation=r.remediation)
 
 
 def get_findings(session: Session, scan_run_id: int,

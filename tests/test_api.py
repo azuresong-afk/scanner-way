@@ -74,7 +74,7 @@ class FakeCred(ScanModule):
 
 
 class Broken(ScanModule):
-    name = "config_audit"
+    name = "broken"
 
     def run(self, ctx: ScanContext) -> list[Finding]:
         raise RuntimeError("ssh unreachable")
@@ -109,7 +109,7 @@ def _make(sqlite_factory, rec, cves, executor):
     registry = {"discovery": lambda: FakeDiscovery(rec),
                 "vuln": lambda: FakeVuln(rec, cves),
                 "cred_audit": lambda: FakeCred(rec),
-                "config_audit": Broken}
+                "broken": Broken}
     settings = ApiSettings(secret=SECRET, bootstrap_admin="root",
                            bootstrap_password=PASSWORD, login_max_failures=3)
     return create_app(session_factory=sqlite_factory, settings=settings,
@@ -439,10 +439,10 @@ def test_stop_between_modules(api_deferred, deferred, sqlite_factory, rec):
 def test_module_error_fails_run_but_keeps_other_findings(api, sqlite_factory):
     eid = api.engagement("10.0.0.0/24")
     op = api.user("op", "operator")
-    r = _run(api, eid, op, ["10.0.0.1"], modules=["discovery", "config_audit"])
+    r = _run(api, eid, op, ["10.0.0.1"], modules=["discovery", "broken"])
     assert r.json()["status"] == "failed"
     assert len(api.c.get(f"/runs/{r.json()['id']}/findings", headers=op).json()) == 1
-    assert ("scanner", "module_finish", "config_audit", "error") in api.audit(sqlite_factory)
+    assert ("scanner", "module_finish", "broken", "error") in api.audit(sqlite_factory)
 
 
 # ---------- отчёты и сравнение ----------

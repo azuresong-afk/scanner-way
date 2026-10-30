@@ -49,7 +49,8 @@ VULN_ENGINES: dict[str, tuple[str, ...]] = {
     "credentialed": ("auth_inventory",),
     "both": ("vuln", "auth_inventory"),
 }
-CREDENTIAL_MODULES = frozenset({"auth_inventory"})
+# Модули, которые входят на хосты по учётным записям договора (ctx.credentials).
+CREDENTIAL_MODULES = frozenset({"auth_inventory", "config_audit"})
 
 # Защита от опечатки вида 10.0.0.0/8 в запросе: столько адресов за прогон
 # с запасом покрывает «десятки–сотни хостов».
@@ -87,8 +88,8 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
                                    matcher=matcher)
 
     def config_audit() -> ScanModule:
-        from scanner.modules.config_audit import ConfigAuditModule
-        return ConfigAuditModule()
+        from scanner.modules.config_audit import ConfigAuditModule, options_from_env
+        return ConfigAuditModule(options_from_env())
 
     def cred_audit() -> ScanModule:
         from scanner.modules.cred_audit import CredentialAuditModule
@@ -317,7 +318,9 @@ class RunService:
                                  "выберите хотя бы одну")
             return
         if not needs:
-            raise ValueError("учётные записи используются только модулем auth_inventory")
+            raise ValueError("учётные записи используются только модулями "
+                             f"{', '.join(sorted(CREDENTIAL_MODULES))}: выберите один из "
+                             "них или уберите учётки")
         if self.vault is None:
             raise ValueError("не задан ключ шифрования учётных записей "
                              "(SCANNER_CREDENTIALS_KEY или SCANNER_API_SECRET)")

@@ -99,7 +99,7 @@ def test_store_encrypts_and_loads(sqlite_factory, vault):
                                           password=PASSWORD, targets=["10.0.0.7"])
         kid = repo.create_host_credential(s, vault, engagement_id=eid, name="ключ",
                                           auth="key", username="root", port=2222,
-                                          private_key=key)
+                                          private_key=key, become="none")
     with session_scope(sqlite_factory) as s:
         rows = list(s.scalars(select(HostCredentialRow).order_by(HostCredentialRow.id)))
         assert [r.targets for r in rows] == [["10.0.0.7/32"], []]
@@ -110,6 +110,9 @@ def test_store_encrypts_and_loads(sqlite_factory, vault):
     assert [c.id for c in got] == [kid, pid]
     assert got[0].private_key.strip() == key.strip() and got[0].port == 2222
     assert got[1].password == PASSWORD and got[1].private_key is None
+    assert [c.become for c in got] == ["none", "sudo"]           # по умолчанию sudo
+    assert PASSWORD not in repr(got) and got[1].describe()["become"] == "sudo"
+    assert "password" not in got[1].describe()
 
 
 def test_store_rejects_scope_outside_allowlist_and_bad_input(sqlite_factory, vault):
@@ -128,6 +131,10 @@ def test_store_rejects_scope_outside_allowlist_and_bad_input(sqlite_factory, vau
         with pytest.raises(CredentialError, match="ключ"):
             repo.create_host_credential(s, vault, engagement_id=eid, name="x",
                                         auth="key", username="a", private_key="nope")
+        with pytest.raises(CredentialError, match="повышение прав"):
+            repo.create_host_credential(s, vault, engagement_id=eid, name="x",
+                                        auth="password", username="a", password="p",
+                                        become="su")
 
 
 def test_other_engagement_credentials_are_not_loaded(sqlite_factory, vault):
