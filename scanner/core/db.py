@@ -409,6 +409,46 @@ class AssetGroupRow(Base):
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
 
 
+# ========== Соответствие (R5) ==========
+class ComplianceProfileRow(Base):
+    """Профиль соответствия, выбранный для договора: уровень и адаптация набора."""
+    __tablename__ = "compliance_profile"
+    __table_args__ = (UniqueConstraint("engagement_id", "profile"),)
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"))
+    profile: Mapped[str] = mapped_column(Text)
+    level: Mapped[str | None] = mapped_column(Text)
+    excluded: Mapped[list[str]] = mapped_column(TextArray, default=list)
+    added: Mapped[list[str]] = mapped_column(TextArray, default=list)
+    in_report: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+
+
+class ComplianceResultRow(Base):
+    """Статус меры профиля по хосту в прогоне; host=None — «проверяется вручную»."""
+    __tablename__ = "compliance_result"
+    __table_args__ = (Index("idx_compliance_result_run", "scan_run_id", "profile"),)
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    scan_run_id: Mapped[int] = mapped_column(
+        ForeignKey("scan_runs.id", ondelete="CASCADE"))
+    profile: Mapped[str] = mapped_column(Text)
+    host: Mapped[str | None] = mapped_column(Inet)
+    control: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text)          # passed | failed | manual | na
+    evidence: Mapped[dict] = mapped_column(Jsonb, default=dict)
+
+
+class ComplianceFactsRow(Base):
+    """Какие проверки на хосте выполнялись в прогоне (для пересчёта соответствия)."""
+    __tablename__ = "compliance_facts"
+    scan_run_id: Mapped[int] = mapped_column(
+        ForeignKey("scan_runs.id", ondelete="CASCADE"), primary_key=True)
+    host: Mapped[str] = mapped_column(Inet, primary_key=True)
+    facts: Mapped[dict] = mapped_column(Jsonb, default=dict)
+
+
 def make_engine(url: str | None = None, **kwargs) -> Engine:
     """Engine по URL; по умолчанию — Postgres из настроек окружения."""
     if url is None:

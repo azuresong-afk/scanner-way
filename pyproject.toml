@@ -23,6 +23,8 @@ dependencies = [
     "tzdata>=2024.1",
     # WinRM (HTTPS + NTLM) для учёток Windows: scanner/core/winexec.py (R3)
     "pywinrm>=0.5",
+    # Профили соответствия ФСТЭК/CIS как данные: scanner/compliance/profiles/*.yaml (R5)
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]

@@ -25,6 +25,7 @@ from scanner.api import (
     routes_assets,
     routes_audit,
     routes_auth,
+    routes_compliance,
     routes_cred_sets,
     routes_credentials,
     routes_engagements,
@@ -187,6 +188,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_feeds.router)
     app.include_router(routes_integrations.router)
     app.include_router(routes_reachability.router)
+    app.include_router(routes_compliance.router)
     app.include_router(routes_audit.router)
     return app
 

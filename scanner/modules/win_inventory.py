@@ -44,6 +44,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from scanner.compliance.facts import record as record_fact
 from scanner.core.credentials import (
     PROTOCOL_WINRM,
     HostCredential,
@@ -551,6 +552,8 @@ class WinInventoryModule(ScanModule):
             sw_findings = (self._match_software(ctx, host, inv.software, matcher)
                            if matcher is not None else [])
             findings.append(self._summary(host, inv, cred, a, len(sw_findings)))
+            if inv.policy:
+                record_fact(ctx.compliance_facts, host, "windows_policy", dict(inv.policy))
             policy = self._policy_finding(host, inv.policy)
             if policy is not None:
                 findings.append(policy)

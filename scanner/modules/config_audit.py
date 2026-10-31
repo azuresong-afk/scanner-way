@@ -65,6 +65,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from scanner.compliance.facts import OPENSCAP_RESULTS
+from scanner.compliance.facts import record as record_fact
 from scanner.core.credentials import (
     AUTH_PASSWORD,
     BECOME_NONE,
@@ -504,12 +506,15 @@ def _parse_rule(r: ET.Element) -> _Rule:
                  refs=refs, docs=docs[:_MAX_DOCS])
 
 
-def parse_openscap_results(data: bytes, host: str, module: str = "config_audit"
+def parse_openscap_results(data: bytes, host: str, module: str = "config_audit",
+                           facts: dict | None = None
                            ) -> tuple[list[Finding], dict[str, str]]:
     """XCCDF results (Benchmark с TestResult) -> (находки по fail, рекомендации).
 
     В находки попадают только `fail`; `error`/`unknown` дают одну сводную
     info-находку (проверка не выполнена — это не нарушение, но и не «чисто»).
+    facts — словарь для фактов соответствия (R5): сюда пишутся профиль,
+    результат каждого выбранного правила и пункты CIS у правил с результатом.
     """
     root = _safe_xml(data)
     rules = {r.get("id"): r for r in root.iter() if _local(r.tag) == "Rule"}
@@ -524,9 +529,18 @@ def parse_openscap_results(data: bytes, host: str, module: str = "config_audit"
     findings: list[Finding] = []
     remediations: dict[str, str] = {}
     errored: list[str] = []
+    rule_results: dict[str, str] = {}
+    cis: dict[str, dict] = {}
     for rr in _children(tr, "rule-result"):
         rid = rr.get("idref") or ""
         result = _text(_child(rr, "result"))
+        if facts is not None and rid and result in OPENSCAP_RESULTS:
+            rule_results[rid] = result
+            if result in ("pass", "fail") and rid in rules:
+                r = _parse_rule(rules[rid])
+                if r.refs.get("CIS Benchmark"):
+                    cis[rid] = {"refs": list(dict.fromkeys(r.refs["CIS Benchmark"])),
+                                "title": r.title}
         if result in ("error", "unknown"):
             errored.append(rid)
             continue
@@ -560,6 +574,8 @@ def parse_openscap_results(data: bytes, host: str, module: str = "config_audit"
                                 title=f"OpenSCAP: {len(errored)} правил(а) не удалось проверить",
                                 severity=Severity.INFO, vuln_id="INFO:openscap-check-error",
                                 evidence=", ".join(errored[:50])))
+    if facts is not None:
+        facts.update(profile=profile, rules=rule_results, cis=cis)
     return findings, remediations
 
 
@@ -574,20 +590,27 @@ def _field(v: str) -> str:
     return "" if v in ("-", "") else v
 
 
-def parse_lynis_report(text: str, host: str, module: str = "config_audit"
+def parse_lynis_report(text: str, host: str, module: str = "config_audit",
+                       facts: dict | None = None
                        ) -> tuple[list[Finding], dict[str, str]]:
     """report.dat Lynis -> (находки по warning/suggestion, рекомендации).
 
     Строки `warning[]=ID|текст|детали|решение|`. Несколько записей с одним
     TEST-ID объединяются в одну находку (ключ сравнения прогонов — по ID), а
-    уровень берётся наивысший.
+    уровень берётся наивысший. facts — словарь для фактов соответствия (R5):
+    сюда пишется список выполненных тестов (tests_executed).
     """
     meta: dict[str, str] = {}
     entries: dict[str, dict] = {}
+    executed: list[str] = []
     for line in text.splitlines():
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
+        if key == "tests_executed":
+            executed.extend(t for t in (x.strip() for x in value.split("|"))
+                            if re.fullmatch(r"[A-Z]{3,5}-\d{4}", t))
+            continue
         if key not in _LYNIS_KIND:
             meta.setdefault(key, value.strip()[:_FIELD_MAX])
             continue
@@ -638,6 +661,8 @@ def parse_lynis_report(text: str, host: str, module: str = "config_audit"
                                     os_name and f"ОС: {os_name}",
                                     meta.get("hostname") and f"hostname: {meta['hostname']}")
                                     if p) or None))
+    if facts is not None:
+        facts["executed"] = list(dict.fromkeys(executed))
     return findings, remediations
 
 
@@ -848,6 +873,7 @@ class ConfigAuditModule(ScanModule):
         short = 120.0
         tmpdir: str | None = None
         self._audit(ctx, "config_audit_exec", host, "started", info)
+        facts: dict = {}
         try:
             if backend == OPENSCAP:
                 payload, _ = self._scap(plan.content or "")
@@ -882,10 +908,10 @@ class ConfigAuditModule(ScanModule):
                     raise ConfigAuditError(f"openscap: повреждённый вывод: {e}") from e
                 if len(xml) > MAX_OUTPUT_BYTES * 4:
                     raise ConfigAuditError("openscap: результаты слишком велики")
-                findings, rem = parse_openscap_results(xml, host, self.name)
+                findings, rem = parse_openscap_results(xml, host, self.name, facts)
             else:
                 findings, rem = parse_lynis_report(
-                    res.stdout.decode("utf-8", "replace"), host, self.name)
+                    res.stdout.decode("utf-8", "replace"), host, self.name, facts)
         except SshError as e:
             msg = _scrub(str(e), cred)
             self._audit(ctx, "config_audit_exec", host, "error",
@@ -908,6 +934,7 @@ class ConfigAuditModule(ScanModule):
                 f.evidence = f"{f.evidence}; {used}" if f.evidence else used
         with self._lock:
             self.remediations.update(rem)
+        record_fact(ctx.compliance_facts, host, backend, facts)
         self._audit(ctx, "config_audit_exec", host, "ok", {
             **info, "config_findings": sum(f.finding_type is FindingType.CONFIG
                                            for f in findings)})

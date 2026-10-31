@@ -1,0 +1,103 @@
+# CIS Critical Security Controls v8 — меры (safeguards), проверяемые на узлах.
+# Группы внедрения IG1 ⊂ IG2 ⊂ IG3: levels — в каких IG мера применяется.
+# Меры без checks — процессные (политики, обучение, договоры) и в отчёте идут
+# как «проверяется вручную».
+
+id: cis-controls-v8
+title: CIS Controls v8
+short: CIS Controls
+document: CIS Critical Security Controls, версия 8 (Center for Internet Security)
+url: https://www.cisecurity.org/controls/v8
+level_label: Группа внедрения
+levels: [IG1, IG2, IG3]
+default_level: IG1
+
+groups:
+  - code: "1"
+    title: Инвентаризация и контроль активов
+    controls:
+      - {id: "1.1", title: "Вести подробный перечень активов предприятия", levels: [IG1, IG2, IG3]}
+      - {id: "1.2", title: "Устранять неучтённые активы", levels: [IG1, IG2, IG3]}
+  - code: "2"
+    title: Инвентаризация и контроль программного обеспечения
+    controls:
+      - {id: "2.1", title: "Вести перечень программного обеспечения", levels: [IG1, IG2, IG3]}
+      - {id: "2.2", title: "Использовать только поддерживаемое программное обеспечение", levels: [IG1, IG2, IG3], checks: [security_updates]}
+      - {id: "2.3", title: "Устранять неразрешённое программное обеспечение", levels: [IG1, IG2, IG3], checks: [insecure_packages]}
+  - code: "3"
+    title: Защита данных
+    controls:
+      - {id: "3.3", title: "Настроить списки управления доступом к данным", levels: [IG1, IG2, IG3], checks: [auth_hash_files]}
+      - {id: "3.10", title: "Шифровать чувствительные данные при передаче", levels: [IG2, IG3], checks: [insecure_remote_protocols, ssh_crypto]}
+  - code: "4"
+    title: Безопасная конфигурация активов и ПО
+    controls:
+      - {id: "4.1", title: "Установить и поддерживать процесс безопасной конфигурации", levels: [IG1, IG2, IG3], checks: [hardening_kernel, mac_enabled, smb1_disabled]}
+      - {id: "4.3", title: "Настроить автоматическую блокировку сеанса на активах", levels: [IG1, IG2, IG3], checks: [session_timeout]}
+      - {id: "4.4", title: "Внедрить и настроить межсетевой экран на серверах", levels: [IG1, IG2, IG3], checks: [firewall_enabled]}
+      - {id: "4.6", title: "Безопасно управлять активами и ПО (защищённые протоколы управления)", levels: [IG1, IG2, IG3], checks: [insecure_remote_protocols, ssh_crypto, rdp_nla]}
+      - {id: "4.7", title: "Управлять стандартными учётными записями на активах и ПО", levels: [IG1, IG2, IG3], checks: [weak_credentials, ssh_root_login]}
+      - {id: "4.8", title: "Удалить или отключить ненужные службы на активах и ПО", levels: [IG2, IG3], checks: [unneeded_services, insecure_packages]}
+  - code: "5"
+    title: Управление учётными записями
+    controls:
+      - {id: "5.1", title: "Вести перечень учётных записей", levels: [IG1, IG2, IG3]}
+      - {id: "5.2", title: "Использовать уникальные пароли", levels: [IG1, IG2, IG3], checks: [password_length, password_complexity, password_history, weak_credentials, no_empty_passwords]}
+      - {id: "5.3", title: "Отключать неиспользуемые учётные записи", levels: [IG1, IG2, IG3]}
+      - {id: "5.4", title: "Ограничить права администратора выделенными учётными записями", levels: [IG1, IG2, IG3], checks: [least_privilege_sudo, uac, ssh_root_login]}
+  - code: "6"
+    title: Управление доступом
+    controls:
+      - {id: "6.1", title: "Установить процесс предоставления доступа", levels: [IG1, IG2, IG3]}
+      - {id: "6.2", title: "Установить процесс отзыва доступа", levels: [IG1, IG2, IG3]}
+      - {id: "6.3", title: "Требовать MFA для внешних приложений", levels: [IG1, IG2, IG3]}
+      - {id: "6.4", title: "Требовать MFA для удалённого сетевого доступа", levels: [IG1, IG2, IG3]}
+      - {id: "6.5", title: "Требовать MFA для административного доступа", levels: [IG1, IG2, IG3]}
+  - code: "7"
+    title: Непрерывное управление уязвимостями
+    controls:
+      - {id: "7.1", title: "Установить процесс управления уязвимостями", levels: [IG1, IG2, IG3]}
+      - {id: "7.2", title: "Установить процесс устранения уязвимостей", levels: [IG1, IG2, IG3], checks: [no_critical_vulns]}
+      - {id: "7.3", title: "Автоматически устанавливать обновления ОС", levels: [IG1, IG2, IG3], checks: [security_updates, auto_updates_windows]}
+      - {id: "7.4", title: "Автоматически устанавливать обновления приложений", levels: [IG1, IG2, IG3], checks: [security_updates]}
+      - {id: "7.5", title: "Выполнять автоматизированное сканирование уязвимостей внутренних активов", levels: [IG2, IG3]}
+      - {id: "7.7", title: "Устранять обнаруженные уязвимости", levels: [IG2, IG3], checks: [no_critical_vulns]}
+  - code: "8"
+    title: Управление журналами аудита
+    controls:
+      - {id: "8.1", title: "Установить процесс управления журналами аудита", levels: [IG1, IG2, IG3]}
+      - {id: "8.2", title: "Собирать журналы аудита", levels: [IG1, IG2, IG3], checks: [audit_daemon, syslog]}
+      - {id: "8.3", title: "Обеспечить достаточный объём хранения журналов", levels: [IG1, IG2, IG3], checks: [audit_storage]}
+      - {id: "8.4", title: "Стандартизировать синхронизацию времени", levels: [IG2, IG3], checks: [time_sync]}
+      - {id: "8.5", title: "Собирать подробные журналы аудита", levels: [IG2, IG3], checks: [audit_rules]}
+      - {id: "8.9", title: "Централизовать журналы аудита", levels: [IG2, IG3]}
+  - code: "10"
+    title: Защита от вредоносного ПО
+    controls:
+      - {id: "10.1", title: "Развернуть и поддерживать средства защиты от вредоносного ПО", levels: [IG1, IG2, IG3], checks: [antimalware]}
+      - {id: "10.2", title: "Настроить автоматическое обновление сигнатур", levels: [IG1, IG2, IG3]}
+      - {id: "10.3", title: "Отключить автозапуск со съёмных носителей", levels: [IG1, IG2, IG3], checks: [removable_media]}
+      - {id: "10.5", title: "Включить средства защиты от эксплуатации уязвимостей", levels: [IG2, IG3], checks: [hardening_kernel, lsa_protection]}
+  - code: "11"
+    title: Восстановление данных
+    controls:
+      - {id: "11.1", title: "Установить процесс восстановления данных", levels: [IG1, IG2, IG3]}
+      - {id: "11.2", title: "Выполнять автоматическое резервное копирование", levels: [IG1, IG2, IG3]}
+  - code: "12"
+    title: Управление сетевой инфраструктурой
+    controls:
+      - {id: "12.3", title: "Безопасно управлять сетевой инфраструктурой", levels: [IG2, IG3], checks: [insecure_remote_protocols]}
+  - code: "13"
+    title: Мониторинг и защита сети
+    controls:
+      - {id: "13.1", title: "Централизовать оповещения о событиях безопасности", levels: [IG2, IG3]}
+      - {id: "13.3", title: "Развернуть средство обнаружения сетевых вторжений", levels: [IG2, IG3]}
+  - code: "14"
+    title: Повышение осведомлённости и навыков
+    controls:
+      - {id: "14.1", title: "Установить программу повышения осведомлённости в области безопасности", levels: [IG1, IG2, IG3]}
+  - code: "17"
+    title: Управление реагированием на инциденты
+    controls:
+      - {id: "17.1", title: "Назначить ответственных за реагирование на инциденты", levels: [IG1, IG2, IG3]}
+      - {id: "17.3", title: "Установить процесс сообщения об инцидентах", levels: [IG1, IG2, IG3]}

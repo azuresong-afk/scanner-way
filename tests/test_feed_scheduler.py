@@ -136,6 +136,8 @@ def test_running_source_is_not_started_twice(sched, fake, sqlite_factory):
     now = _utc(2026, 10, 30, 12)
     _enable(sqlite_factory, now - timedelta(minutes=1), running_since=now)
     assert sched.tick(now) == [] and not fake.calls
+    # submit_manual смотрит на настоящее время, поэтому метка — «только что»
+    _enable(sqlite_factory, now - timedelta(minutes=1), running_since=datetime.now(UTC))
     assert sched.submit_manual("nvd", "user:x") is False
     # осиротевшая метка (процесс упал) не блокирует
     _enable(sqlite_factory, now - timedelta(minutes=1),
