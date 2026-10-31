@@ -1,0 +1,18 @@
+# CIS Benchmarks — процент соответствия по результатам правил бенчмарка.
+#
+# Профиль динамический: пункты не перечисляются вручную, а берутся из
+# результатов OpenSCAP (профиль XCCDF cis_* из SCAP Security Guide) — у каждого
+# правила SSG есть ссылка на пункт CIS Benchmark дистрибутива. Пункт выполнен,
+# если все правила с этим пунктом дали pass; провален — если хотя бы одно fail.
+# Хосты без OpenSCAP с профилем CIS (Astra Linux, РЕД ОС, Альт — только Lynis)
+# в процент не входят. Windows-хосты — см. CIS Controls.
+
+id: cis-benchmark
+title: CIS Benchmark (Linux, по правилам OpenSCAP)
+short: CIS Benchmark
+document: CIS Benchmark дистрибутива, уровень 1 (профиль cis_* SCAP Security Guide)
+url: https://www.cisecurity.org/cis-benchmarks
+level_label: Уровень
+levels: []
+dynamic: openscap_cis
+groups: []

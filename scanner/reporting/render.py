@@ -152,14 +152,18 @@ def host_blocks(report: Report) -> list[HostBlock]:
     return blocks
 
 
-def section_numbers(brief: bool, priority: bool = False) -> dict[str, int]:
+def section_numbers(brief: bool, priority: bool = False,
+                    compliance: bool = False) -> dict[str, int]:
     """Номера разделов: в краткой версии раздела «План устранения» нет; раздел
-    «Исправить в первую очередь» есть, только если считалась приоритизация."""
+    «Исправить в первую очередь» есть, только если считалась приоритизация;
+    «Соответствие требованиям» — если в отчёт включены профили (R5)."""
     keys = ["summary", "plan", "trend", "hosts", "details"]
     if brief:
         keys.remove("plan")
     if priority:
         keys.insert(1, "priority")
+    if compliance:
+        keys.insert(keys.index("trend"), "compliance")
     return {k: i for i, k in enumerate(keys, 1)}
 
 
@@ -233,7 +237,7 @@ class ReportRenderer:
         charts = {k: Markup(v.to_svg()) for k, v in build_charts(report, history).items()}
         return _env().get_template("report.html.j2").render(
             r=report, charts=charts, hosts=host_blocks(report),
-            num=section_numbers(report.brief, report.has_priority))
+            num=section_numbers(report.brief, report.has_priority, bool(report.compliance)))
 
     def render_pdf(self, report: Report, history: Sequence[RunPoint] | None = None) -> bytes:
         try:
@@ -409,7 +413,7 @@ class ReportRenderer:
         c = report.context
         s = report.summary
         t = report.combined.trend
-        num = section_numbers(report.brief, report.has_priority)
+        num = section_numbers(report.brief, report.has_priority, bool(report.compliance))
 
         # Обложка
         spacer(60)
@@ -508,6 +512,55 @@ class ReportRenderer:
                         hyperlink(lp, link.url)
             else:
                 doc.add_paragraph("Мер устранения не требуется.")
+
+        # Соответствие требованиям (профили ФСТЭК/CIS, R5)
+        if report.compliance:
+            heading(num["compliance"], "Соответствие требованиям")
+            small(doc.add_paragraph(), "Процент соответствия — доля выполненных мер среди "
+                  "проверенных автоматически. Организационные меры и меры, не проверенные "
+                  "в этом прогоне, в процент не входят и перечислены отдельно.", MUTED, 9)
+
+            def pct(v: float | None) -> str:
+                return "—" if v is None else f"{v:.0f}%"
+
+            for c in report.compliance:
+                head = c["profile"]["title"]
+                if c.get("level"):
+                    head += f" · {c['profile']['level_label'].lower()} {c['level']}"
+                doc.add_heading(_x(head), level=2)
+                small(doc.add_paragraph(), f"{c['profile']['document']}", MUTED, 8)
+                hyperlink(doc.add_paragraph(), c["profile"]["url"])
+                k = c["counts"]
+                kpis([("Соответствие", pct(c["percent"]), None),
+                      ("Выполнено", str(k["passed"]), GOOD),
+                      ("Не выполнено", str(k["failed"]), SEVERITY_HEX[Severity.HIGH]),
+                      ("Вручную / не проверено", f"{k['manual']} / {k['na']}", None)])
+                if c["groups"]:
+                    table(["Группа активов", "Хостов", "Выполнено", "Не выполнено",
+                           "Соответствие"],
+                          [[g["group"], g["hosts"], g["passed"], g["failed"], pct(g["percent"])]
+                           for g in c["groups"]], first_cm=5.0, num_from=1)
+                if c["hosts"]:
+                    table(["Хост", "Выполнено", "Не выполнено", "Не проверено", "Соответствие"],
+                          [[h["host"], h["passed"], h["failed"], h["na"], pct(h["percent"])]
+                           for h in c["hosts"]], first_cm=4.0, num_from=1)
+                else:
+                    doc.add_paragraph("В прогоне нет результатов проверок для этого профиля.")
+                if c["failures"]:
+                    doc.add_heading("Невыполненные меры", level=3)
+                    ft = table(["Мера", "Что сделать", "Где"],
+                               [[f"{f['id']} {f['title']}",
+                                 "; ".join(r["title"] for r in f["recommendations"]),
+                                 ", ".join(fh["host"] for fh in f["failed_hosts"])]
+                                for f in c["failures"]], widths=[6.0, 7.5, 3.5])
+                    if not report.brief:
+                        for row, f in zip(ft.rows[1:], c["failures"]):
+                            for r in f["recommendations"]:
+                                small(row.cells[1].add_paragraph(), r["remediation"], MUTED, 8)
+                if c["manual"]:
+                    doc.add_heading("Проверяется вручную", level=3)
+                    small(doc.add_paragraph(), "; ".join(f"{m['id']} {m['title']}"
+                                                         for m in c["manual"]), INK_2, 8)
 
         # Сравнение
         heading(num["trend"], "Сравнение с предыдущим прогоном")

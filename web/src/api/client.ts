@@ -13,6 +13,10 @@ import type {
   AuditExportFormat,
   AuditFilters,
   AuditOut,
+  ComplianceProfileDef,
+  ComplianceProfileIn,
+  ComplianceProfileOut,
+  ComplianceSummary,
   CredentialIn,
   CredentialOut,
   CredSetIn,
@@ -192,6 +196,25 @@ export const api = {
     json<AssetOut[]>(`/engagements/${engagementId}/assets/bulk`, { method: "POST", ...body(data) }),
   importAssets: (engagementId: number) =>
     json<AssetOut[]>(`/engagements/${engagementId}/assets/import-discovered`, { method: "POST" }),
+  complianceCatalog: () => json<ComplianceProfileDef[]>("/compliance/profiles"),
+  complianceProfiles: (engagementId: number) =>
+    json<ComplianceProfileOut[]>(`/engagements/${engagementId}/compliance-profiles`),
+  saveComplianceProfile: (engagementId: number, profile: string, data: ComplianceProfileIn) =>
+    json<ComplianceProfileOut>(`/engagements/${engagementId}/compliance-profiles/${encodeURIComponent(profile)}`, {
+      method: "PUT",
+      ...body(data),
+    }),
+  deleteComplianceProfile: (engagementId: number, profile: string) =>
+    request(`/engagements/${engagementId}/compliance-profiles/${encodeURIComponent(profile)}`, { method: "DELETE" }).then(
+      () => undefined,
+    ),
+  runCompliance: (runId: number, profile: string, level?: string | null, groupId?: number | null) => {
+    const p = new URLSearchParams({ profile });
+    if (level) p.set("level", level);
+    if (groupId != null) p.set("group_id", String(groupId));
+    return json<ComplianceSummary>(`/runs/${runId}/compliance?${p.toString()}`);
+  },
+  recomputeCompliance: (runId: number) => json<{ rows: number }>(`/runs/${runId}/compliance/recompute`, { method: "POST" }),
   assetTags: (engagementId: number) => json<AssetTagOut[]>(`/engagements/${engagementId}/asset-tags`),
   assetGroups: (engagementId: number) => json<AssetGroupOut[]>(`/engagements/${engagementId}/asset-groups`),
   createAssetGroup: (engagementId: number, name: string) =>

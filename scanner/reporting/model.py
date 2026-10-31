@@ -399,6 +399,9 @@ class Report:
     priority: list[PriorityItem] = field(default_factory=list)   # топ по рангу (R6)
     priority_hosts: list[HostPriority] = field(default_factory=list)
     has_priority: bool = False          # приоритизация считалась (передан RiskContext)
+    # Соответствие профилям ФСТЭК/CIS (R5): сводки scanner.compliance.engine.summarize
+    # по профилям договора с признаком «в отчёт»; пусто — раздела нет.
+    compliance: list[dict] = field(default_factory=list)
 
     @property
     def priority_formula(self) -> str:
@@ -434,6 +437,8 @@ class Report:
             out["priority"] = {"formula": self.priority_formula,
                                "items": [p.to_dict() for p in self.priority],
                                "hosts": [h.to_dict() for h in self.priority_hosts]}
+        if self.compliance:
+            out["compliance"] = [_compliance_dict(c, self.brief) for c in self.compliance]
         if self.brief:
             del out["remediation_plan"]
             for sec in [out["combined"], *out["modules"]]:
@@ -441,6 +446,18 @@ class Report:
                 for f in views:
                     f["remediation"] = {"references": f["remediation"]["references"]}
         return out
+
+
+def _compliance_dict(c: dict, brief: bool) -> dict:
+    """Сводка соответствия для JSON; в краткой версии без текстов рекомендаций."""
+    if not brief:
+        return c
+    strip = [{**f, "recommendations": [{"check": r["check"], "title": r["title"],
+                                        "doc": r["doc"]} for r in f.get("recommendations", [])]}
+             for f in c.get("failures", [])]
+    return {**c, "failures": strip,
+            "controls": [x for x in c.get("controls", []) if x.get("status") != "failed"]
+            + strip}
 
 
 def brief_report(report: Report) -> Report:
@@ -549,6 +566,7 @@ def build_report(
     false_positives: Mapping[str, FalsePositiveMark] | None = None,
     hosts: Collection[str] | None = None,
     risk: RiskContext | None = None,
+    compliance: list[dict] | None = None,
 ) -> Report:
     """Строит модель отчёта.
 
@@ -559,6 +577,8 @@ def build_report(
     прогонов (не считаются ни открытыми, ни устранёнными) и идут в отдельный раздел.
     risk — справочные данные приоритизации (EPSS, KEV, критичность активов): с ним
     в отчёте есть ранги находок и раздел «Исправить в первую очередь»; None — без них.
+    compliance — сводки соответствия профилям ФСТЭК/CIS (R5) для раздела
+    «Соответствие требованиям»; None — без раздела.
     hosts — адреса хостов (например, активов группы): в отчёт попадают только
     находки этих хостов; None — без фильтра (поведение по умолчанию).
     """
@@ -614,4 +634,5 @@ def build_report(
         )[:PRIORITY_TOP]],
         priority_hosts=_priority_hosts(views),
         has_priority=risk is not None,
+        compliance=list(compliance or []),
     )

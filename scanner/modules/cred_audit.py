@@ -39,6 +39,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from scanner.compliance.facts import record as record_fact
 from scanner.core.models import Finding, FindingType, ServiceInfo, Severity
 from scanner.modules.base import ScanContext, ScanModule
 
@@ -346,6 +347,9 @@ class CredentialAuditModule(ScanModule):
 
                 attempts += 1
                 per_account[cred.username] += 1
+                if res.outcome in (AuthOutcome.SUCCESS, AuthOutcome.FAILURE):
+                    # для профилей соответствия (R5): вход на хосте реально проверен
+                    record_fact(ctx.compliance_facts, host, "cred_audit", True)
                 ctx.audit.record(
                     subject="scanner", action="cred_audit_attempt", target=tgt,
                     result=str(res.outcome),

@@ -280,7 +280,8 @@ def get_report(run_id: int, request: Request,
                               run_id=run_id, previous_run_id=prev_id,
                               group=group.name if group else None),
         false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts,
-        risk=build_risk_context(session, current, eng.id))
+        risk=build_risk_context(session, current, eng.id),
+        compliance=_compliance_sections(session, run_id, eng.id, hosts))
     fmt, var = ReportFormat(format), ReportVariant(variant)
     body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",
@@ -293,3 +294,22 @@ def get_report(run_id: int, request: Request,
     return Response(content=body, media_type=CONTENT_TYPES[fmt], headers={
         "Content-Disposition":
             f'attachment; filename="report-run-{run_id}{suffix}.{fmt.value}"'})
+
+
+def _compliance_sections(session: Session, run_id: int, engagement_id: int,
+                         hosts: set[str] | None) -> list[dict]:
+    """Сводки соответствия (R5) по профилям договора с признаком «в отчёт»."""
+    from scanner.compliance import store as compliance_store
+    from scanner.compliance.catalog import default_catalog
+    rows = [r for r in compliance_store.list_profiles(session, engagement_id) if r.in_report]
+    if not rows or not compliance_store.has_results(session, run_id):
+        return []
+    catalog = default_catalog()
+    out = []
+    for r in rows:
+        if r.profile not in catalog.profiles:
+            continue
+        out.append(compliance_store.run_summary(
+            session, run_id, engagement_id, catalog.profiles[r.profile], catalog=catalog,
+            hosts=hosts))
+    return out

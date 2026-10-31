@@ -505,3 +505,20 @@ class AssetGroupOut(BaseModel):
 class AssetTagOut(BaseModel):
     tag: str
     count: int
+
+
+# ---------- Соответствие (R5) ----------
+class ComplianceProfileIn(BaseModel):
+    level: str | None = Field(default=None, max_length=16)
+    excluded: list[str] = Field(default_factory=list, max_length=300)
+    added: list[str] = Field(default_factory=list, max_length=300)
+    in_report: bool = True
+
+
+class ComplianceProfileOut(BaseModel):
+    profile: str
+    level: str | None
+    excluded: list[str]
+    added: list[str]
+    in_report: bool
+    updated_at: datetime | None = None

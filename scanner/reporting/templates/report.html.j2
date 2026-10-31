@@ -306,6 +306,57 @@
 {% endif %}
 {% endif %}
 
+{% if r.compliance %}
+<h2><span class="n">{{ "%02d"|format(num.compliance) }}</span>Соответствие требованиям</h2>
+<p class="lead">Процент соответствия — доля выполненных мер среди проверенных автоматически:
+выполнена — проверки на хостах прошли, не выполнена — нарушение хотя бы на одном хосте.
+Меры, которые нельзя проверить сканированием (организационные), и меры, не проверенные
+в этом прогоне, в процент не входят и перечислены отдельно. Для технических мер оценивается
+их реализация на узлах; документальная часть проверяется вручную.</p>
+{% for c in r.compliance %}
+<h3>{{ c.profile.title }}{% if c.level %} · {{ c.profile.level_label|lower }} {{ c.level }}{% endif %}</h3>
+<p class="ids">{{ c.profile.document }} · <a href="{{ c.profile.url }}">{{ c.profile.url }}</a>{% if c.adapted.excluded or c.adapted.added %} · набор мер адаптирован: исключено {{ c.adapted.excluded|length }}, добавлено {{ c.adapted.added|length }}{% endif %}</p>
+<div class="kpis">
+  <div class="kpi"><small>Соответствие</small><b>{% if c.percent is not none %}{{ "%.0f"|format(c.percent) }}%{% else %}—{% endif %}</b><span class="sub">проверено мер: {{ c.evaluated }} из {{ c.automated }}</span></div>
+  <div class="kpi"><small>Выполнено</small><b>{{ c.counts.passed }}</b></div>
+  <div class="kpi risk risk-high"><small>Не выполнено</small><b>{{ c.counts.failed }}</b></div>
+  <div class="kpi"><small>Проверяется вручную</small><b>{{ c.counts.manual }}</b><span class="sub">не проверено: {{ c.counts.na }}</span></div>
+</div>
+{% if c.groups %}
+<div class="wrap"><table>
+  <tr><th>Группа активов</th><th class="num">Хостов</th><th class="num">Выполнено</th><th class="num">Не выполнено</th><th class="num">Соответствие</th></tr>
+  {% for g in c.groups %}<tr><td>{{ g.group }}</td><td class="num">{{ g.hosts }}</td>{{ n(g.passed) }}{{ n(g.failed) }}<td class="num total">{% if g.percent is not none %}{{ "%.0f"|format(g.percent) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
+</table></div>
+{% endif %}
+{% if c.hosts %}
+<div class="wrap"><table>
+  <tr><th>Хост</th><th class="num">Выполнено</th><th class="num">Не выполнено</th><th class="num">Не проверено</th><th class="num">Соответствие</th></tr>
+  {% for h in c.hosts %}<tr><td class="mono">{{ h.host }}</td>{{ n(h.passed) }}{{ n(h.failed) }}{{ n(h.na) }}<td class="num total">{% if h.percent is not none %}{{ "%.0f"|format(h.percent) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
+</table></div>
+{% else %}
+<p class="muted">В прогоне нет результатов проверок для этого профиля: нужны аудит конфигураций
+и (или) инвентаризация по учётной записи.</p>
+{% endif %}
+{% if c.failures %}
+<h3>Невыполненные меры</h3>
+<div class="wrap"><table class="plan">
+  <tr><th>Мера</th><th>Что сделать</th><th>Где</th></tr>
+  {% for f in c.failures %}
+  <tr>
+    <td class="action"><b>{{ f.id }}</b><span class="src">{{ f.title }}</span></td>
+    <td class="action">{% for rec in f.recommendations %}<b>{{ rec.title }}</b>{% if not r.brief %}<span class="src">{{ rec.remediation }}</span>{% endif %}{% if rec.doc %}<span class="src"><a href="{{ rec.doc }}">{{ rec.doc }}</a></span>{% endif %}{% endfor %}</td>
+    <td class="mono">{% for fh in f.failed_hosts %}{{ fh.host }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+{% if c.manual %}
+<h3>Проверяется вручную</h3>
+<p class="ids">{% for m in c.manual %}<b>{{ m.id }}</b> {{ m.title }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+{% endif %}
+{% endfor %}
+{% endif %}
+
 <h2><span class="n">{{ "%02d"|format(num.trend) }}</span>Сравнение с предыдущим прогоном</h2>
 {% if t %}
 <div class="verdict">{{ t.verdict }}</div>

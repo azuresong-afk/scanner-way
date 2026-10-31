@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
 
 from scanner.core.audit import AuditSink
 from scanner.core.credentials import HostCredential
@@ -39,6 +40,9 @@ class ScanContext:
     host_policy_configs: dict[str, dict[str, str]] = field(default_factory=dict)
     # Модули, уже отработавшие без ошибки (оркестратор дополняет по ходу прогона).
     completed: set[str] = field(default_factory=set)
+    # Факты для профилей соответствия (R5): хост -> {ключ -> значение}, какие
+    # проверки на хосте реально выполнялись (см. scanner.compliance.facts).
+    compliance_facts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class ScanModule(ABC):
