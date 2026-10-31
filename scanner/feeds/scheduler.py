@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
@@ -55,8 +55,11 @@ def seed_feed_sync(session_factory: sessionmaker[Session], *, timezone: str = "U
 class FeedScheduler:
     def __init__(self, session_factory: sessionmaker[Session], audit: AuditSink, *,
                  sources: Mapping[str, FeedSource] | None = None,
-                 executor: Executor | None = None, tick_seconds: float = 60.0):
+                 executor: Executor | None = None, tick_seconds: float = 60.0,
+                 notifier: Callable[[str, str, str], None] | None = None):
         self.sessions = session_factory
+        # (источник, название, сообщение) — уведомление «справочник не обновился» (R9)
+        self.notifier = notifier
         self.audit = audit
         self.sources = dict(sources if sources is not None else SOURCES)
         self.tick_seconds = tick_seconds
@@ -175,6 +178,12 @@ class FeedScheduler:
                               "records": result.count if result else None,
                               "message": message[:300], "error": error,
                               "manual": manual or None})
+        if outcome == "error" and self.notifier is not None:
+            try:
+                self.notifier(source, self.sources[source].title,
+                              f"Обновление не удалось: {message[:300]}")
+            except Exception:  # уведомления вторичны
+                log.exception("feed %s: notification failed", source)
         return outcome
 
 

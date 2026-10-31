@@ -14,6 +14,7 @@ import { FeedsPage } from "./pages/FeedsPage";
 import { FindingsPage } from "./pages/FindingsPage";
 import { HostDetailPage } from "./pages/HostDetailPage";
 import { HostsPage } from "./pages/HostsPage";
+import { IntegrationsPage } from "./pages/IntegrationsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { CompliancePage } from "./pages/CompliancePage";
@@ -85,6 +86,7 @@ export function App() {
         <Route path="compliance" element={<RequirePerm perm="view_report"><CompliancePage /></RequirePerm>} />
         <Route path="reports" element={<RequirePerm perm="view_report"><ReportsPage /></RequirePerm>} />
         <Route path="feeds" element={<RequirePerm perm="view_engagements"><FeedsPage /></RequirePerm>} />
+        <Route path="integrations" element={<RequirePerm perm="view_engagements"><IntegrationsPage /></RequirePerm>} />
         <Route path="audit" element={<RequirePerm perm="view_audit"><AuditPage /></RequirePerm>} />
         <Route path="users" element={<RequirePerm perm="manage_users"><UsersPage /></RequirePerm>} />
         <Route path="*" element={<div className="card"><Empty title="Страница не найдена" /></div>} />

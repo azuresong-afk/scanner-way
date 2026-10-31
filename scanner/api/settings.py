@@ -42,6 +42,12 @@ class ApiSettings(BaseSettings):
     # секунды; 0 — выключен.
     feeds_tick_seconds: float = 60.0
 
+    # Уведомления (R9): как часто просматривать очередь повторов, секунды (0 —
+    # выключено), и внешний адрес интерфейса для ссылок на отчёт в сообщениях
+    # (https://scanner.example.local; пусто — ссылок нет).
+    notify_tick_seconds: float = 30.0
+    public_url: str = ""
+
     # Проверок доступности хоста (без прогона) на пользователя в минуту.
     reachability_per_minute: int = 10
 
