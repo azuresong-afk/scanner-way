@@ -190,7 +190,7 @@
   {% if r.context.customer %}<div class="customer">{{ r.context.customer }}</div>{% endif %}
   <div class="meta">
     {% if r.context.engagement %}<span>Договор / проект: <b>{{ r.context.engagement }}</b></span>{% endif %}
-    {% if r.context.group %}<span>Группа хостов: <b>{{ r.context.group }}</b></span>{% endif %}
+    {% if r.context.group %}<span>Группа активов: <b>{{ r.context.group }}</b></span>{% endif %}
     {% if r.context.run_id is not none %}<span>Прогон: <b>{{ r.context.run_id }}</b></span>{% endif %}
     {% if r.context.previous_run_id is not none %}<span>Сравнение с прогоном: <b>{{ r.context.previous_run_id }}</b></span>{% endif %}
     <span>Сформирован: <b>{{ r.context.generated_at.strftime("%d.%m.%Y %H:%M UTC") }}</b></span>
@@ -324,7 +324,7 @@
 </div>
 {% if c.groups %}
 <div class="wrap"><table>
-  <tr><th>Группа хостов</th><th class="num">Хостов</th><th class="num">Выполнено</th><th class="num">Не выполнено</th><th class="num">Соответствие</th></tr>
+  <tr><th>Группа активов</th><th class="num">Хостов</th><th class="num">Выполнено</th><th class="num">Не выполнено</th><th class="num">Соответствие</th></tr>
   {% for g in c.groups %}<tr><td>{{ g.group }}</td><td class="num">{{ g.hosts }}</td>{{ n(g.passed) }}{{ n(g.failed) }}<td class="num total">{% if g.percent is not none %}{{ "%.0f"|format(g.percent) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
 </table></div>
 {% endif %}

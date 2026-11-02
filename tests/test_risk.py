@@ -66,7 +66,7 @@ def test_exploit_and_criticality_multiply_and_cap_at_100():
     assert a.score == 100.0 and a.label == "critical"
     low = assess(RiskFactors(cvss=5.0, severity=Severity.MEDIUM, criticality="low"))
     assert low.score == 40.0 and low.label == "medium"
-    assert any("критичность хоста" in r for r in low.reasons)
+    assert any("критичность актива" in r for r in low.reasons)
 
 
 def test_unknown_criticality_means_medium():

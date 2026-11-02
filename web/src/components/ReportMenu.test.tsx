@@ -102,7 +102,7 @@ it("выбор группы активов добавляет group_id в зап
   const save = vi.spyOn(download, "saveBlob").mockImplementation(() => {});
   render(<ReportMenu runId={7} engagementId={5} />);
 
-  const select = await screen.findByRole("combobox", { name: "Группа хостов" });
+  const select = await screen.findByRole("combobox", { name: "Группа активов" });
   expect(screen.queryByRole("option", { name: "Пустая" })).toBeNull(); // пустые группы не предлагаем
   await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));

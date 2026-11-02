@@ -50,7 +50,7 @@ CRITICALITY_LABELS = {"low": "низкая", "medium": "средняя", "high":
 FORMULA_TEXT = (
     "Приоритет = CVSS×10 × (1,5 при наличии в CISA KEV) × (1,05 / 1,15 / 1,30 при EPSS "
     "≥ 1% / 10% / 50%) × (1,2 при известном эксплойте в БДУ ФСТЭК) × (0,8 / 1,0 / 1,15 / "
-    "1,3 по критичности хоста: низкая / средняя / высокая / критическая); не более 100. "
+    "1,3 по критичности актива: низкая / средняя / высокая / критическая); не более 100. "
     "Критический ≥ 85, высокий ≥ 65, средний ≥ 40, иначе низкий.")
 
 
@@ -136,7 +136,7 @@ def assess(factors: RiskFactors) -> RiskAssessment | None:
         reasons.append("в БДУ ФСТЭК отмечено наличие эксплойта")
     score *= K_CRITICALITY[crit]
     if crit != DEFAULT_CRITICALITY:
-        reasons.append(f"критичность хоста: {CRITICALITY_LABELS[crit]}")
+        reasons.append(f"критичность актива: {CRITICALITY_LABELS[crit]}")
     score = round(min(100.0, score), 1)
     key, ru = label_of(score)
     return RiskAssessment(score=score, label=key, label_ru=ru, factors=factors,

@@ -206,7 +206,7 @@ it("сводка показывает открытые уязвимости и �
   expect(within(tile("Регрессии")).getByText("0")).toBeInTheDocument();
 });
 
-it("вкладка «Хосты»: список постоянный, от прогона меняются только счётчики", async () => {
+it("вкладка «Активы»: список постоянный, от прогона меняются только счётчики", async () => {
   setToken("t");
   const run = (id: number) => ({
     id, engagement_id: 1, modules: ["discovery", "vuln"], rate_profile: "gentle", status: "done",
@@ -282,7 +282,7 @@ it("показывает ОС хостов, фильтрует и группир
   fireEvent.click(screen.getByRole("checkbox", { name: "По ОС" }));
   const groups = screen.getAllByRole("rowgroup").filter((g) => g.tagName === "TBODY");
   expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["Astra Linux", "Windows", "ОС не определена"]);
-  expect(within(groups[0]).getByText("2 хоста")).toBeInTheDocument();
+  expect(within(groups[0]).getByText("2 актива")).toBeInTheDocument();
   expect(localStorage.getItem("scanner.hosts.byOs")).toBe("1");
 });
 

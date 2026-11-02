@@ -104,7 +104,7 @@ it("в одной строке — инвентарь, уязвимости пр
   expect(within(await rowOf("10.0.0.2")).getByTitle(/По умолчанию/)).toHaveTextContent("Средняя");
   // заведённый вручную и не сканированный хост тоже в списке
   expect(within(await rowOf("10.0.0.50")).getByText("не сканировался")).toBeInTheDocument();
-  expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("3 хоста");
+  expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("3 актива");
 });
 
 it("фильтр по группе оставляет только её хосты", async () => {
@@ -142,7 +142,7 @@ it("без права manage_engagements атрибуты видны, но из�
   mockApi(routes([asset()]));
   renderPage(OPERATOR);
   await screen.findByText("Отдел ИТ");
-  expect(screen.queryByRole("button", { name: /Добавить хост/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Добавить актив/ })).toBeNull();
   expect(screen.queryByRole("checkbox", { name: "Выбрать все" })).toBeNull();
   expect(screen.queryByRole("button", { name: /Изменить 10\.0\.0\.1/ })).toBeNull();
 });

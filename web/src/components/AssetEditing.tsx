@@ -41,7 +41,7 @@ export function GroupsBar({
   const activeGroup = groups.find((g) => g.id === active) ?? null;
   const [renaming, setRenaming] = useState("");
   return (
-    <div className="inline os-filter" role="group" aria-label="Группы хостов">
+    <div className="inline os-filter" role="group" aria-label="Группы активов">
       <span className="faint chip-row-label">Группы</span>
       {groups.map((g) => (
         <button key={g.id} type="button" className="chip" aria-pressed={g.id === active} onClick={() => { onPick(g.id); setRenaming(g.name); }}>
@@ -182,7 +182,7 @@ export function AssetModal({
 
   return (
     <Modal
-      title={asset || presetAddress ? `Хост ${asset?.address ?? presetAddress}` : "Новый хост"}
+      title={asset || presetAddress ? `Актив ${asset?.address ?? presetAddress}` : "Новый актив"}
       onClose={onClose}
       footer={
         <>

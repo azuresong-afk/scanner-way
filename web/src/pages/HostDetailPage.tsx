@@ -72,7 +72,7 @@ export function HostDetailPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">
-            <Link to={run ? `/hosts?run=${run.id}` : "/hosts"}>Хосты</Link> / {host}
+            <Link to={run ? `/hosts?run=${run.id}` : "/hosts"}>Активы</Link> / {host}
           </span>
           <h1 className="mono" style={{ fontSize: 24 }}>
             {host}
@@ -196,7 +196,7 @@ function HostAccounting({ engagementId, host, canWrite }: { engagementId: number
   if (assets.error) return <ErrorAlert error={assets.error} onRetry={assets.reload} />;
   if (!assets.data) return null;
   return (
-    <section className="card card-pad host-accounting" aria-label="Учёт хоста">
+    <section className="card card-pad host-accounting" aria-label="Учёт актива">
       <div className="inline" style={{ gap: 21, flexWrap: "wrap", alignItems: "center" }}>
         <span className="stack" style={{ gap: 2 }}>
           <small className="faint">Критичность</small>

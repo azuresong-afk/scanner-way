@@ -136,12 +136,12 @@ export function ReportMenu({
             </span>
             <select
               className="select"
-              aria-label="Группа хостов"
+              aria-label="Группа активов"
               value={groupId ?? ""}
               disabled={disabled || !!busy}
               onChange={(e) => setGroupId(e.target.value === "" ? null : Number(e.target.value))}
             >
-              <option value="">все хосты</option>
+              <option value="">все активы</option>
               {groups.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.name}

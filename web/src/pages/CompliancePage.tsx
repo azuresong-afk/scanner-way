@@ -170,7 +170,7 @@ export function CompliancePage() {
             )}
             {(groups.data?.length ?? 0) > 0 && (
               <label className="inline" style={{ gap: 8 }}>
-                <span className="faint" style={{ fontSize: 13 }}>Группа хостов</span>
+                <span className="faint" style={{ fontSize: 13 }}>Группа активов</span>
                 <select
                   className="select"
                   style={{ width: "auto", height: 34 }}

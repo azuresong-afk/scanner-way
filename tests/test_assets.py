@@ -190,7 +190,7 @@ def test_report_by_group_contains_only_its_hosts(api):
     assert {f["host"] for f in full["combined"]["findings"]} == {"10.0.0.1", "10.0.0.2"}
     assert full["meta"]["group"] is None
     html = api.c.get(f"/runs/{run_id}/report?format=html&group_id={g['id']}", headers=op).text
-    assert "Группа хостов" in html
+    assert "Группа активов" in html
     assert api.c.get(f"/runs/{run_id}/report?format=json&group_id=9999",
                      headers=op).status_code == 404
     assert a["groups"] == [{"id": g["id"], "name": "DMZ"}]

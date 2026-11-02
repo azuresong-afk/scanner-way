@@ -255,12 +255,12 @@ export function HostsPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">{engagement.client ? `${engagement.client} · ${engagement.name}` : engagement.name}</span>
-          <h1>Хосты</h1>
+          <h1>Активы</h1>
         </div>
         <div className="actions">
           {canWrite && (
-            <button type="button" className="btn" onClick={() => setEditing("new")} title="Завести хост вручную, например ещё не сканированный">
-              <Plus size={16} /> Добавить хост
+            <button type="button" className="btn" onClick={() => setEditing("new")} title="Завести актив вручную, например ещё не сканированный хост">
+              <Plus size={16} /> Добавить актив
             </button>
           )}
           {runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} />}
@@ -319,7 +319,7 @@ export function HostsPage() {
                   className="input"
                   type="search"
                   placeholder={showAssets ? "IP, имя, ОС, владелец, тег" : "IP, сервис или ОС"}
-                  aria-label="Поиск хоста"
+                  aria-label="Поиск актива"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -376,11 +376,11 @@ export function HostsPage() {
           {firstLoad ? (
             <Loading />
           ) : hosts.length === 0 ? (
-            <Empty title="Хостов пока нет" icon={<Server size={28} />}>
-              {canWrite ? "Хосты появятся после первого прогона; можно и завести хост вручную." : "Хосты появятся после первого прогона."}
+            <Empty title="Активов пока нет" icon={<Server size={28} />}>
+              {canWrite ? "Активы появятся после первого прогона; можно и завести актив вручную." : "Активы появятся после первого прогона."}
             </Empty>
           ) : shown.length === 0 ? (
-            <Empty title="Хосты не найдены" />
+            <Empty title="Активы не найдены" />
           ) : (
             <div className="table-wrap">
               <table className="table" style={{ minWidth: showAssets ? 1240 : 980 }}>
@@ -456,7 +456,7 @@ export function HostsPage() {
       )}
       {removing?.asset && (
         <Modal
-          title={removing.scanned ? "Сбросить учётные данные хоста?" : "Удалить хост?"}
+          title={removing.scanned ? "Сбросить учётные данные актива?" : "Удалить актив?"}
           onClose={() => setRemoving(null)}
           footer={
             <>
@@ -480,8 +480,8 @@ export function HostsPage() {
         >
           <p style={{ margin: 0 }}>
             {removing.scanned
-              ? `У хоста ${removing.host} будут убраны владелец, теги, группы, заметки, а критичность вернётся к «Средней». Сам хост и результаты прогонов остаются.`
-              : `Хост ${removing.host} заведён вручную и ещё не сканировался — он пропадёт из списка.`}
+              ? `У актива ${removing.host} будут убраны владелец, теги, группы, заметки, а критичность вернётся к «Средней». Сам актив и результаты прогонов остаются.`
+              : `Актив ${removing.host} заведён вручную и ещё не сканировался — он пропадёт из списка.`}
           </p>
         </Modal>
       )}
@@ -492,7 +492,7 @@ export function HostsPage() {
 function plural(n: number): string {
   const d = n % 10;
   const dd = n % 100;
-  if (d === 1 && dd !== 11) return "хост";
-  if (d >= 2 && d <= 4 && (dd < 12 || dd > 14)) return "хоста";
-  return "хостов";
+  if (d === 1 && dd !== 11) return "актив";
+  if (d >= 2 && d <= 4 && (dd < 12 || dd > 14)) return "актива";
+  return "активов";
 }
