@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Eye } from "lucide-react";
 import { api } from "../api/client";
 import type { AssetGroupOut, ReportFormat, ReportSections, ReportVariant, RunOut } from "../api/types";
@@ -72,6 +72,18 @@ export function ReportMenu({
       () => setProfiles([]),
     );
   }, [engagementId]);
+  // «Выбрать все»: план (если он доступен — не в кратком) и все профили соответствия.
+  const sectionFlags = [...(variant === "brief" ? [] : [withPlan]), ...profiles.map((p) => p.on)];
+  const allOn = sectionFlags.length > 0 && sectionFlags.every(Boolean);
+  const someOn = sectionFlags.some(Boolean) && !allOn;
+  const allRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (allRef.current) allRef.current.indeterminate = someOn;
+  }, [someOn]);
+  const setAll = (on: boolean) => {
+    setWithPlan(on);
+    setProfiles((ps) => ps.map((p) => ({ ...p, on })));
+  };
   const sections: ReportSections = {
     ...(withPlan ? {} : { plan: false }),
     ...(profiles.length > 0 ? { compliance: profiles.filter((p) => p.on).map((p) => p.id) } : {}),
@@ -198,6 +210,16 @@ export function ReportMenu({
       {!compact && (
         <div className={`inline report-sections${small ? " sm" : ""}`} role="group" aria-label="Разделы отчёта">
           <span className="faint nowrap">Разделы:</span>
+          <label className="inline nowrap">
+            <input
+              ref={allRef}
+              type="checkbox"
+              checked={allOn}
+              disabled={disabled || !!busy || sectionFlags.length === 0}
+              onChange={(e) => setAll(e.target.checked)}
+            />
+            Выбрать все
+          </label>
           <label className="inline nowrap" title={variant === "brief" ? "В кратком отчёте плана устранения нет" : undefined}>
             <input
               type="checkbox"

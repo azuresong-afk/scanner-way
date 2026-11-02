@@ -143,10 +143,26 @@ it("разделы: план и профили соответствия — оп
   await userEvent.click(screen.getByRole("checkbox", { name: "План устранения" }));
   await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
-  expect(seen).toEqual([
+  expect(seen.slice(0, 2)).toEqual([
     { plan: null, compliance: "fstec-117" },
     { plan: "false", compliance: "none" },
   ]);
+
+  // «Выбрать все» включает план и все профили одним кликом
+  const all = screen.getByRole("checkbox", { name: "Выбрать все" });
+  expect(all).not.toBeChecked();
+  expect((all as HTMLInputElement).indeterminate).toBe(false); // всё снято
+  await userEvent.click(all);
+  expect(screen.getByRole("checkbox", { name: "План устранения" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Соответствие: ФСТЭК №117" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Соответствие: cis-controls-v8" })).toBeChecked();
+  await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(3));
+  expect(seen[2]).toEqual({ plan: null, compliance: "fstec-117,cis-controls-v8" });
+  await userEvent.click(screen.getByRole("checkbox", { name: "Соответствие: cis-controls-v8" }));
+  expect((all as HTMLInputElement).indeterminate).toBe(true);
+  await userEvent.click(all);
+  expect(all).toBeChecked();
 
   // в кратком отчёте плана нет всегда — флажок недоступен
   await userEvent.click(screen.getByRole("radio", { name: "Краткий" }));
