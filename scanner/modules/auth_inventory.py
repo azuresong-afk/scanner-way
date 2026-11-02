@@ -5,9 +5,11 @@
 установленные пакеты и их версии и сопоставляет их с БДУ ФСТЭК и NVD.
 
 На хосте выполняется ОДНА фиксированная команда только на чтение
-(`INVENTORY_SCRIPT`): /etc/os-release, `uname`, `hostname` и список пакетов
-dpkg / rpm / apk. Ничего не устанавливается, права root не нужны, в команду не
-подставляется ничего из входных данных (нет места для инъекции).
+(`INVENTORY_SCRIPT`): /etc/os-release, `uname`, `hostname`, список пакетов
+dpkg / rpm / apk и состояние ядра (`uname -r`, модули /sys/kernel/livepatch,
+`canonical-livepatch status`, флаг /var/run/reboot-required). Ничего не
+устанавливается, права root не нужны, в команду не подставляется ничего из
+входных данных (нет места для инъекции).
 
 Безопасность:
 - цели — только литеральные IP, уже прошедшие allowlist оркестратора; если в
@@ -30,6 +32,8 @@ dpkg / rpm / apk. Ничего не устанавливается, права r
   закрыто бэкпортом / не затронут — находки нет; уязвим — находка с версией
   исправления; нет записи вендора — как раньше, с оговоркой. Бюллетень может
   и добавить находку: CVE, исправленную вендором в версии выше установленной;
+- ядро (scanner.feeds.kernel): уязвимости РАБОТАЮЩЕГО ядра по бюллетеням вендора,
+  с учётом livepatch и «новое ядро установлено, но хост не перезагружен»;
 - INFO-находки: сводка инвентаризации хоста и ошибки (нет доступа, отказ входа).
 """
 from __future__ import annotations
@@ -60,6 +64,7 @@ from scanner.core.sshexec import (
     Unreachable,
     connect,
 )
+from scanner.feeds import kernel as kn
 from scanner.feeds import packages as pk
 from scanner.feeds.advisories import host_release
 from scanner.feeds.advisories.assess import Decision, Verdict, combine, decide
@@ -85,6 +90,24 @@ fi
 if command -v apk >/dev/null 2>&1; then
   echo '@@apk'; apk info -v 2>/dev/null
 fi
+echo '@@kernel-release'; uname -r 2>/dev/null
+echo '@@livepatch'
+for d in /sys/kernel/livepatch/*; do
+  [ -d "$d" ] && echo "${d##*/} $(cat "$d/enabled" 2>/dev/null)"
+done
+LP=$(command -v canonical-livepatch 2>/dev/null)
+[ -z "$LP" ] && [ -x /snap/bin/canonical-livepatch ] && LP=/snap/bin/canonical-livepatch
+if [ -n "$LP" ]; then
+  echo '@@canonical-livepatch'
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 20 "$LP" status --format json 2>/dev/null | head -c 200000
+  else
+    "$LP" status --format json 2>/dev/null | head -c 200000
+  fi
+  echo
+fi
+echo '@@reboot-required'
+[ -f /var/run/reboot-required ] && echo yes
 echo '@@end'
 """
 INVENTORY_COMMAND = "sh -c " + shlex.quote(INVENTORY_SCRIPT)
@@ -161,6 +184,18 @@ def parse_inventory(text: str, host: str) -> HostInventory:
         m = _APK_RE.match(line.strip())
         if m:
             add(InstalledPackage(m["name"][:200], f"{m['ver']}-r{m['rel']}"[:200], "apk"))
+    # Работающее ядро: uname -r, а у старого вывода — второе поле uname -srm.
+    rel = next((x.strip() for x in sections.get("kernel-release", []) if x.strip()), None)
+    if rel is None and inv.kernel and len(inv.kernel.split()) >= 2:
+        rel = inv.kernel.split()[1]
+    if rel and re.fullmatch(r"[\w.+~-]{1,128}", rel):
+        inv.kernel_release = rel
+    inv.livepatch_modules = kn.parse_livepatch_modules(sections.get("livepatch", []))[:50]
+    if "canonical-livepatch" in sections:
+        lp = "\n".join(sections["canonical-livepatch"])
+        inv.livepatch_tool = bool(lp.strip())
+        inv.livepatch_cves = sorted(kn.parse_canonical_livepatch(lp))[:5000]
+    inv.reboot_required = any(x.strip() == "yes" for x in sections.get("reboot-required", []))
     return inv
 
 
@@ -232,6 +267,7 @@ class _HostAdvisories:
         self.spec: FamilySpec | None = None
         self.release: str | None = None
         self._rows: dict[str, list[Advisory]] = {}
+        self._store: AdvisoryStore | None = None
         family = inv.os_family
         target = host_release(family, inv.os_version, inv.os_codename)
         if target is None:
@@ -248,7 +284,9 @@ class _HostAdvisories:
                                          + (f" ({why})" if why else ""))
             return
         names = {n for p in inv.packages for n in (p.name, p.source) if n}
+        names.update(kn.SOURCE_ALIASES.get(self.spec.manager, ()))   # ядро: linux / kernel
         self._rows = store.for_packages(self.spec.family, self.release, names)
+        self._store = store
         self.report = BackportReport(label, has_data=True)
 
     @property
@@ -267,9 +305,24 @@ class _HostAdvisories:
         return decide(by_src, cve, package=p.name, installed=_version_for(p, True),
                       manager=manager)
 
+    def rows(self, names: set[str]) -> list[Advisory]:
+        return [e for n in sorted(names) for e in self._rows.get(n, [])]
+
+    def uname_rows(self, release: str) -> list[Advisory]:
+        """Записи Ubuntu «работает ядро по шаблону uname», подходящие к uname -r."""
+        if self._store is None or self.spec is None or self.release is None:
+            return []
+        with_prefix = getattr(self._store, "with_prefix", None)
+        if with_prefix is None:
+            return []
+        rows = with_prefix(self.spec.family, self.release, kn.UNAME_PREFIX)
+        return [e for name, es in rows.items()
+                if kn.uname_matches(name[len(kn.UNAME_PREFIX):], release) for e in es]
+
     def fixed_cves(self, p: InstalledPackage) -> dict[str, Decision]:
-        """CVE, исправленные вендором в версии выше установленной (находки по бюллетеню)."""
-        if not self.has_data or pk.is_kernel(p.name) or \
+        """CVE, исправленные вендором в версии выше установленной (находки по бюллетеню).
+        Ядро и kpatch проверяются отдельно — по работающему ядру (_kernel_findings)."""
+        if not self.has_data or pk.is_kernel(p.name) or kn.is_kpatch(p.name) or \
                 _KERNEL_SOURCE_RE.fullmatch(p.source or ""):
             return {}
         cves = {e.cve for n in (p.name, p.source) if n for e in self._rows.get(n, [])
@@ -292,6 +345,48 @@ def _vendor_line(adv: _HostAdvisories, d: Decision) -> str:
     return (f"Бюллетень {src}{ref}: {d.cve} исправлена в версии {a.fixed_version} "
             f"(пакет {a.package}); установлена {d.installed} — пакет уязвим, обновите "
             "его из репозитория дистрибутива.")
+
+
+# ---------- ядро ----------
+
+@dataclass(slots=True)
+class KernelReport:
+    """Итог проверки работающего ядра (для сводки и аудита)."""
+    release: str | None                   # uname -r
+    package: str | None = None            # пакет работающего ядра и версия
+    checked: bool = False
+    reason: str | None = None             # почему не проверено
+    vulnerable: int = 0
+    livepatched: list[str] = field(default_factory=list)
+    fixed_by_reboot: int = 0
+    pending: str | None = None            # установлено, но не загружено
+    livepatch_modules: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        head = f"ядро: {self.release or 'не определено'}" + (
+            f" (пакет {self.package})" if self.package else "")
+        if not self.checked:
+            parts = [f"{head} — уязвимости ядра не проверены: {self.reason}"]
+        else:
+            parts = [(f"{head} — уязвимостей работающего ядра по бюллетеням вендора: "
+                      f"{self.vulnerable}")]
+            if self.livepatched:
+                parts.append(f"закрыто livepatch: {len(self.livepatched)}")
+        if self.pending:
+            parts.append(f"установлено более новое ядро {self.pending}, хост не "
+                         "перезагружен" + (f" (перезагрузка закроет {self.fixed_by_reboot})"
+                                           if self.fixed_by_reboot else ""))
+        if self.livepatch_modules:
+            parts.append("активны модули livepatch: " + ", ".join(self.livepatch_modules[:5]))
+        return "; ".join(parts)
+
+
+def _kernel_line(adv: _HostAdvisories, d: Decision, release: str) -> str:
+    a = d.advisory
+    ref = f" ({a.advisory_id})" if a and a.advisory_id else ""
+    fixed = a.fixed_version if a else "?"
+    return (f"Бюллетень {adv.report.source}{ref}: {d.cve} исправлена в ядре версии {fixed}; "
+            f"работает ядро {release} (версия {d.installed}) — уязвимо.")
 
 
 # ---------- модуль ----------
@@ -499,6 +594,161 @@ class AuthInventoryModule(ScanModule):
         rep.added = len(added)
         out.update(added)
 
+    def _kernel_findings(self, ctx: ScanContext, inv: HostInventory,
+                         adv: _HostAdvisories | None, matcher: _Matcher | None,
+                         existing: dict[str, Finding]) -> tuple[list[Finding], KernelReport]:
+        """Уязвимости РАБОТАЮЩЕГО ядра по бюллетеням вендора (scanner.feeds.kernel)."""
+        st = kn.kernel_state(inv.kernel_release, inv.packages)
+        run = st.package
+        rep = KernelReport(release=st.release, livepatch_modules=list(inv.livepatch_modules),
+                           package=f"{run.name} {run.version}" if run else None,
+                           pending=st.pending_release)
+        out: list[Finding] = []
+        if not inv.packages:
+            return out, rep
+        if not st.release:
+            rep.reason = "версия работающего ядра (uname -r) не получена"
+        elif adv is None or not adv.has_data or adv.spec is None:
+            rep.reason = (adv.report.source if adv is not None
+                          else "нет данных вендора для этой ОС")
+        if rep.reason is None:
+            assert adv is not None and adv.spec is not None and st.release
+            manager = adv.spec.manager
+            # (записи вендора, установленная версия работающего ядра, версия
+            # ожидающего перезагрузки ядра) по каждой CVE
+            sources: dict[str, list[tuple[list[Advisory], str, str | None]]] = {}
+            if run is not None:
+                names = {p.name for p in st.running} | {p.source for p in st.running
+                                                       if p.source}
+                if manager == "dpkg" and any((p.source or "").startswith("linux")
+                                             for p in st.running):
+                    names.add("linux")                     # трекер Debian: исходный linux
+                if manager == "rpm" and run.name in ("kernel", "kernel-core"):
+                    names.add("kernel")
+                rows = adv.rows(names)
+                for cve in {e.cve for e in rows}:
+                    sources.setdefault(cve, []).append(
+                        ([e for e in rows if e.cve == cve], run.version,
+                         st.pending.version if st.pending else None))
+            urows = adv.uname_rows(st.release)
+            abi = kn.abi(st.release)
+            if urows and abi:
+                for cve in {e.cve for e in urows}:
+                    sources.setdefault(cve, []).append(
+                        ([e for e in urows if e.cve == cve], abi,
+                         kn.abi(st.pending_release)))
+            if run is None and not urows:
+                rep.reason = (f"пакет работающего ядра {st.release} не найден среди "
+                              "установленных (самосборное ядро?) — сверить с бюллетенем "
+                              "нельзя")
+            else:
+                rep.checked = True
+                out.extend(self._kernel_vulns(ctx, inv, adv, matcher, existing, st, rep,
+                                              sources, manager))
+        if not rep.checked and st.release:
+            out.append(self._info(
+                inv.host, "INFO:kernel-unchecked",
+                f"Уязвимости ядра {st.release} не проверены",
+                f"{rep.reason}. Загрузите бюллетени дистрибутива («Справочники» → "
+                "«Бюллетени дистрибутивов» или файл в каталоге бюллетеней) и повторите "
+                "проверку."))
+        if st.pending is not None:
+            sev = Severity.MEDIUM if rep.fixed_by_reboot else Severity.LOW
+            ev = [f"Работает ядро {st.release}" + (f" (пакет {run.name} {run.version})"
+                                                    if run else "") + ".",
+                  (f"Установлено более новое ядро {st.pending_release} (пакет "
+                   f"{st.pending.name} {st.pending.version}), но хост с него не загружен.")]
+            if rep.fixed_by_reboot:
+                ev.append(f"Перезагрузка закроет уязвимостей ядра: {rep.fixed_by_reboot}.")
+            if inv.reboot_required:
+                ev.append("Система сама сообщает о необходимости перезагрузки "
+                          "(/var/run/reboot-required).")
+            out.append(Finding(
+                module=MODULE, host=inv.host, finding_type=FindingType.CONFIG,
+                vuln_id="KERNEL-REBOOT-PENDING", severity=sev,
+                title=f"Обновлённое ядро установлено, но не загружено: работает "
+                      f"{st.release}", evidence="\n".join(ev),
+                remediation=f"Перезагрузите хост в согласованное окно обслуживания, чтобы "
+                            f"загрузилось ядро {st.pending_release}; после перезагрузки "
+                            "проверьте `uname -r`."))
+        return out, rep
+
+    def _kernel_vulns(self, ctx: ScanContext, inv: HostInventory, adv: _HostAdvisories,
+                      matcher: _Matcher | None, existing: dict[str, Finding],
+                      st: kn.KernelState, rep: KernelReport,
+                      sources: dict[str, list[tuple[list[Advisory], str, str | None]]],
+                      manager: str) -> list[Finding]:
+        out: list[Finding] = []
+        run = st.package
+        pkg_name = run.name if run else f"ядро {st.release}"
+        livepatch = set(inv.livepatch_cves)
+        kp_rows = adv.rows({p.name for p in st.kpatch})
+        for cve in sorted(sources):
+            vuln: Decision | None = None
+            reboot_fixes = True
+            for rows, installed, pending in sources[cve]:
+                d = decide(rows, cve, package=pkg_name, installed=installed, manager=manager)
+                if d.verdict is not Verdict.VULNERABLE or not (d.advisory and
+                                                               d.advisory.fixed_version):
+                    continue                  # открытые без исправления находку не создают
+                vuln = vuln or d
+                if pending is None or not decide(rows, cve, package=pkg_name,
+                                                 installed=pending,
+                                                 manager=manager).closed:
+                    reboot_fixes = False
+            if vuln is None:
+                continue
+            if cve in livepatch:
+                rep.livepatched.append(cve)
+                continue
+            kp = [e for e in kp_rows if e.cve == cve]
+            if kp and any(decide(kp, cve, package=p.name, installed=p.version,
+                                 manager=manager).verdict is Verdict.FIXED
+                          for p in st.kpatch):
+                rep.livepatched.append(cve)
+                continue
+            line = _kernel_line(adv, vuln, st.release or "?")
+            prev = existing.get(cve)
+            if prev is not None:                 # та же CVE уже найдена у другого пакета
+                prev.evidence = "\n".join(x for x in (prev.evidence, line) if x)
+                continue
+            rep.vulnerable += 1
+            reboot = reboot_fixes and st.pending is not None
+            if reboot:
+                rep.fixed_by_reboot += 1
+            assert vuln.advisory is not None
+            fixed = vuln.advisory.fixed_version
+            f = Finding(module=MODULE, host=inv.host, finding_type=FindingType.VULN,
+                        vuln_id=cve, cve_ids=[cve],
+                        title=f"{cve}: ядро Linux {st.release} (исправлено в {fixed})")
+            if matcher is not None and hasattr(matcher, "enrich"):
+                try:
+                    matcher.enrich(f)  # type: ignore[attr-defined]
+                except Exception as e:  # noqa: BLE001 — находка важнее обогащения
+                    ctx.audit.record(subject="scanner", action="auth_inventory_kernel",
+                                     target=inv.host, result="error",
+                                     details={"cve": cve,
+                                              "error": f"{type(e).__name__}: {e}"[:300]})
+            note = ""
+            if f.severity is Severity.INFO:
+                f.severity = Severity.MEDIUM
+                note = ("\nУровень опасности не найден в NVD/БДУ — принят средний; "
+                        "уточните по бюллетеню.")
+            ev = [f"Работает ядро {st.release}" + (f" (пакет {run.name} {run.version})"
+                                                    if run else "") + ".", line]
+            if reboot:
+                ev.append(f"Исправленное ядро {st.pending_release} уже установлено, но хост "
+                          "не перезагружен.")
+            f.evidence = "\n".join(ev) + note
+            f.remediation = (
+                f"Исправленное ядро {st.pending_release} уже установлено: перезагрузите "
+                "хост, чтобы оно загрузилось." if reboot else
+                f"Обновите ядро из репозитория дистрибутива (пакет {pkg_name} — до версии "
+                f"не ниже {fixed}) и перезагрузите хост. Если перезагрузка сейчас "
+                "невозможна — примените livepatch вендора, если он подключён.")
+            out.append(f)
+        return out
+
     @staticmethod
     def _info(host: str, vuln_id: str, title: str, evidence: str | None) -> Finding:
         return Finding(module=MODULE, host=host, finding_type=FindingType.INFO,
@@ -507,12 +757,14 @@ class AuthInventoryModule(ScanModule):
 
     def _summary(self, inv: HostInventory, cred: HostCredential | None,
                  matched: int, backports: BackportReport | None = None,
-                 bdu_linked: int | None = None) -> Finding:
+                 bdu_linked: int | None = None,
+                 kernel: KernelReport | None = None) -> Finding:
         managers = sorted({p.manager for p in inv.packages})
         lines = [f"ОС: {inv.os_label or 'не определена'}"]
-        if inv.kernel:
-            lines.append(f"ядро: {inv.kernel} (с уязвимостями ядра по версии не "
-                         "сопоставляется — версия дистрибутива не равна апстриму)")
+        if kernel is not None and inv.packages:
+            lines.append(kernel.summary())
+        elif inv.kernel:
+            lines.append(f"ядро: {inv.kernel}")
         if inv.hostname:
             lines.append(f"имя хоста: {inv.hostname}")
         lines.append(f"пакетов: {len(inv.packages)}"
@@ -603,11 +855,23 @@ class AuthInventoryModule(ScanModule):
                                           "closed_ids": r.closed[:50],
                                           "confirmed": r.confirmed, "added": r.added,
                                           "no_record": r.no_record})
+            kernel_found, krep = self._kernel_findings(
+                ctx, inv, adv, matcher,
+                {f.vuln_id: f for f in matched if f.vuln_id})
+            ctx.audit.record(subject="scanner", action="auth_inventory_kernel", target=host,
+                             result="ok" if krep.checked else "not_checked",
+                             details={"release": krep.release, "package": krep.package,
+                                      "vulnerable": krep.vulnerable,
+                                      "livepatched": krep.livepatched[:50],
+                                      "pending": krep.pending,
+                                      "reason": krep.reason})
+            matched.extend(kernel_found)
             cred = next((c for c in creds if c.id == inv.credential_id), None)
             vulns = [f for f in matched if f.finding_type is FindingType.VULN]
             findings.append(self._summary(inv, cred, len(vulns),
                                           adv.report if adv else None,
-                                          bdu_linked=sum(1 for f in vulns if f.bdu_ids)))
+                                          bdu_linked=sum(1 for f in vulns if f.bdu_ids),
+                                          kernel=krep))
             findings.extend(matched)
         return findings
 

@@ -346,7 +346,7 @@ def test_advisory_adds_finding_missed_by_upstream_matching():
     assert f.severity.value == "medium" and "принят средний" in f.evidence
     # CVE-2023-4911 исправлена в deb12u3, установлена deb12u4 — находки нет
     assert "CVE-2023-4911" not in found
-    # ядро по бюллетеню не сопоставляется
+    # ядро сверяется только как работающее (uname -r): без него и по пакету linux-signed — нет
     kernel = [Advisory("debian", "bookworm", "linux-signed-amd64", "CVE-2099-8888",
                        FIXED, "6.1.90+1")]
     found2, _ = run_host(dpkg_host(DEBIAN_12), InMemoryAdvisoryStore([*recs, *kernel]))

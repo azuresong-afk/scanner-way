@@ -20,6 +20,8 @@ class AdvisoryStore(Protocol):
     def releases(self) -> set[tuple[str, str]]: ...
     def for_packages(self, family: str, release: str,
                      names: Iterable[str]) -> dict[str, list[Advisory]]: ...
+    def with_prefix(self, family: str, release: str,
+                    prefix: str) -> dict[str, list[Advisory]]: ...
     def replace_release(self, family: str, release: str,
                         records: Iterable[Advisory]) -> int: ...
 
@@ -36,6 +38,11 @@ class InMemoryAdvisoryStore:
     def for_packages(self, family, release, names):
         rel = self._rows.get((family, release), {})
         return {n: list(rel[n]) for n in set(names) if n in rel}
+
+    def with_prefix(self, family, release, prefix):
+        """Записи пакетов с именем на prefix (ядро Ubuntu: ``uname:<шаблон>``)."""
+        rel = self._rows.get((family, release), {})
+        return {n: list(v) for n, v in rel.items() if n.startswith(prefix) and v}
 
     def replace_release(self, family, release, records):
         rel: dict[str, list[Advisory]] = defaultdict(list)
@@ -73,6 +80,18 @@ class SqlAdvisoryStore:
                     out[pkg].append(Advisory(family, release, pkg, cve, status, fixed, adv))
         return dict(out)
 
+    def with_prefix(self, family, release, prefix):
+        out: dict[str, list[Advisory]] = defaultdict(list)
+        like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        with self.engine.connect() as c:
+            q = select(_T.c.package, _T.c.cve, _T.c.status, _T.c.fixed_version,
+                       _T.c.advisory_id).where(
+                _T.c.family == family, _T.c.release == release,
+                _T.c.package.like(like, escape="\\"))
+            for pkg, cve, status, fixed, adv in c.execute(q):
+                out[pkg].append(Advisory(family, release, pkg, cve, status, fixed, adv))
+        return dict(out)
+
     def replace_release(self, family, release, records):
         """Заменяет данные выпуска целиком в одной транзакции: сканер, читающий
         таблицу во время загрузки, видит либо старые данные, либо новые."""
@@ -102,6 +121,7 @@ class CachingAdvisoryStore:
         self.inner = inner
         self._releases: set[tuple[str, str]] | None = None
         self._pkgs: dict[tuple[str, str, str], list[Advisory]] = {}
+        self._prefix: dict[tuple[str, str, str], dict[str, list[Advisory]]] = {}
         self._lock = threading.Lock()
 
     def releases(self) -> set[tuple[str, str]]:
@@ -122,6 +142,16 @@ class CachingAdvisoryStore:
         with self._lock:
             return {n: self._pkgs[(family, release, n)] for n in names
                     if self._pkgs.get((family, release, n))}
+
+    def with_prefix(self, family, release, prefix):
+        key = (family, release, "\0prefix:" + prefix)
+        with self._lock:
+            hit = self._prefix.get(key)
+        if hit is None:
+            hit = self.inner.with_prefix(family, release, prefix)
+            with self._lock:
+                self._prefix[key] = hit
+        return hit
 
     def replace_release(self, family, release, records):
         raise TypeError("кэш прогона только для чтения")

@@ -114,6 +114,12 @@ class HostInventory:
     hostname: str | None = None
     packages: list[InstalledPackage] = field(default_factory=list)
     credential_id: int | None = None     # какой учёткой собрано (без секретов)
+    # Работающее ядро и livepatch (scanner.feeds.kernel). В БД не сохраняются.
+    kernel_release: str | None = None    # uname -r
+    livepatch_modules: list[str] = field(default_factory=list)   # /sys/kernel/livepatch
+    livepatch_cves: list[str] = field(default_factory=list)      # canonical-livepatch
+    livepatch_tool: bool = False         # canonical-livepatch есть и ответил
+    reboot_required: bool = False        # /var/run/reboot-required
 
     @property
     def os_label(self) -> str | None:
