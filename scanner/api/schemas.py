@@ -337,6 +337,28 @@ class PriorityOut(BaseModel):
     factors: dict
 
 
+class HostCountsOut(BaseModel):
+    host: str
+    counts: dict[str, int]
+    total: int
+
+
+class FindingsSummaryOut(BaseModel):
+    """Сводка прогона без выгрузки находок (ложные срабатывания не считаются)."""
+    counts: dict[str, int]                 # уровень -> число
+    open: int                              # все уровни, кроме info
+    hosts: int
+    new: int
+    regression: int
+    fixed: int                             # закрыто относительно previous_run_id
+    false_positives: int
+    bdu_share: float | None
+    modules: list[str]
+    statuses: dict[str, int]
+    previous_run_id: int | None
+    host_counts: list[HostCountsOut]
+
+
 class FindingOut(BaseModel):
     id: int
     dedup_key: str

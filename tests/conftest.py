@@ -29,3 +29,12 @@ def sqlite_factory():
     Base.metadata.create_all(engine)
     yield make_session_factory(engine)
     engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_priority_cache():
+    """Кэш приоритетов живёт в процессе API и ключуется id прогона; у тестов
+    каждая БД своя, а id прогонов повторяются — кэш сбрасывается между тестами."""
+    from scanner.api.routes_findings import clear_priority_cache
+    clear_priority_cache()
+    yield

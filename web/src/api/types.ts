@@ -261,6 +261,61 @@ export interface RunOut {
   retry_of?: number | null;
 }
 
+/** Страница списка: элементы и общее число по фильтру (X-Total-Count). */
+export interface Page<T> {
+  items: T[];
+  total: number;
+}
+
+export type FindingSort = "severity" | "priority" | "cvss" | "host" | "title" | "module" | "id";
+
+/** Параметры серверной выборки находок прогона (GET /runs/{id}/findings). */
+export interface FindingQuery {
+  severity?: Severity[];
+  module?: string[];
+  status?: string[];
+  host?: string;
+  q?: string;
+  bdu_only?: boolean;
+  include_info?: boolean;
+  false_positives?: "include" | "exclude" | "only";
+  sort?: FindingSort;
+  order?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}
+
+export interface RunQuery {
+  status?: RunStatus[];
+  q?: string;
+  sort?: "id" | "created_at" | "started_at" | "finished_at" | "status" | "name";
+  order?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}
+
+export interface HostCountsOut {
+  host: string;
+  counts: Record<Severity, number>;
+  total: number;
+}
+
+/** Сводка прогона с сервера (ложные срабатывания в счётчиках не участвуют). */
+export interface FindingsSummary {
+  counts: Record<Severity, number>;
+  open: number;
+  hosts: number;
+  new: number;
+  regression: number;
+  fixed: number;
+  false_positives: number;
+  bdu_share: number | null;
+  modules: string[];
+  statuses: Record<string, number>;
+  previous_run_id: number | null;
+  host_counts: HostCountsOut[];
+}
+
 export interface RunCreated extends RunOut {
   accepted_targets: number;
   denied_targets: DeniedTarget[];

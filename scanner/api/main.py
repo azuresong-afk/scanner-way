@@ -98,6 +98,16 @@ def bootstrap(session_factory: sessionmaker[Session], settings: ApiSettings,
                  details={"roles": ["admin"], "bootstrap": True})
 
 
+def _on_run_finished(session_factory, notifier):
+    """После прогона: уведомления (R9) и заранее посчитанные приоритеты."""
+    def hook(scan_run_id: int) -> None:
+        try:
+            notifier.notify_run_finished(scan_run_id)
+        finally:
+            routes_findings.warm_priorities(session_factory, scan_run_id)
+    return hook
+
+
 def _alive(obj) -> bool:
     """Фоновый поток компонента жив (или выключен настройкой tick=0)."""
     if getattr(obj, "tick_seconds", getattr(obj, "heartbeat_seconds", 1)) <= 0:
@@ -165,7 +175,8 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         tick_seconds=settings.notify_tick_seconds)
     app.state.runs = RunService(session_factory, audit, registry=registry,
                                 executor=executor, vault=vault,
-                                notifier=app.state.notifier.notify_run_finished,
+                                notifier=_on_run_finished(session_factory,
+                                                          app.state.notifier),
                                 heartbeat_seconds=settings.run_heartbeat_seconds,
                                 stale_seconds=settings.run_stale_seconds)
     app.state.scheduler = Scheduler(session_factory, app.state.runs, audit,

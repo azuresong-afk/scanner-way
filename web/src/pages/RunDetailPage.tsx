@@ -7,14 +7,18 @@ import { useAuth } from "../auth/AuthContext";
 import { HeatLegend, HostHeatmap } from "../components/charts/HostHeatmap";
 import { SeverityBars } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
-import { FindingsTable } from "../components/FindingsTable";
+import { FindingsTable, type SortState } from "../components/FindingsTable";
+import { Pager } from "../components/Pager";
 import { ReportMenu } from "../components/ReportMenu";
 import { ServicesTable } from "../components/ServicesTable";
 import { Empty, ErrorAlert, Kpi, Loading, RunStatusPill } from "../components/ui";
 import { fmtDateFull, fmtDuration } from "../lib/format";
 import { isFinished, isRetryable, MODULE_LABEL, RATE_PROFILES, runName } from "../lib/labels";
-import { byHost, isFalsePositive, isIssue, replaceFinding, summarize } from "../lib/stats";
+import { hostRowsFromCounts } from "../lib/stats";
 import { useAsync, useInterval } from "../lib/useAsync";
+import { useFindingsPage } from "../lib/useFindingsPage";
+
+const PAGE = 50;
 
 type Tab = "findings" | "hosts" | "services";
 
@@ -25,8 +29,15 @@ export function RunDetailPage() {
   const created = (useLocation().state as { created?: RunCreated } | null)?.created;
   const run = useAsync(() => api.run(id), [id]);
   const finished = run.data ? isFinished(run.data.status) : false;
-  const findings = useAsync(() => api.findings(id), [id, finished], finished);
+  // Сводка (KPI, уровни, хосты) считается на сервере; таблица находок — страницами.
+  const summary = useAsync(() => api.findingsSummary(id), [id, finished], finished);
   const services = useAsync(() => api.services(id), [id, finished], finished);
+  const [sort, setSort] = useState<SortState>({ key: "severity", dir: 1 });
+  const [offset, setOffset] = useState(0);
+  useEffect(() => setOffset(0), [id, sort.key, sort.dir]);
+  const findings = useFindingsPage(finished ? id : undefined, { include_info: false, false_positives: "exclude" }, { sort, offset, limit: PAGE });
+  const fpCount = summary.data?.false_positives ?? 0;
+  const falsePositives = useAsync(() => api.findings(id, { false_positives: "only", sort: "severity", limit: 200 }), [id, fpCount], finished && fpCount > 0);
   // Прогоны договора — для выбора «Сравнить с» в меню отчёта.
   const engagementId = run.data?.engagement_id;
   const engRuns = useAsync(() => api.runs(engagementId!), [engagementId, finished], finished && engagementId !== undefined);
@@ -39,10 +50,10 @@ export function RunDetailPage() {
   useInterval(() => tick((n) => n + 1), 1000, !!run.data && !finished);
   useEffect(() => setOpen(null), [id]);
 
-  const issues = useMemo(() => (findings.data ?? []).filter(isIssue), [findings.data]);
-  const falsePositives = useMemo(() => (findings.data ?? []).filter(isFalsePositive), [findings.data]);
-  const summary = useMemo(() => (findings.data ? summarize(findings.data, null, services.data) : null), [findings.data, services.data]);
-  const hosts = useMemo(() => byHost(issues, services.data ?? []), [issues, services.data]);
+  const hosts = useMemo(
+    () => (summary.data ? hostRowsFromCounts(summary.data.host_counts.filter((h) => h.total > 0), services.data ?? []) : []),
+    [summary.data, services.data],
+  );
 
   if (run.loading && !run.data) return <Loading />;
   if (run.error) return <ErrorAlert error={run.error} onRetry={run.reload} />;
@@ -153,21 +164,21 @@ export function RunDetailPage() {
         </div>
       )}
 
-      {finished && (findings.loading && !findings.data ? <Loading /> : findings.error ? <ErrorAlert error={findings.error} onRetry={findings.reload} /> : summary && (
+      {finished && (summary.loading && !summary.data ? <Loading /> : summary.error ? <ErrorAlert error={summary.error} onRetry={summary.reload} /> : summary.data && (
         <>
           <section className="kpis">
-            <Kpi label="Хостов" value={summary.hosts} />
-            <Kpi label="Уязвимостей" value={summary.open} />
-            <Kpi label="Критических" value={summary.counts.critical} tone={summary.counts.critical ? "critical" : undefined} />
-            <Kpi label="Новых" value={summary.newCount} />
-            <Kpi label="Регрессий" value={summary.regression} tone={summary.regression ? "warn" : undefined} />
-            <Kpi label="С привязкой к БДУ" value={summary.bduShare === null ? "—" : `${Math.round(summary.bduShare * 100)}%`} />
+            <Kpi label="Хостов" value={summary.data.hosts} />
+            <Kpi label="Уязвимостей" value={summary.data.open} />
+            <Kpi label="Критических" value={summary.data.counts.critical} tone={summary.data.counts.critical ? "critical" : undefined} />
+            <Kpi label="Новых" value={summary.data.new} />
+            <Kpi label="Регрессий" value={summary.data.regression} tone={summary.data.regression ? "warn" : undefined} />
+            <Kpi label="С привязкой к БДУ" value={summary.data.bdu_share === null ? "—" : `${Math.round(summary.data.bdu_share * 100)}%`} />
           </section>
 
           <section className="row">
             <div className="card card-pad grow-1 stack" style={{ gap: 14 }}>
               <h2>По уровню опасности</h2>
-              <SeverityBars counts={summary.counts} onPick={(s) => navigate(`/findings?run=${r.id}&sev=${s}`)} />
+              <SeverityBars counts={summary.data.counts} onPick={(s) => navigate(`/findings?run=${r.id}&sev=${s}`)} />
             </div>
             <div className="card card-pad grow-2">
               <div className="inline" style={{ justifyContent: "space-between", marginBottom: 10 }}>
@@ -185,7 +196,7 @@ export function RunDetailPage() {
           <section className="card" style={{ overflow: "hidden" }}>
             <div className="tabs" role="tablist" style={{ padding: "0 12px" }}>
               <button type="button" role="tab" className="tab" aria-selected={tab === "findings"} onClick={() => setTab("findings")}>
-                Находки <span className="count">{issues.length}</span>
+                Находки <span className="count">{summary.data.open}</span>
               </button>
               <button type="button" role="tab" className="tab" aria-selected={tab === "hosts"} onClick={() => setTab("hosts")}>
                 Хосты <span className="count">{hosts.length}</span>
@@ -194,12 +205,22 @@ export function RunDetailPage() {
                 Сервисы <span className="count">{services.data?.length ?? 0}</span>
               </button>
             </div>
+            {tab === "findings" && findings.error && <ErrorAlert error={findings.error} onRetry={findings.reload} />}
             {tab === "findings" &&
-              (issues.length ? <FindingsTable findings={issues} onOpen={setOpen} selected={open} /> : <Empty title="Уязвимостей не найдено" />)}
-            {tab === "findings" && falsePositives.length > 0 && (
+              (findings.loading && !findings.data ? (
+                <Loading />
+              ) : findings.data?.items.length ? (
+                <>
+                  <FindingsTable findings={findings.data.items} onOpen={setOpen} selected={open} sort={sort} onSort={setSort} />
+                  <Pager total={findings.data.total} offset={offset} limit={PAGE} onChange={setOffset} label="Страницы находок" />
+                </>
+              ) : (
+                <Empty title="Уязвимостей не найдено" />
+              ))}
+            {tab === "findings" && fpCount > 0 && (
               <details style={{ borderTop: "1px solid var(--border)" }}>
-                <summary style={{ padding: "14px 20px", cursor: "pointer", fontWeight: 600 }}>Ложные срабатывания ({falsePositives.length})</summary>
-                <FindingsTable findings={falsePositives} onOpen={setOpen} selected={open} />
+                <summary style={{ padding: "14px 20px", cursor: "pointer", fontWeight: 600 }}>Ложные срабатывания ({fpCount})</summary>
+                <FindingsTable findings={falsePositives.data ?? []} onOpen={setOpen} selected={open} />
               </details>
             )}
             {tab === "hosts" && <HostHeatmap rows={hosts} limit={hosts.length} onPick={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${r.id}`)} />}
@@ -214,8 +235,10 @@ export function RunDetailPage() {
           onClose={() => setOpen(null)}
           onHost={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${r.id}`)}
           onChanged={(u) => {
-            findings.setData(replaceFinding(findings.data ?? [], u));
             setOpen(u);
+            // отметка «ложное» меняет счётчики, ранги и состав списков
+            void summary.reload();
+            void findings.reload();
           }}
         />
       )}

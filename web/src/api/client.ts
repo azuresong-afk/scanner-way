@@ -31,9 +31,12 @@ import type {
   FeedOut,
   FeedScheduleIn,
   FindingOut,
+  FindingQuery,
+  FindingsSummary,
   InventoryHostOut,
   MeOut,
   PackageOut,
+  Page,
   ReachabilityIn,
   ReachabilityOut,
   ReportFormat,
@@ -41,6 +44,7 @@ import type {
   RunCreate,
   RunCreated,
   RunOut,
+  RunQuery,
   ScheduleIn,
   ScheduleOut,
   ServiceOut,
@@ -135,6 +139,25 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await request(path, init);
   return (await res.json()) as T;
+}
+
+/** Страница списка: тело — элементы, общее число — заголовок X-Total-Count. */
+async function page<T>(path: string): Promise<Page<T>> {
+  const res = await request(path);
+  const items = (await res.json()) as T[];
+  const total = Number(res.headers.get("X-Total-Count") ?? items.length);
+  return { items, total: Number.isFinite(total) ? total : items.length };
+}
+
+/** Query-строка для списков: массивы — повтором параметра, пустое опускается. */
+export function listQuery(params: object): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (Array.isArray(v)) for (const x of v) q.append(k, String(x));
+    else if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+  }
+  const qs = q.toString();
+  return qs ? `?${qs}` : "";
 }
 
 /** Query-строка: массивы — повтором параметра (?action=a&action=b), пустое опускается. */
@@ -235,6 +258,7 @@ export const api = {
     request(`/engagements/${engagementId}/cred-sets/${setId}`, { method: "DELETE" }).then(() => undefined),
 
   runs: (engagementId: number) => json<RunOut[]>(`/engagements/${engagementId}/runs`),
+  runsPage: (engagementId: number, params: RunQuery) => page<RunOut>(`/engagements/${engagementId}/runs${listQuery(params)}`),
   run: (id: number) => json<RunOut>(`/runs/${id}`),
   startRun: (engagementId: number, data: RunCreate) =>
     json<RunCreated>(`/engagements/${engagementId}/runs`, { method: "POST", ...body(data) }),
@@ -259,7 +283,9 @@ export const api = {
     json<ReachabilityOut>(`/engagements/${engagementId}/reachability`, { method: "POST", ...body(data) }),
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),
   retryRun: (id: number) => json<RunCreated>(`/runs/${id}/retry`, { method: "POST" }),
-  findings: (runId: number) => json<FindingOut[]>(`/runs/${runId}/findings`),
+  findings: (runId: number, params: FindingQuery = {}) => json<FindingOut[]>(`/runs/${runId}/findings${listQuery(params)}`),
+  findingsPage: (runId: number, params: FindingQuery) => page<FindingOut>(`/runs/${runId}/findings${listQuery(params)}`),
+  findingsSummary: (runId: number) => json<FindingsSummary>(`/runs/${runId}/findings/summary`),
   /** Отметить находку хоста как ложное срабатывание (действует и в следующих прогонах). */
   markFalsePositive: (findingId: number, reason: string | null) =>
     json<FindingOut>(`/findings/${findingId}/false-positive`, { method: "PUT", ...body({ reason }) }),

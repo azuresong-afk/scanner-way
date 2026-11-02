@@ -57,7 +57,9 @@ def test_missing_credentials_key_is_a_warning():
 
 # ---------- готовность ----------
 def test_expected_revision_is_alembic_head():
-    assert expected_revision() == "0017"
+    from pathlib import Path
+    files = sorted(Path(__file__).resolve().parents[1].glob("alembic/versions/[0-9]*_*.py"))
+    assert expected_revision() == files[-1].name[:4]
 
 
 def test_is_ready_rules():
@@ -97,7 +99,7 @@ def test_ready_is_503_when_schema_is_not_migrated(sqlite_factory):
                          notify_tick_seconds=0)) as c:
         r = c.get("/health/ready")
         assert r.status_code == 503
-        assert r.json()["migration"] is None and r.json()["expected"] == "0017"
+        assert r.json()["migration"] is None and r.json()["expected"] == expected_revision()
 
 
 @pytest.mark.skipif(not PG_URL, reason="SCANNER_TEST_DATABASE_URL not set")
@@ -106,4 +108,4 @@ def test_ready_on_migrated_postgres(pg_factory):  # noqa: F811
                          notify_tick_seconds=0)) as c:
         r = c.get("/health/ready")
         assert r.status_code == 200, r.text
-        assert r.json()["migration"] == r.json()["expected"] == "0017"
+        assert r.json()["migration"] == r.json()["expected"] == expected_revision()

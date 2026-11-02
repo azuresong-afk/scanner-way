@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Play, Radar, RotateCcw, Square } from "lucide-react";
 import { api } from "../api/client";
 import type { RunStatus } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
+import { Pager } from "../components/Pager";
 import { StartRunModal } from "../components/StartRunModal";
 import { Empty, ErrorAlert, Loading, RunName, RunStatusPill } from "../components/ui";
 import { fmtDate, fmtDuration } from "../lib/format";
@@ -12,16 +13,25 @@ import { isFinished, isRetryable, RATE_PROFILES, RUN_STATUS_LABEL } from "../lib
 import { useAsync, useInterval } from "../lib/useAsync";
 
 const FILTERS: (RunStatus | "all")[] = ["all", "running", "done", "stopped", "interrupted", "failed"];
+const PAGE = 25;
 
 export function RunsPage() {
   const { has } = useAuth();
   const { current } = useEngagement();
   const navigate = useNavigate();
-  const runs = useAsync(() => api.runs(current!.id), [current?.id], !!current);
   const [filter, setFilter] = useState<RunStatus | "all">("all");
+  const [offset, setOffset] = useState(0);
+  useEffect(() => setOffset(0), [filter, current?.id]);
+  const statuses: RunStatus[] = filter === "all" ? [] : filter === "running" ? ["pending", "running"] : [filter];
+  const runs = useAsync(
+    () => api.runsPage(current!.id, { status: statuses, limit: PAGE, offset }),
+    [current?.id, filter, offset],
+    !!current,
+  );
   const [starting, setStarting] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
-  const list = [...(runs.data ?? [])].sort((a, b) => b.id - a.id);
+  const list = runs.data?.items ?? [];
+  const total = runs.data?.total ?? 0;
   const anyActive = list.some((r) => !isFinished(r.status));
   useInterval(() => void runs.reload(), 4000, anyActive);
 
@@ -33,7 +43,7 @@ export function RunsPage() {
     );
   }
 
-  const shown = list.filter((r) => filter === "all" || r.status === filter || (filter === "running" && r.status === "pending"));
+  const shown = list;
 
   const stop = async (id: number) => {
     setStopError(null);
@@ -85,7 +95,7 @@ export function RunsPage() {
         {runs.loading && !runs.data ? (
           <Loading />
         ) : shown.length === 0 ? (
-          <Empty title={list.length ? "Нет прогонов с таким статусом" : "Прогонов ещё не было"} icon={<Radar size={28} />} />
+          <Empty title={filter !== "all" ? "Нет прогонов с таким статусом" : "Прогонов ещё не было"} icon={<Radar size={28} />} />
         ) : (
           <div className="table-wrap">
             <table className="table" style={{ minWidth: 760 }}>
@@ -151,6 +161,7 @@ export function RunsPage() {
             </table>
           </div>
         )}
+        {total > PAGE && <Pager total={total} offset={offset} limit={PAGE} onChange={setOffset} label="Страницы прогонов" />}
       </div>
 
       {starting && (

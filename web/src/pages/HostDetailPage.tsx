@@ -49,11 +49,11 @@ export function HostDetailPage() {
     async () => {
       const withPackages = run!.modules.includes("auth_inventory");
       const [findings, services, packages] = await Promise.all([
-        api.findings(run!.id),
+        api.findings(run!.id, { host }),
         api.services(run!.id),
         withPackages ? api.packages(run!.id, host) : Promise.resolve([]),
       ]);
-      return { findings: findings.filter((f) => f.host === host), services: services.filter((s) => s.host === host), packages };
+      return { findings, services: services.filter((s) => s.host === host), packages };
     },
     [run?.id, host],
     !!run,

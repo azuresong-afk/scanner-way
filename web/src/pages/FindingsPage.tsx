@@ -1,58 +1,98 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Search, ShieldAlert } from "lucide-react";
 import { api } from "../api/client";
-import type { FindingOut, FindingStatus, Severity } from "../api/types";
+import type { FindingOut, FindingQuery, FindingStatus, Severity } from "../api/types";
 import { SeverityStack } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
-import { FindingsTable } from "../components/FindingsTable";
+import { FindingsTable, type SortKey, type SortState } from "../components/FindingsTable";
+import { Pager } from "../components/Pager";
 import { RunPicker } from "../components/RunPicker";
 import { Empty, ErrorAlert, Loading } from "../components/ui";
 import { MODULE_LABEL, SEVERITIES, SEVERITY_LABEL, STATUS_LABEL } from "../lib/labels";
-import { applyFilter, byHost, emptyFilter, isFalsePositive, replaceFinding, type FindingFilter } from "../lib/stats";
+import { byHost } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
+import { PAGE_SIZES, useDebounced, useFindingsPage } from "../lib/useFindingsPage";
 import { useRunSelection } from "../lib/useRunSelection";
 
 const STATUSES: FindingStatus[] = ["new", "open", "regression"];
+const SORT_KEYS: SortKey[] = ["severity", "priority", "title", "host", "cvss", "module"];
 
 function toggle<T>(list: T[], v: T): T[] {
   return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
 }
 
+/**
+ * Находки прогона. Фильтры, сортировка и страницы выполняются на сервере, а их
+ * состояние хранится в адресной строке (?sev=…&module=…&q=…&sort=…&page=…) —
+ * его можно переслать ссылкой, и оно сохраняется при переходах «назад».
+ */
 export function FindingsPage() {
   const { engagement, runs, run, setRun, loading, error } = useRunSelection();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const findings = useAsync(() => api.findings(run!.id), [run?.id], !!run);
-  const [filter, setFilter] = useState<FindingFilter>(() => {
-    const f = emptyFilter();
-    const sev = params.get("sev");
-    if (sev && (SEVERITIES as string[]).includes(sev)) f.severities = [sev as Severity];
-    const q = params.get("q");
-    if (q) f.query = q;
-    return f;
-  });
-  const [includeInfo, setIncludeInfo] = useState(false);
-  const [includeFp, setIncludeFp] = useState(false);
-  const [grouped, setGrouped] = useState(false);
-  const [open, setOpen] = useState<FindingOut | null>(null);
 
-  const all = useMemo(
-    () => (findings.data ?? []).filter((f) => (includeInfo || f.severity !== "info") && (includeFp || !isFalsePositive(f))),
-    [findings.data, includeInfo, includeFp],
-  );
-  const fpCount = useMemo(() => (findings.data ?? []).filter(isFalsePositive).length, [findings.data]);
-  const shown = useMemo(() => applyFilter(all, filter), [all, filter]);
-  const groups = useMemo(() => (grouped ? byHost(shown) : []), [grouped, shown]);
-  const sevCounts = useMemo(() => {
-    const c: Record<string, number> = {};
-    for (const f of all) if (!isFalsePositive(f)) c[f.severity] = (c[f.severity] ?? 0) + 1;
-    return c;
-  }, [all]);
-  const modules = useMemo(() => [...new Set(all.map((f) => f.module))].sort(), [all]);
-  const active = filter.severities.length + filter.modules.length + filter.statuses.length + (filter.query ? 1 : 0) + (filter.bduOnly ? 1 : 0);
+  const severities = params.getAll("sev").filter((s): s is Severity => (SEVERITIES as string[]).includes(s));
+  const modules = params.getAll("module");
+  const statuses = params.getAll("status").filter((s): s is FindingStatus => (STATUSES as string[]).includes(s));
+  const bduOnly = params.get("bdu") === "1";
+  const includeInfo = params.get("info") === "1";
+  const includeFp = params.get("fp") === "1";
+  const grouped = params.get("group") === "host";
+  const sortKey = (SORT_KEYS as string[]).includes(params.get("sort") ?? "") ? (params.get("sort") as SortKey) : "severity";
+  const sort: SortState = { key: sortKey, dir: params.get("dir") === "desc" ? -1 : 1 };
+  const size = PAGE_SIZES.includes(Number(params.get("size"))) ? Number(params.get("size")) : 50;
+  const offset = Math.max(0, (Number(params.get("page")) || 1) - 1) * size;
+
+  const [query, setQuery] = useState(params.get("q") ?? "");
+  const q = useDebounced(query.trim());
+
+  /** Меняет параметры адреса; любой фильтр возвращает на первую страницу. */
+  const update = (patch: Record<string, string | string[] | null>, keepPage = false) => {
+    const next = new URLSearchParams(params);
+    for (const [k, v] of Object.entries(patch)) {
+      next.delete(k);
+      if (Array.isArray(v)) v.forEach((x) => next.append(k, x));
+      else if (v !== null && v !== "") next.set(k, v);
+    }
+    if (!keepPage) next.delete("page");
+    setParams(next, { replace: true });
+  };
+  // поиск после паузы в наборе попадает в адрес (и сбрасывает страницу)
+  const urlQ = params.get("q") ?? "";
+  useEffect(() => {
+    if (q !== urlQ) update({ q: q || null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  const filter: FindingQuery = {
+    severity: severities,
+    module: modules,
+    status: statuses,
+    q: params.get("q") ?? undefined,
+    bdu_only: bduOnly || undefined,
+    include_info: includeInfo,
+    false_positives: includeFp ? "include" : "exclude",
+  };
+  const findings = useFindingsPage(run?.id, filter, { sort, offset, limit: size });
+  const summary = useAsync(() => api.findingsSummary(run!.id), [run?.id], !!run);
+
+  const items = useMemo(() => findings.data?.items ?? [], [findings.data]);
+  const groups = useMemo(() => (grouped ? byHost(items) : []), [grouped, items]);
+  const [open, setOpen] = useState<FindingOut | null>(null);
+  const sevCounts = summary.data?.counts;
+  const moduleList = summary.data?.modules ?? [];
+  const active = severities.length + modules.length + statuses.length + (params.get("q") ? 1 : 0) + (bduOnly ? 1 : 0);
+  const total = findings.data?.total ?? 0;
 
   if (!engagement) return <div className="card"><Empty title="Выберите или создайте договор" /></div>;
+
+  const check = (label: React.ReactNode, checked: boolean, key: string, value = "1") => (
+    <label className="check" style={{ alignItems: "center" }}>
+      <input type="checkbox" checked={checked} onChange={(e) => update({ [key]: e.target.checked ? value : null })} />
+      {label}
+    </label>
+  );
 
   return (
     <>
@@ -83,37 +123,31 @@ export function FindingsPage() {
                   type="search"
                   placeholder="Поиск: название, хост, CVE, БДУ"
                   aria-label="Поиск по находкам"
-                  value={filter.query}
-                  onChange={(e) => setFilter({ ...filter, query: e.target.value })}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
                 />
               </div>
-              <label className="check" style={{ alignItems: "center" }}>
-                <input type="checkbox" checked={filter.bduOnly} onChange={(e) => setFilter({ ...filter, bduOnly: e.target.checked })} />
-                Только с БДУ ФСТЭК
-              </label>
-              <label className="check" style={{ alignItems: "center" }}>
-                <input type="checkbox" checked={includeInfo} onChange={(e) => setIncludeInfo(e.target.checked)} />
-                Информационные
-              </label>
-              <label className="check" style={{ alignItems: "center" }}>
-                <input type="checkbox" checked={includeFp} onChange={(e) => setIncludeFp(e.target.checked)} />
-                Ложные срабатывания <span className="faint">{fpCount}</span>
-              </label>
-              <label className="check" style={{ alignItems: "center" }}>
-                <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
-                По хостам
-              </label>
+              {check("Только с БДУ ФСТЭК", bduOnly, "bdu")}
+              {check("Информационные", includeInfo, "info")}
+              {check(
+                <>
+                  Ложные срабатывания <span className="faint">{summary.data?.false_positives ?? 0}</span>
+                </>,
+                includeFp,
+                "fp",
+              )}
+              {check("По хостам", grouped, "group", "host")}
             </div>
             <div className="inline" role="group" aria-label="Уровень опасности">
               <span className="faint" style={{ fontSize: 12, minWidth: 80 }}>
                 Опасность
               </span>
               {SEVERITIES.filter((s) => includeInfo || s !== "info").map((s) => (
-                <button key={s} type="button" className="chip" aria-pressed={filter.severities.includes(s)} onClick={() => setFilter({ ...filter, severities: toggle(filter.severities, s) })}>
+                <button key={s} type="button" className="chip" aria-pressed={severities.includes(s)} onClick={() => update({ sev: toggle<string>(severities, s) })}>
                   <span className={`sev sev-${s}`}>
                     <i aria-hidden="true" />
                   </span>
-                  {SEVERITY_LABEL[s]} <span className="faint">{sevCounts[s] ?? 0}</span>
+                  {SEVERITY_LABEL[s]} <span className="faint">{sevCounts?.[s] ?? 0}</span>
                 </button>
               ))}
             </div>
@@ -121,8 +155,8 @@ export function FindingsPage() {
               <span className="faint" style={{ fontSize: 12, minWidth: 80 }}>
                 Модуль
               </span>
-              {modules.map((m) => (
-                <button key={m} type="button" className="chip" aria-pressed={filter.modules.includes(m)} onClick={() => setFilter({ ...filter, modules: toggle(filter.modules, m) })}>
+              {moduleList.map((m) => (
+                <button key={m} type="button" className="chip" aria-pressed={modules.includes(m)} onClick={() => update({ module: toggle(modules, m) })}>
                   {MODULE_LABEL[m] ?? m}
                 </button>
               ))}
@@ -130,12 +164,19 @@ export function FindingsPage() {
                 Статус
               </span>
               {STATUSES.map((s) => (
-                <button key={s} type="button" className="chip" aria-pressed={filter.statuses.includes(s)} onClick={() => setFilter({ ...filter, statuses: toggle(filter.statuses, s) })}>
+                <button key={s} type="button" className="chip" aria-pressed={statuses.includes(s)} onClick={() => update({ status: toggle<string>(statuses, s) })}>
                   {STATUS_LABEL[s]}
                 </button>
               ))}
               {active > 0 && (
-                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setFilter(emptyFilter())}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => {
+                    setQuery("");
+                    update({ sev: null, module: null, status: null, q: null, bdu: null });
+                  }}
+                >
                   Сбросить ({active})
                 </button>
               )}
@@ -145,17 +186,16 @@ export function FindingsPage() {
           {findings.error && <ErrorAlert error={findings.error} onRetry={findings.reload} />}
           <section className="card" style={{ overflow: "hidden" }}>
             <div className="card-head">
-              <h2>
-                {shown.length} из {all.length}
-              </h2>
+              <h2>Найдено: {total.toLocaleString("ru-RU")}</h2>
               <span className="faint" style={{ fontSize: 12 }}>
                 Прогон №{run.id}
+                {grouped && " · группировка по хостам — в пределах страницы"}
               </span>
             </div>
             {findings.loading && !findings.data ? (
               <Loading />
-            ) : shown.length === 0 ? (
-              <Empty title={all.length ? "Ничего не найдено по фильтрам" : "В прогоне нет находок"} />
+            ) : items.length === 0 ? (
+              <Empty title={active || !includeInfo ? "Ничего не найдено по фильтрам" : "В прогоне нет находок"} />
             ) : grouped ? (
               <div className="stack" style={{ gap: 0 }}>
                 {groups.map((g) => (
@@ -168,18 +208,28 @@ export function FindingsPage() {
                         <SeverityStack counts={g.counts} />
                       </span>
                       <span className="muted" style={{ flex: 1 }}>
-                        {g.findings.length} {g.findings.length === 1 ? "находка" : "находок"}
+                        {g.findings.length} {g.findings.length === 1 ? "находка" : "находок"} на странице
                       </span>
                       <Link to={`/hosts/${encodeURIComponent(g.host)}?run=${run.id}`} onClick={(e) => e.stopPropagation()} style={{ fontSize: 13 }}>
                         Карточка хоста
                       </Link>
                     </summary>
-                    <FindingsTable findings={g.findings} onOpen={setOpen} selected={open} hideHost />
+                    <FindingsTable findings={g.findings} onOpen={setOpen} selected={open} hideHost sort={sort} onSort={(s) => update({ sort: s.key, dir: s.dir === -1 ? "desc" : null })} />
                   </details>
                 ))}
               </div>
             ) : (
-              <FindingsTable findings={shown} onOpen={setOpen} selected={open} />
+              <FindingsTable findings={items} onOpen={setOpen} selected={open} sort={sort} onSort={(s) => update({ sort: s.key, dir: s.dir === -1 ? "desc" : null })} />
+            )}
+            {total > 0 && (
+              <Pager
+                total={total}
+                offset={offset}
+                limit={size}
+                label="Страницы находок"
+                onChange={(o) => update({ page: o ? String(Math.floor(o / size) + 1) : null }, true)}
+                onLimit={(n) => update({ size: n === 50 ? null : String(n) })}
+              />
             )}
           </section>
         </>
@@ -190,8 +240,9 @@ export function FindingsPage() {
           onClose={() => setOpen(null)}
           onHost={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${run.id}`)}
           onChanged={(u) => {
-            findings.setData(replaceFinding(findings.data ?? [], u));
+            if (findings.data) findings.setData({ ...findings.data, items: findings.data.items.map((f) => (f.id === u.id ? u : f)) });
             setOpen(u);
+            void summary.reload();
           }}
         />
       )}

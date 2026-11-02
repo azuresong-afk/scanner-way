@@ -5,7 +5,7 @@ import { App } from "./App";
 import { setToken } from "./api/client";
 import { AuthProvider } from "./auth/AuthContext";
 import { ThemeProvider } from "./theme/ThemeContext";
-import { ADMIN, OPERATOR, finding, me, mockApi } from "./test/fixtures";
+import { ADMIN, OPERATOR, finding, me, mockApi, summaryOf } from "./test/fixtures";
 
 const ENG = { id: 1, name: "Периметр", client: "ООО Тест", contract_ref: "Д-1", created_by: 1, created_at: "2026-10-01T10:00:00" };
 
@@ -187,12 +187,15 @@ it("сводка показывает открытые уязвимости и �
     started_by: 1, started_at: "2026-10-27T10:00:00", finished_at: "2026-10-27T11:00:00", created_at: "2026-10-27T10:00:00",
   });
   const log4j = finding({ severity: "critical", title: "Log4Shell" });
+  const run2 = [log4j, finding({ host: "10.0.0.2", vuln_id: "X", cve_ids: [], bdu_ids: [], severity: "medium", status: "new", title: "TLS 1.0" })];
   mockApi({
     "GET /me": me(["operator"], OPERATOR),
     "GET /engagements": [ENG],
     "GET /engagements/1/runs": [run(1), run(2)],
     "GET /runs/1/findings": [log4j, finding({ vuln_id: "CVE-2017-0144", cve_ids: ["CVE-2017-0144"], title: "EternalBlue" })],
-    "GET /runs/2/findings": [log4j, finding({ host: "10.0.0.2", vuln_id: "X", cve_ids: [], bdu_ids: [], severity: "medium", status: "new", title: "TLS 1.0" })],
+    "GET /runs/2/findings": run2,
+    // «Закрытые» сервер считает по прошлому успешному прогону (EternalBlue исчезла)
+    "GET /runs/2/findings/summary": { ...summaryOf(run2), fixed: 1, previous_run_id: 1 },
     "GET /runs/1/services": [],
     "GET /runs/2/services": [],
   });
@@ -464,4 +467,30 @@ describe("расписания", () => {
     expect(sent.timezone).toBeTruthy();
     expect(await screen.findByText(/Расписание «Обнаружение \+ Nuclei · 10.0.0.0\/24» сохранено/)).toBeInTheDocument();
   });
+});
+
+it("находки: фильтры и страницы — на сервере, состояние в адресе", async () => {
+  setToken("t");
+  const run = { id: 3, engagement_id: 1, modules: ["vuln"], rate_profile: "gentle", status: "done", targets: [], schedule_id: null,
+    started_by: 1, started_at: "2026-10-27T10:00:00", finished_at: "2026-10-27T11:00:00", created_at: "2026-10-27T10:00:00" };
+  const page = Array.from({ length: 50 }, (_, i) => finding({ host: `10.0.0.${i + 1}`, vuln_id: `CVE-2024-${i}`, title: `Уязвимость ${i}` }));
+  const api = mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [run],
+    "GET /runs/3/findings": () => new Response(JSON.stringify(page), { status: 200, headers: { "Content-Type": "application/json", "X-Total-Count": "120" } }),
+    "GET /runs/3/findings/summary": { ...summaryOf(page), counts: { critical: 0, high: 120, medium: 0, low: 0, info: 0 } },
+  });
+  renderApp("/findings?run=3&sev=high&page=2");
+  expect(await screen.findByText("Показано 51–100 из 120")).toBeInTheDocument();
+  const lastQuery = () =>
+    api.fn.mock.calls.map((c) => new URL(String(c[0]), "http://x")).filter((u) => u.pathname.endsWith("/runs/3/findings")).at(-1)!.searchParams;
+  const q = lastQuery();
+  expect(q.getAll("severity")).toEqual(["high"]);
+  expect(q.get("offset")).toBe("50");
+  expect(q.get("limit")).toBe("50");
+  expect(q.get("false_positives")).toBe("exclude");
+  expect(q.get("sort")).toBe("severity");
+  await userEvent.click(screen.getByRole("button", { name: "Следующая страница" }));
+  await waitFor(() => expect(lastQuery().get("offset")).toBe("100"));
 });
