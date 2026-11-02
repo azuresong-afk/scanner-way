@@ -1,6 +1,6 @@
 // Агрегаты для дашборда, таблиц и раздела по хостам (считаются на клиенте).
 
-import type { FindingOut, FindingStatus, InventoryHostOut, ServiceOut, Severity } from "../api/types";
+import type { AssetOut, FindingOut, FindingStatus, InventoryHostOut, ServiceOut, Severity } from "../api/types";
 import { MODULE_LABEL, OS_FAMILY_LABEL, OS_FAMILY_ORDER, SEVERITIES } from "./labels";
 
 export const SEVERITY_RANK: Record<Severity, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
@@ -144,17 +144,17 @@ export interface InventoryRow extends HostRow {
   osAccuracy: number | null;
 }
 
-export interface OsGroup {
+export interface OsGroup<T extends InventoryRow = InventoryRow> {
   family: string;
   label: string;
-  rows: InventoryRow[];
+  rows: T[];
   counts: SeverityCounts;
   total: number;
 }
 
 /** Группы хостов по семейству ОС: отечественные ОС первыми, «не определена» — в конце. */
-export function groupByOs(rows: InventoryRow[]): OsGroup[] {
-  const map = new Map<string, OsGroup>();
+export function groupByOs<T extends InventoryRow>(rows: T[]): OsGroup<T>[] {
+  const map = new Map<string, OsGroup<T>>();
   for (const r of rows) {
     let g = map.get(r.osFamily);
     if (!g) map.set(r.osFamily, (g = { family: r.osFamily, label: r.osLabel, rows: [], counts: emptyCounts(), total: 0 }));
@@ -199,6 +199,48 @@ export function inventoryRows(inventory: InventoryHostOut[], findings: FindingOu
         osAccuracy: h.os_accuracy ?? null,
       };
     });
+}
+
+/** Строка единой вкладки «Хосты»: инвентарь прогонов + учётные атрибуты (бывшие «Активы»). */
+export interface HostListRow extends InventoryRow {
+  /** Учётная запись хоста (владелец, критичность, теги, группы); null — не заведена. */
+  asset: AssetOut | null;
+  /** Хост встречался хотя бы в одном прогоне договора. */
+  scanned: boolean;
+}
+
+/**
+ * Объединяет инвентарь договора с реестром хостов (R7): один хост — одна
+ * строка. Хосты, заведённые вручную и ещё не сканированные, тоже попадают в
+ * список. Сопоставление по нормализованному адресу (API отдаёт оба в одном виде).
+ */
+export function hostListRows(inventory: InventoryHostOut[], assets: AssetOut[], findings: FindingOut[], runId: number | null): HostListRow[] {
+  const byAddr = new Map(assets.map((a) => [a.address, a]));
+  const rows: HostListRow[] = inventoryRows(inventory, findings, runId).map((r) => ({ ...r, asset: byAddr.get(r.host) ?? null, scanned: true }));
+  const seen = new Set(rows.map((r) => r.host));
+  for (const a of assets) {
+    if (seen.has(a.address)) continue;
+    const family = a.os_family ?? "unknown";
+    rows.push({
+      host: a.address,
+      counts: emptyCounts(),
+      total: 0,
+      maxSeverity: "info",
+      findings: [],
+      services: [],
+      summary: "",
+      inRun: false,
+      lastRunId: a.last_run_id,
+      osFamily: family,
+      osLabel: a.os_family_label ?? OS_FAMILY_LABEL[family] ?? "ОС не определена",
+      osName: a.os_guess,
+      osSource: null,
+      osAccuracy: null,
+      asset: a,
+      scanned: a.last_run_id !== null,
+    });
+  }
+  return rows.sort((a, b) => compareIp(a.host, b.host));
 }
 
 export interface SoftwareRow {

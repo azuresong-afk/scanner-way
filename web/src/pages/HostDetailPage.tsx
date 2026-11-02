@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Radar } from "lucide-react";
+import { Pencil, Radar } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
-import type { FindingOut, PackageOut } from "../api/types";
+import type { AssetOut, FindingOut, PackageOut } from "../api/types";
+import { AssetModal, CriticalityBadge } from "../components/AssetEditing";
 import { SeverityBars } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { FindingsTable } from "../components/FindingsTable";
@@ -71,7 +72,7 @@ export function HostDetailPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">
-            <Link to={run ? `/hosts?run=${run.id}` : "/hosts"}>Хосты</Link> / {host}
+            <Link to={run ? `/hosts?run=${run.id}` : "/hosts"}>Активы</Link> / {host}
           </span>
           <h1 className="mono" style={{ fontSize: 24 }}>
             {host}
@@ -88,6 +89,7 @@ export function HostDetailPage() {
         </div>
       </div>
       {error && <ErrorAlert error={error} />}
+      {current && has("view_engagements") && <HostAccounting engagementId={current.id} host={host} canWrite={has("manage_engagements")} />}
       {data.error && <ErrorAlert error={data.error} onRetry={data.reload} />}
       {(loading && !runs.length) || (data.loading && !data.data) ? (
         <Loading />
@@ -179,6 +181,85 @@ export function HostDetailPage() {
         </Modal>
       )}
     </>
+  );
+}
+
+/**
+ * Учётные атрибуты хоста (бывшая вкладка «Активы», R7): критичность для
+ * приоритета R6, владелец и группы для уведомлений R9 и разрезов отчётов.
+ */
+function HostAccounting({ engagementId, host, canWrite }: { engagementId: number; host: string; canWrite: boolean }) {
+  const assets = useAsync(() => api.assets(engagementId), [engagementId]);
+  const groups = useAsync(() => api.assetGroups(engagementId), [engagementId], canWrite);
+  const [editing, setEditing] = useState(false);
+  const asset: AssetOut | null = assets.data?.find((a) => a.address === host) ?? null;
+  if (assets.error) return <ErrorAlert error={assets.error} onRetry={assets.reload} />;
+  if (!assets.data) return null;
+  return (
+    <section className="card card-pad host-accounting" aria-label="Учёт актива">
+      <div className="inline" style={{ gap: 21, flexWrap: "wrap", alignItems: "center" }}>
+        <span className="stack" style={{ gap: 2 }}>
+          <small className="faint">Критичность</small>
+          <CriticalityBadge value={asset?.criticality ?? "medium"} implicit={!asset} />
+        </span>
+        <span className="stack" style={{ gap: 2 }}>
+          <small className="faint">Владелец</small>
+          <span>{asset?.owner ?? <span className="faint">—</span>}</span>
+        </span>
+        {asset?.hostname && (
+          <span className="stack" style={{ gap: 2 }}>
+            <small className="faint">Имя</small>
+            <span>{asset.hostname}</span>
+          </span>
+        )}
+        <span className="stack" style={{ gap: 2 }}>
+          <small className="faint">Группы и теги</small>
+          <span className="inline" style={{ gap: 4, flexWrap: "wrap" }}>
+            {asset && (asset.groups.length || asset.tags.length) ? (
+              <>
+                {asset.groups.map((g) => (
+                  <span key={`g${g.id}`} className="chip chip-static">
+                    {g.name}
+                  </span>
+                ))}
+                {asset.tags.map((t) => (
+                  <span key={`t${t}`} className="chip chip-static">
+                    #{t}
+                  </span>
+                ))}
+              </>
+            ) : (
+              <span className="faint">—</span>
+            )}
+          </span>
+        </span>
+        {asset?.notes && (
+          <span className="stack muted" style={{ gap: 2, flex: "1 1 220px" }}>
+            <small className="faint">Заметки</small>
+            <span style={{ whiteSpace: "pre-wrap" }}>{asset.notes}</span>
+          </span>
+        )}
+        {canWrite && (
+          <button type="button" className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setEditing(true)}>
+            <Pencil size={14} /> Изменить
+          </button>
+        )}
+      </div>
+      {editing && (
+        <AssetModal
+          asset={asset}
+          presetAddress={asset ? undefined : host}
+          groups={groups.data ?? []}
+          onClose={() => setEditing(false)}
+          onSave={async (data) => {
+            if (asset) await api.updateAsset(engagementId, asset.id, data);
+            else await api.createAsset(engagementId, data);
+            setEditing(false);
+            await assets.reload();
+          }}
+        />
+      )}
+    </section>
   );
 }
 
