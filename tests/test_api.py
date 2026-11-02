@@ -316,6 +316,63 @@ def test_allowlist_rejects_duplicates_after_normalization(api):
     assert cidrs == ["10.0.0.0/24", "2001:db8::1/128", "10.0.1.0/24", "10.0.0.0/16"]
 
 
+def test_allowlist_bulk_ranges_and_dedup(api, sqlite_factory):
+    eid = api.engagement("10.0.0.0/28")
+    url = f"/engagements/{eid}/allowlist"
+    r = api.c.post(f"{url}/bulk", headers=api.admin, json={
+        "items": ["10.0.1.1-10.0.1.50", "10.0.0.5", "10.0.2.0/24", "10.0.3.1-3",
+                  "10.0.2.7", "10.0.1.1 - 10.0.1.50"],
+        "note": "приложение 2"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    added = body["added"]
+    rng = [a for a in added if a["range_spec"] == "10.0.1.1-10.0.1.50"]
+    # 10.0.1.1–50 → 1/32, 2/31, 4/30, 8/29, 16/28, 32/28, 48/31, 50/32
+    assert [a["cidr"] for a in rng] == [
+        "10.0.1.1/32", "10.0.1.2/31", "10.0.1.4/30", "10.0.1.8/29",
+        "10.0.1.16/28", "10.0.1.32/28", "10.0.1.48/31", "10.0.1.50/32"]
+    assert all(a["note"] == "приложение 2" for a in added)
+    # адрес из уже занесённой подсети и адрес внутри только что добавленной /24 — дубли
+    assert {(s["item"], s["existing_cidr"]) for s in body["skipped"]} == {
+        ("10.0.0.5/32", "10.0.0.0/28"), ("10.0.2.7/32", "10.0.2.0/24")}
+    # гейт видит ровно 50 адресов диапазона
+    gate = AllowlistGate([a["cidr"] for a in rng])
+    assert sum(gate.is_allowed(f"10.0.1.{i}") for i in range(256)) == 50
+    # частично покрытый диапазон добавляется без уже покрытых частей
+    r = api.c.post(f"{url}/bulk", headers=api.admin, json={"items": ["10.0.0.8-10.0.0.20"]})
+    assert r.status_code == 201
+    assert [a["cidr"] for a in r.json()["added"]] == ["10.0.0.16/30", "10.0.0.20/32"]
+    assert r.json()["partial"] == [{"item": "10.0.0.8-10.0.0.20", "covered_parts": 1}]
+    # мусор — 422, ничего не занесено
+    before = len(api.c.get(url, headers=api.admin).json())
+    r = api.c.post(f"{url}/bulk", headers=api.admin, json={"items": ["10.9.9.9", "host.local"]})
+    assert r.status_code == 422 and r.json()["detail"]["invalid"] == ["host.local"]
+    assert len(api.c.get(url, headers=api.admin).json()) == before
+    # оператор не может менять allowlist
+    op = api.user("op", "operator")
+    assert api.c.post(f"{url}/bulk", headers=op, json={"items": ["10.9.9.9"]}).status_code == 403
+    # удаление диапазона целиком
+    first = rng[0]["id"]
+    assert api.c.delete(f"{url}/{first}?whole_range=true", headers=api.admin).status_code == 204
+    left = [e["cidr"] for e in api.c.get(url, headers=api.admin).json()]
+    assert not any(c.startswith("10.0.1.") for c in left)
+    remove = [e for e in api.audit(sqlite_factory) if e[1] == "allowlist_remove"]
+    assert remove
+
+
+def test_run_accepts_range_targets(api, rec):
+    eid = api.engagement("10.0.0.0/24")
+    op = api.user("op", "operator")
+    r = _run(api, eid, op, ["10.0.0.10-12", "10.0.0.250-10.0.1.5"], modules=("discovery",))
+    assert r.status_code == 202, r.text
+    body = r.json()
+    # .10–.12 (3) + .250–.255 (6); .1.0–.1.5 вне allowlist
+    assert body["accepted_targets"] == 9
+    assert {(d["target"], d["reason"], d["count"]) for d in body["denied_targets"]} == {
+        ("10.0.0.250-10.0.1.5", "not_in_allowlist", 6)}
+    assert rec.seen["discovery"][:3] == ["10.0.0.10", "10.0.0.11", "10.0.0.12"]
+
+
 # ---------- прогоны и allowlist ----------
 def test_run_drops_targets_outside_allowlist(api, sqlite_factory, rec):
     eid = api.engagement("10.0.0.0/24")

@@ -77,6 +77,8 @@ class AllowlistEntry(Base):
     note: Mapped[str | None] = mapped_column(Text)
     added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     added_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    # Исходный диапазон «начало-конец», если запись — его часть (миграция 0019).
+    range_spec: Mapped[str | None] = mapped_column(Text)
 
 
 # ========== Учётные записи активов ==========

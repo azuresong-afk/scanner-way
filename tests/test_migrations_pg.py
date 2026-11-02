@@ -150,3 +150,25 @@ def test_pg_distro_advisory_round_trip(pg_factory):
     assert sorted(a.cve for a in got["openssl"]) == ["CVE-2024-0727", "CVE-2099-1111"]
     assert store.releases() == {("debian", "bookworm")}
     store.engine.dispose()
+
+
+def test_pg_allowlist_ranges(pg_factory):
+    """0019: диапазон хранится подсетями CIDR с range_spec и удаляется целиком."""
+    from scanner.core import repository as repo
+    from scanner.core.db import session_scope
+
+    with session_scope(pg_factory) as s:
+        eid = repo.create_engagement(s, name="pg-ranges")
+        repo.add_allowlist_entry(s, engagement_id=eid, cidr="10.2.0.0/28")
+        res = repo.add_allowlist_specs(s, engagement_id=eid,
+                                       specs=["10.2.0.8-10.2.0.20", "10.3.0.1-50", "10.2.0.3"])
+        assert res.partial == [("10.2.0.8-10.2.0.20", 1)]
+        assert res.skipped == [("10.2.0.3/32", "duplicate", "10.2.0.0/28")]
+    with session_scope(pg_factory) as s:
+        gate = repo.load_allowlist_gate(s, eid)
+        assert sum(gate.is_allowed(f"10.3.0.{i}") for i in range(256)) == 50
+        assert gate.is_allowed("10.2.0.20") and not gate.is_allowed("10.2.0.21")
+        removed = repo.remove_allowlist_range(s, eid, "10.3.0.1-10.3.0.50")
+        assert len(removed) == 8
+    with session_scope(pg_factory) as s:
+        assert not repo.load_allowlist_gate(s, eid).is_allowed("10.3.0.7")

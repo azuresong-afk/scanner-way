@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from "react";
-import { ShieldCheck } from "lucide-react";
+import { ListChecks, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import type { DeniedTarget, EngagementOut, RunCreated, ScheduleIn, ScheduleKind, ScheduleOut } from "../api/types";
 import { useAuth, type Perm } from "../auth/AuthContext";
 import { localToIso, toLocalInput } from "../lib/format";
 import { CREDENTIAL_MODULES, ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, runTitle, type EngineInfo } from "../lib/labels";
-import { parseTargets } from "../lib/targets";
+import { compactAddresses, mergeTargets, parseTargets, specSize, splitTargets } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
+import { HostPicker } from "./HostPicker";
 import { ErrorAlert, Modal } from "./ui";
 
 type When = "now" | "schedule";
@@ -74,6 +75,7 @@ export function StartRunModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [denied, setDenied] = useState<DeniedTarget[]>([]);
+  const [picking, setPicking] = useState(false);
 
   const available = MODULES.filter((m) => !ENGINE_MODULES.includes(m.id) && (!m.permission || has(m.permission as Perm)));
   const eng = VULN_ENGINES.find((x) => x.id === engine)!;
@@ -89,6 +91,13 @@ export function StartRunModal({
     (kind === "once" ? !!localToIso(runAt) : /^\d{2}:\d{2}$/.test(timeOfDay) && (kind !== "weekly" || weekdays.length > 0) && (kind !== "monthly" || (monthDay >= 1 && monthDay <= 31)));
   const canSubmit = parsed.targets.length > 0 && parsed.invalid.length === 0 && allModules.length > 0 && credsOk && whenOk && confirmed && !busy;
   const autoName = runTitle(allModules, parsed.targets);
+  const addressCount = parsed.targets.reduce((n, t) => n + specSize(t), 0);
+  // Записи allowlist для выбора по одной: диапазон — одной записью, адрес — без /32.
+  const allowSpecs = [...new Set((allowlist.data ?? []).map((a) => a.range_spec ?? a.cidr.replace(/\/(32|128)$/, "")))];
+  const current = new Set(splitTargets(targets));
+  const toggleSpec = (spec: string) =>
+    setTargets((t) => (splitTargets(t).includes(spec) ? splitTargets(t).filter((x) => x !== spec).join("\n") : mergeTargets(t, [spec])));
+  const canPickHosts = has("view_report");
   const toggleDay = (d: number) => setWeekdays((w) => (w.includes(d) ? w.filter((x) => x !== d) : [...w, d].sort()));
 
   const toggle = (id: string) => setModules((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
@@ -135,6 +144,21 @@ export function StartRunModal({
       setBusy(false);
     }
   };
+
+  if (picking) {
+    return (
+      <HostPicker
+        engagementId={engagement.id}
+        allowlist={(allowlist.data ?? []).map((a) => a.cidr)}
+        mode="run"
+        onClose={() => setPicking(false)}
+        onPick={(addrs) => {
+          setTargets((t) => mergeTargets(t, compactAddresses(addrs)));
+          setPicking(false);
+        }}
+      />
+    );
+  }
 
   return (
     <Modal
@@ -215,41 +239,59 @@ export function StartRunModal({
           </fieldset>
         )}
 
-        <label className="field">
-          <span>Цели (IP-адреса и подсети, по одной в строке)</span>
+        <div className="field">
+          <span id="run-targets-label">Цели — IP-адреса, подсети и диапазоны, по одной в строке</span>
           <textarea
+            aria-labelledby="run-targets-label"
             className="textarea"
             value={targets}
             onChange={(e) => setTargets(e.target.value)}
-            placeholder={"10.0.0.0/24\n10.0.1.15"}
+            placeholder={"10.0.0.0/24\n10.0.1.15\n10.0.2.10-10.0.2.40"}
             spellCheck={false}
           />
-          <small>
-            Цели вне allowlist будут отклонены, подсети урезаны до разрешённых диапазонов.
-            {allowlist.data && allowlist.data.length > 0 && (
-              <>
-                {" "}
-                <button
-                  type="button"
-                  className="btn btn-sm btn-ghost"
-                  style={{ height: "auto", padding: 0, color: "var(--accent-text)" }}
-                  onClick={() => setTargets(allowlist.data!.map((a) => a.cidr).join("\n"))}
-                >
-                  Подставить весь allowlist ({allowlist.data.length})
-                </button>
-              </>
+          <div className="inline" style={{ gap: 8, flexWrap: "wrap" }}>
+            {canPickHosts && (
+              <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}>
+                <ListChecks size={14} /> Выбрать хосты из активов…
+              </button>
             )}
-          </small>
+            {parsed.targets.length > 0 && (
+              <small className="muted">
+                {parsed.targets.length} {parsed.targets.length === 1 ? "запись" : "записей"} · до {addressCount.toLocaleString("ru-RU")} адресов
+              </small>
+            )}
+          </div>
+          {allowSpecs.length > 0 && (
+            <div className="inline" role="group" aria-label="Записи allowlist" style={{ gap: 6, flexWrap: "wrap" }}>
+              <span className="faint" style={{ fontSize: 12, marginRight: 4 }}>
+                Из allowlist:
+              </span>
+              {allowSpecs.map((spec) => (
+                <button key={spec} type="button" className="chip mono" aria-pressed={current.has(spec)} onClick={() => toggleSpec(spec)}>
+                  {spec}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                style={{ color: "var(--accent-text)" }}
+                onClick={() => setTargets((t) => mergeTargets(t, allowSpecs))}
+              >
+                Подставить весь allowlist ({allowSpecs.length})
+              </button>
+            </div>
+          )}
+          <small>Цели вне allowlist будут отклонены, подсети и диапазоны урезаны до разрешённой части.</small>
           {allowlist.data && allowlist.data.length === 0 && (
             <small style={{ color: "var(--warn)" }}>У договора пустой allowlist — запуск будет отклонён.</small>
           )}
           {parsed.invalid.length > 0 && (
             <small style={{ color: "var(--danger)" }}>
-              Не IP/подсеть: {parsed.invalid.slice(0, 5).join(", ")}
+              Не IP, подсеть или диапазон: {parsed.invalid.slice(0, 5).join(", ")}
               {parsed.invalid.length > 5 ? "…" : ""}. Имена хостов не принимаются.
             </small>
           )}
-        </label>
+        </div>
 
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
           <span>Поиск уязвимостей — движок</span>

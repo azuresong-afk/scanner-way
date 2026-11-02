@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -61,6 +62,7 @@ from scanner.core.models import (
 from scanner.core.osfamily import GENERIC_LINUX, SOURCE_RANK, family_label, is_distro
 from scanner.core.osfamily import UNKNOWN as UNKNOWN_OS
 from scanner.core.osfamily import classify as classify_os
+from scanner.core.targetspec import parse_target
 
 RUN_STATUSES = {"pending", "running", "done", "failed", "stopped", "interrupted"}
 # Итоговые статусы: прогон больше не исполняется. interrupted — процесс,
@@ -127,6 +129,67 @@ def add_allowlist_entry(session: Session, *, engagement_id: int, cidr: str,
     session.add(entry)
     session.flush()
     return entry.id
+
+
+@dataclass(slots=True)
+class AllowlistBulkResult:
+    """Итог массового добавления: занесённые записи и пропущенные дубли."""
+    added_ids: list[int] = field(default_factory=list)
+    # (запись, причина, покрывающая подсеть): duplicate — уже в allowlist целиком
+    skipped: list[tuple[str, str, str | None]] = field(default_factory=list)
+    # части диапазонов, уже покрытые allowlist (диапазон занесён не целиком)
+    partial: list[tuple[str, int]] = field(default_factory=list)
+
+
+def add_allowlist_specs(session: Session, *, engagement_id: int, specs: Iterable[str],
+                        note: str | None = None, added_by: int | None = None
+                        ) -> AllowlistBulkResult:
+    """Добавить в allowlist адреса, подсети и диапазоны одним действием.
+
+    Диапазон раскладывается в подсети (ровно те же адреса); каждая подсеть
+    помечается исходным диапазоном (range_spec). Записи, уже целиком
+    покрытые allowlist, пропускаются — повторное добавление ничего не
+    расширяет. Мусор — ValueError до любых изменений (всё или ничего).
+    """
+    parsed = []
+    for raw in specs:
+        if raw.strip():
+            parsed.append(parse_target(raw))      # ValueError на мусоре/имени хоста
+    result = AllowlistBulkResult()
+    seen: set[str] = set()
+    for spec in parsed:
+        if spec.text in seen:
+            continue
+        seen.add(spec.text)
+        pending = []
+        for net in spec.networks:
+            if find_allowlist_cover(session, engagement_id, net) is None:
+                pending.append(net)
+        if not pending:
+            cover = find_allowlist_cover(session, engagement_id, spec.networks[0])
+            result.skipped.append((spec.text, "duplicate", cover[1] if cover else None))
+            continue
+        if len(pending) < len(spec.networks):
+            result.partial.append((spec.text, len(spec.networks) - len(pending)))
+        for net in pending:
+            entry = AllowlistEntry(engagement_id=engagement_id, cidr=str(net), note=note,
+                                   added_by=added_by,
+                                   range_spec=spec.text if spec.is_range else None)
+            session.add(entry)
+            session.flush()
+            result.added_ids.append(entry.id)
+    return result
+
+
+def remove_allowlist_range(session: Session, engagement_id: int, range_spec: str) -> list[str]:
+    """Удалить все подсети диапазона. Возвращает удалённые CIDR."""
+    rows = list(session.scalars(select(AllowlistEntry).where(
+        AllowlistEntry.engagement_id == engagement_id,
+        AllowlistEntry.range_spec == range_spec)))
+    cidrs = [str(r.cidr) for r in rows]
+    for r in rows:
+        session.delete(r)
+    return cidrs
 
 
 def list_allowlist(session: Session, engagement_id: int) -> list[str]:

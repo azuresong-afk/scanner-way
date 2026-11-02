@@ -50,6 +50,7 @@ from scanner.core.db import FindingRow, ScanRun, session_scope
 from scanner.core.models import Finding, HostInventory, HostOs, ServiceInfo
 from scanner.core.naming import clean_name, run_title
 from scanner.core.ratelimit import PROFILES, RateProfile, get_profile
+from scanner.core.targetspec import is_range, parse_target, range_hosts
 from scanner.modules.base import ScanContext, ScanModule
 from scanner.reporting.diff import diff_runs
 
@@ -223,7 +224,8 @@ def plan_targets(gate: AllowlistGate, requested: Iterable[str], *,
                  max_targets: int = MAX_TARGETS_PER_RUN) -> TargetPlan:
     """Разворачивает запрошенные цели в адреса и пропускает их через allowlist.
 
-    IP — как есть; подсеть (CIDR) — в адреса хостов, каждый проверяется
+    IP — как есть; диапазон «начало-конец» — во все его адреса;
+    подсеть (CIDR) — в адреса хостов, каждый проверяется
     отдельно (подсеть, частично выходящая за allowlist, урезается до
     разрешённой части). Имена хостов отклоняются: резолв DNS — сетевое
     действие, а гейт работает только с литеральными адресами.
@@ -232,20 +234,32 @@ def plan_targets(gate: AllowlistGate, requested: Iterable[str], *,
     seen: set[str] = set()
     for raw in requested:
         spec = raw.strip()
-        try:
-            hosts = [str(ipaddress.ip_address(spec))]
-        except ValueError:
+        if is_range(spec):
             try:
-                net = ipaddress.ip_network(spec, strict=False)
+                rng = parse_target(spec)
             except ValueError:
                 plan.denied.append(DeniedTarget(spec, "not_an_ip"))
                 continue
-            if net.num_addresses > max_targets + 2:
+            if rng.num_addresses > max_targets:
                 plan.denied.append(DeniedTarget(spec, "too_many_targets",
-                                                net.num_addresses))
+                                                rng.num_addresses))
                 continue
-            # hosts() для /31, /32 (и /127, /128) отдаёт оба/единственный адрес
-            hosts = [str(h) for h in net.hosts()]
+            hosts = range_hosts(rng)
+        else:
+            try:
+                hosts = [str(ipaddress.ip_address(spec))]
+            except ValueError:
+                try:
+                    net = ipaddress.ip_network(spec, strict=False)
+                except ValueError:
+                    plan.denied.append(DeniedTarget(spec, "not_an_ip"))
+                    continue
+                if net.num_addresses > max_targets + 2:
+                    plan.denied.append(DeniedTarget(spec, "too_many_targets",
+                                                    net.num_addresses))
+                    continue
+                # hosts() для /31, /32 (и /127, /128) отдаёт оба/единственный адрес
+                hosts = [str(h) for h in net.hosts()]
         allowed, denied = gate.filter(hosts)
         if denied:
             plan.denied.append(DeniedTarget(spec, "not_in_allowlist", len(denied)))

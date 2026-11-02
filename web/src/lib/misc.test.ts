@@ -2,7 +2,7 @@ import { errorText } from "../api/client";
 import { runName, runTitle, scheduleWhen } from "./labels";
 import { parseDate, plural } from "./format";
 import { bduUrl, cveUrl } from "./refs";
-import { isIpOrCidr, parseTargets } from "./targets";
+import { compactAddresses, inAllowlist, isIpOrCidr, mergeTargets, parseRange, parseTargets, specSize } from "./targets";
 
 describe("targets", () => {
   it("принимает IP и CIDR, отклоняет имена", () => {
@@ -18,6 +18,35 @@ describe("targets", () => {
       targets: ["10.0.0.1", "10.0.1.0/24"],
       invalid: ["host.local"],
     });
+  });
+});
+
+describe("диапазоны целей", () => {
+  it("полная и краткая форма, пробелы вокруг дефиса", () => {
+    expect(parseTargets("10.0.0.1-10.0.0.50\n10.0.1.1 - 20, 10.0.2.9-3").targets).toEqual(["10.0.0.1-10.0.0.50", "10.0.1.1-20"]);
+    expect(parseTargets("10.0.2.9-3").invalid).toEqual(["10.0.2.9-3"]); // конец меньше начала
+    expect(parseRange("10.0.0.1-300")).toBeNull();
+    expect(parseRange("10.0.0.1-2001:db8::1")).toBeNull();
+    expect(specSize("10.0.0.1-50")).toBe(50);
+    expect(specSize("10.0.0.250-10.0.1.5")).toBe(12);
+    expect(specSize("10.0.0.0/24")).toBe(256);
+    expect(specSize("2001:db8::1-2001:db8::10")).toBe(16);
+  });
+  it("проверка адреса по allowlist", () => {
+    expect(inAllowlist("10.0.0.7", ["10.0.0.0/24"])).toBe(true);
+    expect(inAllowlist("10.0.1.7", ["10.0.0.0/24", "10.0.1.6/32"])).toBe(false);
+    expect(inAllowlist("10.0.1.6", ["10.0.0.0/24", "10.0.1.6/32"])).toBe(true);
+    expect(inAllowlist("2001:db8::5", ["2001:db8::/64"])).toBe(true);
+    expect(inAllowlist("2001:db9::5", ["2001:db8::/64"])).toBe(false);
+  });
+  it("подряд идущие адреса сворачиваются в диапазон, повторы не добавляются", () => {
+    expect(compactAddresses(["10.0.0.3", "10.0.0.1", "10.0.0.2", "10.0.0.9", "10.0.0.10", "10.0.0.255", "10.0.1.0", "10.0.1.1"])).toEqual([
+      "10.0.0.1-10.0.0.3",
+      "10.0.0.9",
+      "10.0.0.10",
+      "10.0.0.255-10.0.1.1",
+    ]);
+    expect(mergeTargets("10.0.0.5\n10.0.1.0/24", ["10.0.1.0/24", "10.0.0.6"])).toBe("10.0.0.5\n10.0.1.0/24\n10.0.0.6");
   });
 });
 
