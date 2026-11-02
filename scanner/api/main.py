@@ -52,7 +52,7 @@ from scanner.feeds.scheduler import FeedScheduler, seed_feed_sync
 from scanner.feeds.sources import FeedSource
 from scanner.integrations.base import Transports
 from scanner.integrations.dispatcher import Dispatcher
-from scanner.reporting.remediation import RemediationResolver
+from scanner.reporting.remediation import RemediationResolver, host_os_from_findings
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +75,8 @@ def bdu_resolver_factory(store) -> ResolverFactory:
                 break
             if rec is not None:
                 bdu[bid] = rec
-        return RemediationResolver(bdu=bdu)
+        # ОС хостов из сводок инвентаризации по учётке: рекомендации и ссылки — для неё
+        return RemediationResolver(bdu=bdu, host_os=host_os_from_findings(findings))
     return factory
 
 

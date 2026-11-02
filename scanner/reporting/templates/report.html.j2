@@ -162,6 +162,7 @@
   .fix { background: var(--good-bg); border-radius: 8px; padding: 8px 11px; margin-top: 8px; }
   .fix .label { color: var(--good); font-weight: 600; font-size: 7pt; letter-spacing: .08em;
                 text-transform: uppercase; display: block; margin-bottom: 2px; }
+  .fix .fix-text { white-space: pre-line; }
   .fix .src { color: var(--muted); font-size: 7.5pt; display: block; margin-top: 4px; }
   .refs { margin-top: 8px; padding-top: 6px; border-top: 1px solid #d1fadf; }
   .refs .label { color: var(--good); font-weight: 600; font-size: 7pt; letter-spacing: .08em;
@@ -464,7 +465,7 @@
     {% else %}
     <div class="fix">
       <span class="label">Рекомендация по устранению</span>
-      {{ v.remediation.text }}
+      <span class="fix-text">{{ v.remediation.text }}</span>
       {% if v.remediation.fix_method %}<span class="src">Способ устранения: {{ v.remediation.fix_method }}</span>{% endif %}
       <span class="src">Источник: {{ v.remediation.source_label }}</span>
       {% if v.remediation.references %}

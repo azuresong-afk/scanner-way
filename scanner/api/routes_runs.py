@@ -366,9 +366,12 @@ def get_report(run_id: int, request: Request,
     # regression — ключ был до базового прогона, в нём исчез и вернулся сейчас
     hist = (repo.historically_fixed_keys(session, eng.id, prev_id)
             if prev_id is not None else None)
+    resolver = request.app.state.resolver_factory(current)
+    # ОС хостов без учётки — из инвентаря договора (баннеры); ОС из прогона точнее
+    resolver.add_host_os(repo.host_os_names(session, eng.id), override=False)
     report = build_report(
         current, previous=previous, historically_fixed=hist,
-        resolver=request.app.state.resolver_factory(current),
+        resolver=resolver,
         context=ReportContext(customer=eng.client,
                               engagement=eng.contract_ref or eng.name,
                               run_id=run_id, previous_run_id=prev_id,
