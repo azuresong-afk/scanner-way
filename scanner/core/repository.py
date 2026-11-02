@@ -571,6 +571,17 @@ def engagement_hosts(session: Session, engagement_id: int,
                                       int(ipaddress.ip_address(r["host"]))))
 
 
+def host_os_names(session: Session, engagement_id: int) -> dict[str, str]:
+    """Адрес -> название ОС (с семейством) по инвентарю договора — для привязки
+    рекомендаций отчёта к дистрибутиву хоста."""
+    out = {}
+    for row in engagement_hosts(session, engagement_id):
+        if row["os_family"] and row["os_family"] != UNKNOWN_OS:
+            out[row["host"]] = " ".join(x for x in (row["os_family_label"], row["os_guess"])
+                                        if x)
+    return out
+
+
 # ========== Находки ==========
 def save_findings(session: Session, *, engagement_id: int, scan_run_id: int,
                   findings: Iterable[Finding],

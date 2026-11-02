@@ -505,7 +505,7 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
 def _resolver(env: _Env, findings):
     """Рекомендации по устранению из справочника БДУ ФСТЭК."""
     from scanner.feeds.store import SqlReferenceStore
-    from scanner.reporting.remediation import RemediationResolver
+    from scanner.reporting.remediation import RemediationResolver, host_os_from_findings
 
     store = SqlReferenceStore(env.engine)
     ids = {b.upper() for f in findings for b in f.bdu_ids}
@@ -516,7 +516,7 @@ def _resolver(env: _Env, findings):
         rec = store.get_bdu(bid)
         if rec is not None:
             bdu[bid] = rec
-    return RemediationResolver(bdu=bdu)
+    return RemediationResolver(bdu=bdu, host_os=host_os_from_findings(findings))
 
 
 def cmd_report(args: argparse.Namespace, env: _Env) -> int:
@@ -547,9 +547,12 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
                                 run_id=args.run_id, previous_run_id=prev_id)
         marks = repo.false_positive_marks(s, eng.id)
         risk = build_risk_context(s, current, eng.id)
+        os_names = repo.host_os_names(s, eng.id)
 
+    resolver = _resolver(env, current)
+    resolver.add_host_os(os_names, override=False)
     report = build_report(current, previous=previous, historically_fixed=hist,
-                          resolver=_resolver(env, current), context=context,
+                          resolver=resolver, context=context,
                           false_positives=marks, risk=risk)
     variant = "brief" if args.brief else "full"
     try:
