@@ -1,17 +1,25 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { BarChart3 } from "lucide-react";
 import { api } from "../api/client";
 import { useEngagement } from "../auth/EngagementContext";
+import { Pager } from "../components/Pager";
 import { ReportMenu } from "../components/ReportMenu";
 import { Empty, ErrorAlert, Loading, RunName, RunStatusPill } from "../components/ui";
 import { fmtDate } from "../lib/format";
-import { isFinished } from "../lib/labels";
+import { FINISHED } from "../lib/labels";
 import { useAsync } from "../lib/useAsync";
+
+const PAGE = 25;
 
 export function ReportsPage() {
   const { current } = useEngagement();
+  const [offset, setOffset] = useState(0);
+  // Таблица — страница завершённых прогонов с сервера; полный список прогонов
+  // нужен только меню «Сравнить с».
+  const page = useAsync(() => api.runsPage(current!.id, { status: FINISHED, limit: PAGE, offset }), [current?.id, offset], !!current);
   const runs = useAsync(() => api.runs(current!.id), [current?.id], !!current);
-  const finished = [...(runs.data ?? [])].filter((r) => isFinished(r.status)).sort((a, b) => b.id - a.id);
+  const finished = page.data?.items ?? [];
 
   if (!current) return <div className="card"><Empty title="Выберите или создайте договор" /></div>;
 
@@ -27,9 +35,9 @@ export function ReportsPage() {
           </span>
         </div>
       </div>
-      {runs.error && <ErrorAlert error={runs.error} onRetry={runs.reload} />}
+      {page.error && <ErrorAlert error={page.error} onRetry={page.reload} />}
       <section className="card" style={{ overflow: "hidden" }}>
-        {runs.loading && !runs.data ? (
+        {page.loading && !page.data ? (
           <Loading />
         ) : finished.length === 0 ? (
           <Empty title="Отчёты появятся после завершения прогонов" icon={<BarChart3 size={28} />} />
@@ -67,6 +75,7 @@ export function ReportsPage() {
             </table>
           </div>
         )}
+        {(page.data?.total ?? 0) > PAGE && <Pager total={page.data!.total} offset={offset} limit={PAGE} onChange={setOffset} label="Страницы отчётов" />}
       </section>
     </>
   );

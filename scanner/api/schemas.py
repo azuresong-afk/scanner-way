@@ -225,6 +225,10 @@ class RunOut(_Orm):
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime | None
+    # Причина ошибки или прерывания — для пользователя (миграция 0017).
+    error_message: str | None = None
+    # Прогон, который повторяет этот («Повторить»).
+    retry_of: int | None = None
 
     @model_validator(mode="after")
     def _default_name(self) -> RunOut:
@@ -331,6 +335,28 @@ class PriorityOut(BaseModel):
     label_ru: str
     reasons: list[str]
     factors: dict
+
+
+class HostCountsOut(BaseModel):
+    host: str
+    counts: dict[str, int]
+    total: int
+
+
+class FindingsSummaryOut(BaseModel):
+    """Сводка прогона без выгрузки находок (ложные срабатывания не считаются)."""
+    counts: dict[str, int]                 # уровень -> число
+    open: int                              # все уровни, кроме info
+    hosts: int
+    new: int
+    regression: int
+    fixed: int                             # закрыто относительно previous_run_id
+    false_positives: int
+    bdu_share: float | None
+    modules: list[str]
+    statuses: dict[str, int]
+    previous_run_id: int | None
+    host_counts: list[HostCountsOut]
 
 
 class FindingOut(BaseModel):

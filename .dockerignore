@@ -1,0 +1,16 @@
+# Контекст сборки образа app: без секретов, данных и артефактов разработки.
+.git
+.github
+.env
+.env.*
+!.env.example
+data/
+backups/
+web/
+**/__pycache__
+**/*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.sandbox-ca.crt

@@ -26,6 +26,7 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from scanner.core.models import Finding, Severity
 
@@ -173,34 +174,45 @@ class RiskContext:
 
 
 def normalize_host(host: object) -> str:
-    try:
-        return str(ipaddress.ip_address(str(host).strip().split("/")[0]))
-    except ValueError:
-        return str(host)
+    return _normalize_host(str(host))
 
 
-def _tiebreak(f: Finding) -> tuple:
+@lru_cache(maxsize=65536)
+def _normalize_host(host: str) -> str:
+    # в прогоне сотни хостов на миллион находок — разбор адреса кэшируется
     try:
-        ip = (0, int(ipaddress.ip_address(normalize_host(f.host))))
+        return str(ipaddress.ip_address(host.strip().split("/")[0]))
     except ValueError:
-        ip = (1, 0)
-    return (ip, f.port if f.port is not None else -1, f.vuln_id or "", f.module,
-            f.dedup_key())
+        return host
+
+
+@lru_cache(maxsize=65536)
+def _ip_key(host: str) -> tuple[int, int]:
+    try:
+        return (0, int(ipaddress.ip_address(_normalize_host(host))))
+    except ValueError:
+        return (1, 0)
+
+
+def _tiebreak(f: Finding, key: str | None = None) -> tuple:
+    return (_ip_key(str(f.host)), f.port if f.port is not None else -1, f.vuln_id or "",
+            f.module, key if key is not None else f.dedup_key())
 
 
 def rank_findings(findings: Iterable[Finding],
                   ctx: RiskContext | None = None) -> dict[str, RiskAssessment]:
     """{dedup_key: оценка с рангом}. Детерминированно; info-находки пропускаются."""
     ctx = ctx or RiskContext()
-    scored: list[tuple[Finding, RiskAssessment]] = []
+    sev_index = {s: i for i, s in enumerate(Severity)}
+    scored: list[tuple[tuple, str, RiskAssessment]] = []
     for f in findings:
         a = assess(ctx.factors_for(f))
         if a is not None:
-            scored.append((f, a))
-    scored.sort(key=lambda p: (-p[1].score, -list(Severity).index(p[0].severity)) + _tiebreak(p[0]))
+            key = f.dedup_key()
+            scored.append(((-a.score, -sev_index[f.severity]) + _tiebreak(f, key), key, a))
+    scored.sort(key=lambda p: p[0])
     out: dict[str, RiskAssessment] = {}
-    for rank, (f, a) in enumerate(scored, 1):
-        key = f.dedup_key()
+    for rank, (_, key, a) in enumerate(scored, 1):
         if key not in out:
             out[key] = RiskAssessment(a.score, a.label, a.label_ru, a.factors, a.reasons, rank)
     return out

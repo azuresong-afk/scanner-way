@@ -523,3 +523,8 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .sw-table tr.sw-detail > td { padding: 0 0 var(--s2) var(--s4); background: var(--surface-2); }
 .sw-table tr.sw-detail:hover > td { background: var(--surface-2); }
 .sw-table tr.sw-detail .table-wrap { border-left: 2px solid var(--accent-soft); }
+
+/* Переключатель страниц серверных списков */
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2); padding: var(--s2) var(--s3); border-top: 1px solid var(--border); font-size: 13px; }
+.pager-controls { display: inline-flex; align-items: center; gap: var(--s1); }
+.pager select { height: 28px; padding: 0 6px; width: auto; }

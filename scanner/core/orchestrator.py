@@ -9,7 +9,17 @@
   * `RunService` — прогон, сохранённый в БД (`scan_runs`): читает allowlist
     договора из БД в момент запуска, исполняет `Orchestrator`, сохраняет
     инвентарь и находки (со статусами относительно предыдущего прогона) и ведёт
-    статус pending -> running -> done | failed | stopped.
+    статус pending -> running -> done | failed | stopped | interrupted.
+
+Восстановление после сбоя: процесс, который ведёт прогоны (pending в своей
+очереди и running), раз в `heartbeat_seconds` обновляет у них `heartbeat_at`.
+Сторож (`RunService.start()` — в API) при старте и затем периодически ищет
+осиротевшие прогоны: их процесс умер (тот же хост, pid не существует или это
+прошлый запуск контейнера) или отметка не обновлялась дольше `stale_seconds`.
+Осиротевший running становится `interrupted` с понятной причиной (повторить —
+`RunService.retry`), осиротевший pending ставится в очередь заново: сеть он
+ещё не трогал. Результаты прогона пишутся одной транзакцией вместе с очисткой
+прежних строк этого прогона, поэтому повторное исполнение не плодит дублей.
 
 Остановка кооперативная: статус `stopped` выставляется в БД сразу, а
 исполняющийся прогон проверяет его между модулями (модуль, уже начавший работу,
@@ -20,17 +30,23 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
+import socket
+import threading
+import uuid
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from scanner.core import repository as repo
 from scanner.core.allowlist import AllowlistGate
 from scanner.core.audit import AuditSink
 from scanner.core.credentials import CredentialVault, HostCredential, load_vault
-from scanner.core.db import session_scope
+from scanner.core.db import FindingRow, ScanRun, session_scope
 from scanner.core.models import Finding, HostInventory, HostOs, ServiceInfo
 from scanner.core.naming import clean_name, run_title
 from scanner.core.ratelimit import PROFILES, RateProfile, get_profile
@@ -71,6 +87,9 @@ COMPANION_MODULES: dict[str, tuple[str, ...]] = {
 MAX_TARGETS_PER_RUN = 4096
 
 ModuleFactory = Callable[[], ScanModule]
+
+# Какие прогоны можно повторить кнопкой «Повторить».
+RETRYABLE = frozenset({"failed", "interrupted", "stopped"})
 
 log = logging.getLogger(__name__)
 
@@ -347,6 +366,66 @@ def inline_executor() -> Executor:
     return _InlineExecutor()
 
 
+# Отметка «жив» и порог, после которого прогон без неё считается осиротевшим.
+HEARTBEAT_SECONDS = 30
+STALE_SECONDS = 180
+
+MSG_INTERRUPTED = ("Прогон прерван: служба сканера была остановлена или "
+                   "перезапущена во время выполнения. Результаты прогона не "
+                   "сохранены — запустите его повторно (кнопка «Повторить»).")
+MSG_INTERRUPTED_SAVED = ("Прогон прерван после сохранения находок: служба сканера "
+                         "остановилась до его штатного завершения (расчёт "
+                         "соответствия мог не выполниться). Находки доступны; "
+                         "для полного результата повторите прогон.")
+MSG_NO_TARGETS = ("Ни одна цель не прошла allowlist договора на момент запуска "
+                  "(allowlist мог измениться после постановки прогона).")
+
+
+def make_worker_id() -> str:
+    """Кто ведёт прогон: хост, pid и метка запуска процесса."""
+    return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:12]}"
+
+
+def _aware(ts: datetime | None) -> datetime | None:
+    if ts is None:
+        return None
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+
+
+def owner_is_dead(worker_id: str | None, me: str) -> bool:
+    """Процесс worker_id точно не существует (проверяемо только на своём хосте).
+
+    В контейнере API после перезапуска снова pid 1, поэтому кроме pid
+    сравнивается метка запуска: тот же pid с другой меткой — прошлый процесс.
+    Прогоны с другого хоста (или без worker_id) оцениваются только по
+    давности отметки «жив»."""
+    if not worker_id:
+        return False
+    try:
+        host, pid_s, boot = worker_id.rsplit(":", 2)
+        pid = int(pid_s)
+    except ValueError:
+        return False
+    my_host, my_pid, my_boot = me.rsplit(":", 2)
+    if host != my_host:
+        return False
+    if pid == int(my_pid):
+        return boot != my_boot
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:          # процесс есть, но чужой (EPERM)
+        return False
+    return False
+
+
+def error_summary(errors: Mapping[str, str]) -> str:
+    """Ошибки модулей — одной строкой для пользователя."""
+    parts = [f"модуль {m}: {e}" for m, e in errors.items()]
+    return "Прогон завершён с ошибками — " + "; ".join(parts)
+
+
 class RunService:
     """Постановка, исполнение и остановка прогонов, сохранённых в БД."""
 
@@ -355,8 +434,19 @@ class RunService:
                  executor: Executor | None = None,
                  reference_store: object | None = None,
                  vault: CredentialVault | None = None,
-                 notifier: Callable[[int], None] | None = None):
+                 notifier: Callable[[int], None] | None = None,
+                 heartbeat_seconds: float = HEARTBEAT_SECONDS,
+                 stale_seconds: float = STALE_SECONDS):
         self.sessions = session_factory
+        # Восстановление после сбоя: этот процесс и прогоны, которые он ведёт.
+        self.worker_id = make_worker_id()
+        self.heartbeat_seconds = heartbeat_seconds
+        self.stale_seconds = stale_seconds
+        self._owned: set[int] = set()
+        self._lock = threading.Lock()
+        self._hb_thread: threading.Thread | None = None
+        self._hb_stop = threading.Event()
+        self._sweep = False      # сторож осиротевших прогонов — только после start()
         # Уведомления о завершении прогона (R9): вызывается с id прогона, ошибки
         # поглощаются — сбой канала не должен менять итог прогона.
         self.notifier = notifier
@@ -449,7 +539,8 @@ class RunService:
                started_by: int | None = None,
                credential_ids: list[int] | None = None,
                cred_set_ids: list[int] | None = None,
-               name: str | None = None, schedule_id: int | None = None) -> int:
+               name: str | None = None, schedule_id: int | None = None,
+               retry_of: int | None = None) -> int:
         """Создаёт прогон (pending) и отдаёт его исполнителю. Права проверяет API.
 
         name — имя, заданное оператором; без него имя строится по модулям и целям.
@@ -472,7 +563,8 @@ class RunService:
                                           started_by=started_by, credential_ids=cred_ids,
                                           cred_set_ids=set_ids,
                                           name=title, targets=requested_targets[:1024],
-                                          schedule_id=schedule_id)
+                                          schedule_id=schedule_id, retry_of=retry_of,
+                                          worker_id=self.worker_id)
         self.audit.record(subject=actor, action="scan_queue", target=f"scan_run:{run_id}",
                           result="ok",
                           details={"engagement_id": engagement_id, "name": title,
@@ -480,9 +572,142 @@ class RunService:
                                    "rate_profile": rate_profile,
                                    "credential_ids": cred_ids,
                                    "cred_set_ids": set_ids,
+                                   "retry_of": retry_of,
                                    "requested_targets": requested_targets[:100]})
-        self.executor.submit(self.execute, run_id, list(requested_targets))
+        self._enqueue(run_id, list(requested_targets))
         return run_id
+
+    def retry(self, scan_run_id: int, *, actor: str, started_by: int | None = None) -> int:
+        """Новый прогон с параметрами завершившегося (ошибка, прерван,
+        остановлен). Allowlist и учётки проверяются заново при исполнении.
+        ValueError — прогон ещё идёт или успешно завершён (API отдаёт 409)."""
+        with session_scope(self.sessions) as s:
+            run = repo.get_scan_run(s, scan_run_id)
+            if run is None:
+                raise LookupError(f"scan_run {scan_run_id} not found")
+            if run.status not in RETRYABLE:
+                raise ValueError(f"повторить можно только прогон с ошибкой, прерванный "
+                                 f"или остановленный (сейчас: {run.status})")
+            params = {"engagement_id": run.engagement_id, "modules": list(run.modules),
+                      "rate_profile": run.rate_profile,
+                      "requested_targets": list(run.targets or []),
+                      "credential_ids": list(run.credential_ids or []),
+                      "cred_set_ids": list(run.cred_set_ids or []),
+                      "name": run.name, "schedule_id": run.schedule_id}
+        if not params["requested_targets"]:
+            raise ValueError("у прогона не сохранены цели — запустите новый прогон")
+        return self.submit(**params, actor=actor, started_by=started_by,
+                           retry_of=scan_run_id)
+
+    # --- отметка «жив» и сторож осиротевших прогонов -----------------------
+    def _enqueue(self, run_id: int, targets: list[str]) -> None:
+        with self._lock:
+            self._owned.add(run_id)
+        self._ensure_heartbeat()
+        self.executor.submit(self._run_owned, run_id, targets)
+
+    def _run_owned(self, run_id: int, targets: list[str]) -> str:
+        try:
+            return self.execute(run_id, targets)
+        finally:
+            with self._lock:
+                self._owned.discard(run_id)
+
+    def _ensure_heartbeat(self) -> None:
+        if self.heartbeat_seconds <= 0:
+            return
+        with self._lock:
+            if self._hb_thread is not None and self._hb_thread.is_alive():
+                return
+            self._hb_stop.clear()
+            self._hb_thread = threading.Thread(target=self._heartbeat_loop,
+                                               name="scan-run-heartbeat", daemon=True)
+            self._hb_thread.start()
+
+    def _heartbeat_loop(self) -> None:
+        while not self._hb_stop.wait(self.heartbeat_seconds):
+            self.heartbeat()
+            if self._sweep:
+                try:
+                    self.recover_orphans()
+                except Exception:   # БД недоступна — попробуем на следующем тике
+                    log.exception("orphaned scan runs check failed")
+
+    def heartbeat(self) -> None:
+        """Обновить отметку «жив» у прогонов этого процесса."""
+        with self._lock:
+            owned = list(self._owned)
+        if not owned:
+            return
+        try:
+            with session_scope(self.sessions) as s:
+                repo.touch_scan_runs(s, owned, self.worker_id)
+        except Exception:
+            log.exception("scan run heartbeat failed")
+
+    def start(self) -> None:
+        """Старт в API: разобрать прогоны, оставшиеся от прошлого процесса, и
+        включить периодический сторож (вместе с отметкой «жив»)."""
+        try:
+            self.recover_orphans()
+        except Exception:
+            log.exception("orphaned scan runs check failed at startup")
+        self._sweep = True
+        self._ensure_heartbeat()
+
+    def stop(self) -> None:
+        self._sweep = False
+        self._hb_stop.set()
+
+    def recover_orphans(self, now: datetime | None = None) -> dict[str, list[int]]:
+        """Осиротевшие running -> interrupted, осиротевшие pending -> в очередь.
+
+        Каждое изменение — условным UPDATE по наблюдённым статусу и отметке:
+        если владелец «ожил» и успел обновить прогон, сторож его не тронет."""
+        now = now or datetime.now(UTC)
+        stale_before = now - timedelta(seconds=self.stale_seconds)
+        interrupted: list[int] = []
+        requeued: list[tuple[int, list[str]]] = []
+        with self._lock:
+            owned = set(self._owned)
+        with session_scope(self.sessions) as s:
+            for run in repo.active_scan_runs(s):
+                if run.id in owned:
+                    continue
+                seen = _aware(run.heartbeat_at or run.started_at or run.created_at)
+                dead = owner_is_dead(run.worker_id, self.worker_id)
+                if not dead and seen is not None and seen >= stale_before:
+                    continue
+                cond = [ScanRun.id == run.id, ScanRun.status == run.status,
+                        ScanRun.heartbeat_at.is_(None) if run.heartbeat_at is None
+                        else ScanRun.heartbeat_at == run.heartbeat_at]
+                if run.status == "running":
+                    saved = s.scalar(select(func.count(FindingRow.id)).where(
+                        FindingRow.scan_run_id == run.id)) or 0
+                    res = s.execute(update(ScanRun).where(*cond).values(
+                        status="interrupted", finished_at=now,
+                        error_message=MSG_INTERRUPTED_SAVED if saved else MSG_INTERRUPTED)
+                        .execution_options(synchronize_session=False))
+                    if res.rowcount == 1:
+                        interrupted.append(run.id)
+                else:
+                    res = s.execute(update(ScanRun).where(*cond).values(
+                        worker_id=self.worker_id, heartbeat_at=now)
+                        .execution_options(synchronize_session=False))
+                    if res.rowcount == 1:
+                        requeued.append((run.id, list(run.targets or [])))
+        for run_id in interrupted:
+            self.audit.record(subject="scanner", action="scan_finish",
+                              target=f"scan_run:{run_id}", result="interrupted",
+                              details={"reason": "executor_lost",
+                                       "worker_id": self.worker_id})
+            self._notify(run_id)
+        for run_id, targets in requeued:
+            self.audit.record(subject="scanner", action="scan_requeue",
+                              target=f"scan_run:{run_id}", result="ok",
+                              details={"reason": "executor_lost"})
+            self._enqueue(run_id, targets)
+        return {"interrupted": interrupted, "requeued": [r for r, _ in requeued]}
 
     def request_stop(self, scan_run_id: int, *, actor: str) -> str:
         """Останавливает pending/running прогон; возвращает итоговый статус."""
@@ -524,7 +749,9 @@ class RunService:
                 with session_scope(self.sessions) as s:
                     run = repo.get_scan_run(s, scan_run_id)
                     if run is not None and run.status in {"pending", "running"}:
-                        repo.set_scan_run_status(s, scan_run_id, "failed")
+                        repo.set_scan_run_status(
+                            s, scan_run_id, "failed",
+                            error_message=f"Внутренняя ошибка сканера: {e}"[:500])
             except Exception:  # БД недоступна; след уже в аудите
                 log.exception("scan_run %s: cannot mark as failed", scan_run_id)
             self._notify(scan_run_id)
@@ -558,7 +785,7 @@ class RunService:
             run = repo.get_scan_run(s, scan_run_id)
             if run is None:
                 raise LookupError(f"scan_run {scan_run_id} not found")
-            if run.status != "pending":      # остановлен до старта
+            if run.status != "pending":      # остановлен до старта / уже исполняется
                 return run.status
             engagement_id = run.engagement_id
             names = list(run.modules)
@@ -578,7 +805,12 @@ class RunService:
             if set_ids:
                 cred_candidates = repo.load_cred_set_entries(s, self.vault,
                                                              engagement_id, set_ids)
-            repo.set_scan_run_status(s, scan_run_id, "running")
+            # pending -> running атомарно: прогон, поставленный в очередь повторно,
+            # не исполнится дважды.
+            if not repo.claim_scan_run(s, scan_run_id, self.worker_id):
+                s.expire_all()
+                run = repo.get_scan_run(s, scan_run_id)
+                return run.status
         self.audit.record(subject="scanner", action="scan_start",
                           target=f"scan_run:{scan_run_id}", result="ok",
                           details={"engagement_id": engagement_id, "modules": names,
@@ -598,6 +830,8 @@ class RunService:
         del credentials, cred_candidates    # секреты больше не нужны
 
         with session_scope(self.sessions) as s:
+            # в той же транзакции — результаты прошлой попытки этого прогона
+            repo.clear_scan_run_results(s, scan_run_id)
             if out.hosts:
                 repo.save_hosts(s, scan_run_id=scan_run_id, hosts=out.hosts)
             if out.services:
@@ -618,14 +852,17 @@ class RunService:
         with session_scope(self.sessions) as s:
             run = repo.get_scan_run(s, scan_run_id)
             s.refresh(run)
+            message = None
             if out.stopped or run.status == "stopped":
                 final = "stopped"
-            elif not out.allowed or out.errors:
-                final = "failed"
+            elif not out.allowed:
+                final, message = "failed", MSG_NO_TARGETS
+            elif out.errors:
+                final, message = "failed", error_summary(out.errors)
             else:
                 final = "done"
-            if run.status != final:
-                repo.set_scan_run_status(s, scan_run_id, final)
+            if run.status != final or message:
+                repo.set_scan_run_status(s, scan_run_id, final, error_message=message)
         self.audit.record(subject="scanner", action="scan_finish",
                           target=f"scan_run:{scan_run_id}", result=final,
                           details={"targets": len(out.allowed),

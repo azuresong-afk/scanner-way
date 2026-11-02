@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, Play, Radar, RotateCcw, Check, Server } from "lucide-react";
 import { api } from "../api/client";
-import type { FindingOut, RunOut, ServiceOut, Severity } from "../api/types";
+import type { FindingOut, FindingsSummary, RunOut, ServiceOut, Severity } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { SeverityStack } from "../components/charts/SeverityBars";
@@ -13,7 +13,7 @@ import { StartRunModal } from "../components/StartRunModal";
 import { Empty, ErrorAlert, Loading, RefTags, RunName, RunStatusPill, SeverityBadge } from "../components/ui";
 import { fmtDate, fmtDelta, fmtNumber, plural } from "../lib/format";
 import { isFinished, SEVERITY_LABEL, runName } from "../lib/labels";
-import { byHost, compareFindings, isIssue, issueTotal, severityCounts, summarize, type HostRow, type RunSummary } from "../lib/stats";
+import { hostRowsFromCounts, type HostRow, type RunSummary } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
 
 const TREND_RUNS = 10;
@@ -22,36 +22,56 @@ interface DashData {
   runs: RunOut[];
   latest: RunOut | null;
   previous: RunOut | null;
-  findings: FindingOut[];
-  prevFindings: FindingOut[] | null;
+  summary: FindingsSummary | null;
+  prevSummary: FindingsSummary | null;
+  /** Первые находки последнего прогона по опасности (8 строк с сервера). */
+  top: FindingOut[];
   services: ServiceOut[];
-  prevServices: ServiceOut[];
   trend: TrendPoint[];
+}
+
+/** Сводка для героя и плиток из серверных счётчиков двух последних прогонов. */
+function toRunSummary(cur: FindingsSummary, prev: FindingsSummary | null): RunSummary {
+  return {
+    counts: cur.counts,
+    open: cur.open,
+    hosts: cur.hosts,
+    newCount: cur.new,
+    regression: cur.regression,
+    fixed: cur.fixed,
+    bduShare: cur.bdu_share,
+    prevOpen: prev ? prev.open : null,
+    prevCritical: prev ? prev.counts.critical : null,
+    prevHosts: prev ? prev.hosts : null,
+  };
 }
 
 async function loadDashboard(engagementId: number): Promise<DashData> {
   const runs = (await api.runs(engagementId)).sort((a, b) => b.id - a.id);
   const finished = runs.filter((r) => isFinished(r.status) && r.status !== "failed");
   const recent = finished.slice(0, TREND_RUNS).reverse();
-  const findingsByRun = await Promise.all(recent.map((r) => api.findings(r.id)));
+  // Только серверные сводки: находки прогонов целиком не выгружаются.
+  const summaries = await Promise.all(recent.map((r) => api.findingsSummary(r.id)));
   const latest = recent[recent.length - 1] ?? null;
   const previous = recent[recent.length - 2] ?? null;
-  const [services, prevServices] = await Promise.all([
+  const [services, top] = await Promise.all([
     latest ? api.services(latest.id) : Promise.resolve([]),
-    previous ? api.services(previous.id) : Promise.resolve([]),
+    latest
+      ? api.findings(latest.id, { include_info: false, false_positives: "exclude", sort: "severity", limit: 8 })
+      : Promise.resolve([]),
   ]);
   const trend = recent.map((r, i) => {
-    const c = severityCounts(findingsByRun[i]);
-    return { label: `№${r.id}`, sub: fmtDate(r.started_at ?? r.created_at), all: issueTotal(c), severe: c.critical + c.high };
+    const c = summaries[i].counts;
+    return { label: `№${r.id}`, sub: fmtDate(r.started_at ?? r.created_at), all: summaries[i].open, severe: c.critical + c.high };
   });
   return {
     runs,
     latest,
     previous,
-    findings: findingsByRun[findingsByRun.length - 1] ?? [],
-    prevFindings: previous ? findingsByRun[findingsByRun.length - 2] : null,
+    summary: summaries[summaries.length - 1] ?? null,
+    prevSummary: previous ? summaries[summaries.length - 2] : null,
+    top,
     services,
-    prevServices,
     trend,
   };
 }
@@ -296,9 +316,9 @@ export function DashboardPage() {
   const [open, setOpen] = useState<FindingOut | null>(null);
 
   const d = data.data;
-  const summary = useMemo(() => (d && d.latest ? summarize(d.findings, d.prevFindings, d.services, d.prevServices) : null), [d]);
-  const hosts = useMemo(() => (d ? byHost(d.findings.filter(isIssue), d.services).filter((h) => h.total > 0) : []), [d]);
-  const top = useMemo(() => (d ? d.findings.filter(isIssue).sort(compareFindings).slice(0, 8) : []), [d]);
+  const summary = useMemo(() => (d && d.latest && d.summary ? toRunSummary(d.summary, d.prevSummary) : null), [d]);
+  const hosts = useMemo(() => (d?.summary ? hostRowsFromCounts(d.summary.host_counts.filter((h) => h.total > 0), d.services) : []), [d]);
+  const top = d?.top ?? [];
   const active = d?.runs.filter((r) => !isFinished(r.status)) ?? [];
 
   if (engLoading) return <Loading />;

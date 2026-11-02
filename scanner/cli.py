@@ -47,7 +47,7 @@ from scanner.core.ratelimit import PROFILES
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 REPORT_FORMATS = ("html", "pdf", "docx", "json")
-FINISHED = {"done", "failed", "stopped"}
+FINISHED = {"done", "failed", "stopped", "interrupted"}
 
 
 class CliError(Exception):
@@ -493,12 +493,13 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
                         cred_set_ids=cred_sets, name=args.name)
     with session_scope(env.sessions) as s:
         run = repo.get_scan_run(s, run_id)
-        status, title = run.status, run.name
+        status, title, error = run.status, run.name, run.error_message
         findings = len(repo.get_findings(s, run_id))
     print(f"Прогон {run_id} «{title}»: {status}, находок — {findings}")
     if status != "done":
-        print("Подробности ошибок модулей — в журнале аудита (scan_finish).",
-              file=sys.stderr)
+        if error:
+            print(error, file=sys.stderr)
+        print("Подробности — в журнале аудита (scan_finish).", file=sys.stderr)
     return 0 if status == "done" else 1
 
 

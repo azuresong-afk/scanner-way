@@ -17,6 +17,11 @@ from scanner.core.db import Base, make_session_factory
 PG_URL = os.environ.get("SCANNER_TEST_DATABASE_URL")
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "e2e: сквозной сценарий на живом стеке Docker (scripts/e2e.sh)")
+
+
 @pytest.fixture
 def sqlite_factory():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -29,3 +34,12 @@ def sqlite_factory():
     Base.metadata.create_all(engine)
     yield make_session_factory(engine)
     engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_priority_cache():
+    """Кэш приоритетов живёт в процессе API и ключуется id прогона; у тестов
+    каждая БД своя, а id прогонов повторяются — кэш сбрасывается между тестами."""
+    from scanner.api.routes_findings import clear_priority_cache
+    clear_priority_cache()
+    yield

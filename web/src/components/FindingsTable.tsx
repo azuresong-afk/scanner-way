@@ -5,7 +5,11 @@ import { MODULE_LABEL } from "../lib/labels";
 import { compareFindings, compareIp, SEVERITY_RANK } from "../lib/stats";
 import { FindingStatusPill, PriorityBadge, RefTags, SeverityBadge } from "./ui";
 
-type SortKey = "severity" | "priority" | "title" | "host" | "cvss" | "module";
+export type SortKey = "severity" | "priority" | "title" | "host" | "cvss" | "module";
+export interface SortState {
+  key: SortKey;
+  dir: 1 | -1;
+}
 
 const PAGE = 100;
 
@@ -14,13 +18,21 @@ export function FindingsTable({
   onOpen,
   selected,
   hideHost,
+  sort: controlled,
+  onSort,
 }: {
   findings: FindingOut[];
   onOpen: (f: FindingOut) => void;
   selected?: FindingOut | null;
   hideHost?: boolean;
+  /** Серверная сортировка: строки уже отсортированы и порезаны на страницы API. */
+  sort?: SortState;
+  onSort?: (s: SortState) => void;
 }) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "severity", dir: 1 });
+  const [own, setOwn] = useState<SortState>({ key: "severity", dir: 1 });
+  const sort = controlled ?? own;
+  const setSort = (fn: (s: SortState) => SortState) => (onSort ? onSort(fn(sort)) : setOwn(fn));
+  const server = !!onSort;
   const [limit, setLimit] = useState(PAGE);
 
   const rows = useMemo(() => {
@@ -33,8 +45,9 @@ export function FindingsTable({
       cvss: (a, b) => (b.cvss ?? -1) - (a.cvss ?? -1) || SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity],
       module: (a, b) => a.module.localeCompare(b.module),
     };
+    if (server) return findings;
     return [...findings].sort((a, b) => cmp[sort.key](a, b) * sort.dir);
-  }, [findings, sort]);
+  }, [findings, sort, server]);
 
   const head = (key: SortKey, label: string, right?: boolean) => (
     <th scope="col" className={right ? "right" : undefined} aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
@@ -62,7 +75,7 @@ export function FindingsTable({
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, limit).map((f, i) => (
+            {(server ? rows : rows.slice(0, limit)).map((f, i) => (
               <tr
                 key={`${f.host}|${f.port}|${f.vuln_id}|${f.module}|${i}`}
                 className={`clickable ${selected === f ? "selected" : ""} ${f.false_positive ? "is-fp" : ""}`}
@@ -111,7 +124,7 @@ export function FindingsTable({
           </tbody>
         </table>
       </div>
-      {rows.length > limit && (
+      {!server && rows.length > limit && (
         <div style={{ padding: 12, textAlign: "center" }}>
           <button type="button" className="btn btn-sm" onClick={() => setLimit((l) => l + PAGE)}>
             Показать ещё ({rows.length - limit})

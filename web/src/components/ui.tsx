@@ -40,6 +40,7 @@ const RUN_PILL: Record<RunStatus, string> = {
   done: "pill-ok",
   failed: "pill-danger",
   stopped: "pill-muted",
+  interrupted: "pill-warn",
 };
 
 export function RunStatusPill({ status }: { status: RunStatus }) {

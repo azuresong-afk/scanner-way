@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -43,6 +44,7 @@ from scanner.api.settings import ApiSettings
 from scanner.core.audit import AuditSink, DbAuditSink
 from scanner.core.credentials import CredentialVault, load_vault
 from scanner.core.db import User, make_engine, make_session_factory, session_scope
+from scanner.core.health import check_database, is_ready
 from scanner.core.models import Finding
 from scanner.core.orchestrator import ModuleFactory, RunService
 from scanner.core.reachability import CheckThrottle, ReachabilityResult, check_host
@@ -96,6 +98,24 @@ def bootstrap(session_factory: sessionmaker[Session], settings: ApiSettings,
                  details={"roles": ["admin"], "bootstrap": True})
 
 
+def _on_run_finished(session_factory, notifier):
+    """После прогона: уведомления (R9) и заранее посчитанные приоритеты."""
+    def hook(scan_run_id: int) -> None:
+        try:
+            notifier.notify_run_finished(scan_run_id)
+        finally:
+            routes_findings.warm_priorities(session_factory, scan_run_id)
+    return hook
+
+
+def _alive(obj) -> bool:
+    """Фоновый поток компонента жив (или выключен настройкой tick=0)."""
+    if getattr(obj, "tick_seconds", getattr(obj, "heartbeat_seconds", 1)) <= 0:
+        return True
+    thread = getattr(obj, "_thread", getattr(obj, "_hb_thread", None))
+    return thread is not None and thread.is_alive()
+
+
 def create_app(*, session_factory: sessionmaker[Session] | None = None,
                settings: ApiSettings | None = None,
                audit: AuditSink | None = None,
@@ -129,6 +149,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         bootstrap(session_factory, settings, audit)
         seed_feed_sync(session_factory, timezone=settings.timezone,
                        sources=app.state.feed_scheduler.sources)
+        app.state.runs.start()        # прогоны, оставшиеся от прошлого процесса
         app.state.scheduler.start()
         app.state.feed_scheduler.start()
         app.state.notifier.start()
@@ -136,6 +157,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         app.state.scheduler.stop()
         app.state.feed_scheduler.stop()
         app.state.notifier.stop()
+        app.state.runs.stop()
         if own_executor:
             executor.shutdown(wait=False, cancel_futures=False)
 
@@ -153,7 +175,10 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         tick_seconds=settings.notify_tick_seconds)
     app.state.runs = RunService(session_factory, audit, registry=registry,
                                 executor=executor, vault=vault,
-                                notifier=app.state.notifier.notify_run_finished)
+                                notifier=_on_run_finished(session_factory,
+                                                          app.state.notifier),
+                                heartbeat_seconds=settings.run_heartbeat_seconds,
+                                stale_seconds=settings.run_stale_seconds)
     app.state.scheduler = Scheduler(session_factory, app.state.runs, audit,
                                     tick_seconds=settings.scheduler_tick_seconds)
     app.state.feed_scheduler = FeedScheduler(
@@ -175,7 +200,21 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:
+        """Живость: процесс API отвечает (БД не проверяется)."""
         return {"status": "ok"}
+
+    @app.get("/health/ready", tags=["health"])
+    def ready() -> JSONResponse:
+        """Готовность: БД доступна, схема на последней миграции, фоновые потоки
+        (прогоны, расписания, справочники, уведомления) работают. 503 — нет."""
+        db = check_database(session_factory.kw["bind"],
+                            check_migrations=settings.ready_check_migrations)
+        threads = {name: _alive(obj) for name, obj in (
+            ("runs", app.state.runs), ("scheduler", app.state.scheduler),
+            ("feeds", app.state.feed_scheduler), ("notifications", app.state.notifier))}
+        ok = is_ready(db, threads)
+        return JSONResponse({"status": "ok" if ok else "unavailable", **db,
+                             "threads": threads}, status_code=200 if ok else 503)
 
     app.include_router(routes_auth.router)
     app.include_router(routes_engagements.router)

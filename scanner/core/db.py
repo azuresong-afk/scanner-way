@@ -198,10 +198,19 @@ class ScanRun(Base):
     targets: Mapped[list[str]] = mapped_column(TextArray, default=list)
     schedule_id: Mapped[int | None] = mapped_column(
         ForeignKey("scan_schedules.id", ondelete="SET NULL"), index=True)
+    # pending | running | done | failed | stopped | interrupted (миграция 0017)
     status: Mapped[str] = mapped_column(Text, default="pending")
     started_at: Mapped[datetime | None] = mapped_column(TsTz)
     finished_at: Mapped[datetime | None] = mapped_column(TsTz)
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    # Восстановление после сбоя (миграция 0017): причина ошибки для
+    # пользователя, отметка «исполнитель жив», какой процесс ведёт прогон и
+    # какой прогон повторяется этим.
+    error_message: Mapped[str | None] = mapped_column(Text)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(TsTz)
+    worker_id: Mapped[str | None] = mapped_column(Text)
+    retry_of: Mapped[int | None] = mapped_column(
+        ForeignKey("scan_runs.id", ondelete="SET NULL"))
 
 
 class HostResult(Base):

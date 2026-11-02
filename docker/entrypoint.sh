@@ -7,8 +7,27 @@
 # одного пользователя).
 set -eu
 
+# Секреты и параметры запуска. В SCANNER_ENV=production пустые или шаблонные
+# (CHANGE_ME) секреты останавливают старт с понятной причиной в логе.
+python -m scanner.core.preflight
+
+# Миграции. База может подниматься дольше API (свой сервер, перезагрузка
+# хоста) — несколько попыток, затем понятная ошибка вместо цикла перезапусков
+# с трассировкой.
 echo "[entrypoint] применяю миграции схемы БД (alembic upgrade head)..."
-alembic upgrade head
+attempt=1
+max_attempts="${SCANNER_DB_WAIT_ATTEMPTS:-30}"
+until alembic upgrade head; do
+  if [ "$attempt" -ge "$max_attempts" ]; then
+    echo "[entrypoint] ОШИБКА: миграции не применены за $max_attempts попыток." >&2
+    echo "[entrypoint] Проверьте, что БД доступна (POSTGRES_HOST/POSTGRES_PORT) и пароль" \
+         "POSTGRES_PASSWORD совпадает с тем, с которым создавался том pg_data." >&2
+    exit 1
+  fi
+  echo "[entrypoint] БД недоступна или миграция не прошла (попытка $attempt/$max_attempts), жду 2 с..." >&2
+  attempt=$((attempt + 1))
+  sleep 2
+done
 
 : "${BDU_FSTEC_FEED_PATH:=/data/bdu_fstec.xml}"
 MARKER=/data/.bdu_loaded
@@ -50,4 +69,6 @@ if command -v nuclei >/dev/null 2>&1 && \
 fi
 
 echo "[entrypoint] запускаю API на :8000 ..."
-exec uvicorn scanner.api.main:app --host 0.0.0.0 --port 8000
+# Строго один процесс: прогоны, расписания, обновления справочников и
+# уведомления исполняются фоновыми потоками внутри API.
+exec uvicorn scanner.api.main:app --host 0.0.0.0 --port 8000 --workers 1

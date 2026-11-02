@@ -9,7 +9,7 @@ import { SeverityStack } from "../components/charts/SeverityBars";
 import { RunPicker } from "../components/RunPicker";
 import { Empty, ErrorAlert, Loading, Modal, SeverityBadge } from "../components/ui";
 import { CRITICALITIES, CRITICALITY_LABEL, osSourceHint } from "../lib/labels";
-import { groupByOs, hostListRows, type HostListRow } from "../lib/stats";
+import { groupByOs, hostListRows, hostRowsFromCounts, type HostListRow } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
 import { useRunSelection } from "../lib/useRunSelection";
 
@@ -44,7 +44,8 @@ export function HostsPage() {
   // Список хостов — инвентарь договора по всем прогонам, от выбора прогона не зависит.
   const inventory = useAsync(() => api.hosts(eid!), [eid], !!eid);
   // От прогона зависят только счётчики уязвимостей.
-  const findings = useAsync(() => api.findings(run!.id), [run?.id], !!run);
+  // Счётчики по хостам — из серверной сводки прогона, без выгрузки находок.
+  const findings = useAsync(async () => hostRowsFromCounts((await api.findingsSummary(run!.id)).host_counts), [run?.id], !!run);
   const assets = useAsync(() => api.assets(eid!), [eid], !!eid && showAssets);
   const groups = useAsync(() => api.assetGroups(eid!), [eid], !!eid && showAssets);
   const tags = useAsync(() => api.assetTags(eid!), [eid], !!eid && showAssets);

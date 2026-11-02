@@ -1,6 +1,7 @@
 """Прогоны: запуск/остановка, находки, инвентарь, отчёты."""
 from __future__ import annotations
 
+import ipaddress
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -14,6 +15,7 @@ from scanner.api.routes_findings import finding_out, run_priorities, services_by
 from scanner.api.schemas import (
     DeniedTargetOut,
     FindingOut,
+    FindingsSummaryOut,
     InventoryHostOut,
     PackageOut,
     RunCreate,
@@ -21,10 +23,12 @@ from scanner.api.schemas import (
     RunOut,
     ServiceOut,
 )
+from scanner.core import findings_query as fq
 from scanner.core import repository as repo
 from scanner.core.audit import AuditSink
 from scanner.core.db import ScanRun
 from scanner.core.orchestrator import (
+    RETRYABLE,
     VULN_ENGINES,
     RunService,
     TargetPlan,
@@ -34,7 +38,7 @@ from scanner.core.ratelimit import PROFILES
 
 router = APIRouter(tags=["runs"])
 
-FINISHED = {"done", "failed", "stopped"}
+FINISHED = repo.FINISHED_RUN_STATUSES
 
 
 def _runs(request: Request) -> RunService:
@@ -144,11 +148,29 @@ def with_engine(modules: list[str], engine: str | None) -> list[str]:
 
 
 @router.get("/engagements/{engagement_id}/runs", response_model=list[RunOut])
-def list_runs(engagement_id: int, _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
-              session: SessionDep) -> list[ScanRun]:
+def list_runs(engagement_id: int, response: Response,
+              _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+              session: SessionDep,
+              status_: Annotated[list[str] | None, Query(alias="status")] = None,
+              q: Annotated[str | None, Query(max_length=200)] = None,
+              sort: Annotated[str, Query(pattern=f"^({'|'.join(fq.RUN_SORTS)})$")] = "id",
+              order: Annotated[str | None, Query(pattern="^(asc|desc)$")] = None,
+              limit: Annotated[int | None, Query(ge=1, le=500)] = None,
+              offset: Annotated[int, Query(ge=0)] = 0) -> list[ScanRun]:
+    """Прогоны договора. Без limit — все (как раньше, по возрастанию id); с
+    limit — страница (по умолчанию новые сверху). Всего — в X-Total-Count."""
     get_engagement(session, engagement_id)
-    return list(session.scalars(select(ScanRun).where(ScanRun.engagement_id == engagement_id)
-                                .order_by(ScanRun.id)))
+    paged = limit is not None or offset or status_ or q or order is not None
+    if not paged and sort == "id":
+        rows = list(session.scalars(select(ScanRun).where(
+            ScanRun.engagement_id == engagement_id).order_by(ScanRun.id)))
+        response.headers["X-Total-Count"] = str(len(rows))
+        return rows
+    rows, total = fq.page_runs(session, engagement_id, statuses=status_ or (), query=q,
+                               sort=sort, desc=(order or "desc") == "desc",
+                               limit=limit, offset=offset)
+    response.headers["X-Total-Count"] = str(total)
+    return rows
 
 
 @router.get("/engagements/{engagement_id}/hosts", response_model=list[InventoryHostOut])
@@ -192,17 +214,89 @@ def stop_run(run_id: int, user: Annotated[Principal, Depends(require(Perm.RUN_SC
     return _get_run(session, run_id)
 
 
-@router.get("/runs/{run_id}/findings", response_model=list[FindingOut])
-def list_findings(run_id: int,
-                  _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
-                  session: SessionDep, module: str | None = None) -> list[FindingOut]:
-    """Находки прогона; отмеченные как ложные срабатывания — с полем false_positive."""
+@router.post("/runs/{run_id}/retry", response_model=RunCreated, status_code=202)
+def retry_run(run_id: int, request: Request,
+              user: Annotated[Principal, Depends(require(Perm.RUN_SCAN))],
+              session: SessionDep, audit: AuditDep,
+              runs: Annotated[RunService, Depends(_runs)]) -> RunCreated:
+    """«Повторить»: новый прогон с параметрами прогона с ошибкой, прерванного или
+    остановленного. Права, учётки и allowlist проверяются заново, как при
+    обычном запуске; исходный прогон и его результаты не меняются."""
     run = _get_run(session, run_id)
+    if run.status not in RETRYABLE:
+        raise HTTPException(409, "повторить можно только прогон с ошибкой, прерванный "
+                                 f"или остановленный (сейчас: {run.status})")
+    modules = list(run.modules)
+    check_run_options(run.engagement_id, modules=modules, rate_profile=run.rate_profile,
+                      credential_ids=list(run.credential_ids or []),
+                      cred_set_ids=list(run.cred_set_ids or []),
+                      user=user, request=request, audit=audit, runs=runs)
+    plan, denied = check_targets(run.engagement_id, list(run.targets or []), user=user,
+                                 audit=audit, runs=runs)
+    session.commit()
+    try:
+        new_id = runs.retry(run_id, actor=user.subject, started_by=user.id)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    session.expire_all()
+    new = _get_run(session, new_id)
+    return RunCreated(**RunOut.model_validate(new).model_dump(),
+                      accepted_targets=len(plan.allowed), denied_targets=denied)
+
+
+@router.get("/runs/{run_id}/findings", response_model=list[FindingOut])
+def list_findings(run_id: int, response: Response,
+                  _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                  session: SessionDep,
+                  module: Annotated[list[str] | None, Query()] = None,
+                  severity: Annotated[list[str] | None, Query()] = None,
+                  status_: Annotated[list[str] | None, Query(alias="status")] = None,
+                  host: Annotated[str | None, Query(max_length=64)] = None,
+                  q: Annotated[str | None, Query(max_length=200)] = None,
+                  bdu_only: bool = False,
+                  include_info: bool = True,
+                  false_positives: Annotated[str, Query(
+                      pattern=f"^({'|'.join(fq.FP_MODES)})$")] = "include",
+                  sort: Annotated[str | None, Query(
+                      pattern=f"^({'|'.join(fq.FINDING_SORTS)})$")] = None,
+                  order: Annotated[str, Query(pattern="^(asc|desc)$")] = "asc",
+                  limit: Annotated[int | None, Query(ge=1, le=1000)] = None,
+                  offset: Annotated[int, Query(ge=0)] = 0) -> list[FindingOut]:
+    """Находки прогона; отмеченные как ложные срабатывания — с полем false_positive.
+
+    Фильтры, сортировка и страницы выполняются в БД; всего по фильтру — в
+    заголовке X-Total-Count. Без limit отдаются все подходящие находки (как
+    раньше; без sort — в порядке сохранения). sort=severity — сначала опасные,
+    priority — по рангу «что исправлять первым»; order=desc — обратный порядок."""
+    run = _get_run(session, run_id)
+    try:
+        flt = fq.FindingFilter(severities=severity or [], modules=module or [],
+                               statuses=status_ or [], host=host, query=q,
+                               bdu_only=bdu_only, include_info=include_info,
+                               false_positives=false_positives)
+        if host:
+            ipaddress.ip_address(host.strip())
+    except ValueError as e:
+        raise HTTPException(422, f"invalid host: {host}") from e
     marks = repo.false_positive_marks(session, run.engagement_id)
-    services = services_by_port(session, run_id)
     priorities = run_priorities(session, run_id, run.engagement_id, marks)
-    return [finding_out(r, marks, services, priorities)
-            for r in repo.get_finding_rows(session, run_id, module)]
+    ranks = {k: p.rank for k, p in priorities.items()} if sort == "priority" else None
+    rows, total = fq.page_findings(session, run_id, run.engagement_id, flt,
+                                   sort=sort or "id", desc=order == "desc",
+                                   limit=limit, offset=offset, ranks=ranks)
+    services = services_by_port(session, run_id)
+    response.headers["X-Total-Count"] = str(total)
+    return [finding_out(r, marks, services, priorities) for r in rows]
+
+
+@router.get("/runs/{run_id}/findings/summary", response_model=FindingsSummaryOut)
+def findings_summary(run_id: int,
+                     _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                     session: SessionDep) -> FindingsSummaryOut:
+    """Счётчики прогона (уровни, модули, статусы, хосты, новые/закрытые) — для
+    плашек фильтров, KPI и тепловой карты без выгрузки всех находок."""
+    run = _get_run(session, run_id)
+    return FindingsSummaryOut(**fq.summary(session, run_id, run.engagement_id))
 
 
 @router.get("/runs/{run_id}/services", response_model=list[ServiceOut])

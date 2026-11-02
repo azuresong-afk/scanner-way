@@ -9,3 +9,8 @@ build/
 # данные контейнера, кроме маркера каталога
 /data/*
 !/data/.gitkeep
+
+# резервные копии scripts/backup.sh
+/backups/
+/data.before-restore-*/
+/e2e-artifacts/

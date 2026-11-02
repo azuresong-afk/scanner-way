@@ -1,6 +1,6 @@
 // Агрегаты для дашборда, таблиц и раздела по хостам (считаются на клиенте).
 
-import type { AssetOut, FindingOut, FindingStatus, InventoryHostOut, ServiceOut, Severity } from "../api/types";
+import type { AssetOut, FindingOut, FindingStatus, HostCountsOut, InventoryHostOut, ServiceOut, Severity } from "../api/types";
 import { MODULE_LABEL, OS_FAMILY_LABEL, OS_FAMILY_ORDER, SEVERITIES } from "./labels";
 
 export const SEVERITY_RANK: Record<Severity, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
@@ -131,6 +131,17 @@ export function byHost(findings: FindingOut[], services: ServiceOut[] = []): Hos
   return [...map.values()].sort((a, b) => compareRisk(a.counts, b.counts) || compareIp(a.host, b.host));
 }
 
+/** Строки хостов из серверной сводки прогона (без выгрузки находок). */
+export function hostRowsFromCounts(counts: HostCountsOut[], services: ServiceOut[] = []): HostRow[] {
+  const svc = new Map(byHost([], services).map((r) => [r.host, r]));
+  return counts.map((c) => {
+    const counts2 = { ...emptyCounts(), ...c.counts };
+    const maxSeverity: Severity = SEVERITIES.find((s) => s !== "info" && counts2[s] > 0) ?? "info";
+    const base = svc.get(c.host);
+    return { host: c.host, counts: counts2, total: c.total, maxSeverity, findings: [], services: base?.services ?? [], summary: base?.summary ?? "" };
+  });
+}
+
 export interface InventoryRow extends HostRow {
   /** Хост был в выбранном прогоне (иначе счётчики не применимы). */
   inRun: boolean;
@@ -175,8 +186,10 @@ export function groupByOs<T extends InventoryRow>(rows: T[]): OsGroup<T>[] {
  * Строки вкладки «Хосты»: постоянный список инвентаря (порядок по IP),
  * а счётчики уязвимостей — из находок выбранного прогона.
  */
-export function inventoryRows(inventory: InventoryHostOut[], findings: FindingOut[], runId: number | null): InventoryRow[] {
-  const perHost = new Map(byHost(findings.filter(isIssue)).map((r) => [r.host, r]));
+export function inventoryRows(inventory: InventoryHostOut[], findings: FindingOut[] | HostRow[], runId: number | null): InventoryRow[] {
+  // HostRow[] — готовые счётчики (серверная сводка прогона), иначе — находки
+  const rows = findings.length && "counts" in findings[0] ? (findings as HostRow[]) : byHost((findings as FindingOut[]).filter(isIssue));
+  const perHost = new Map(rows.map((r) => [r.host, r]));
   return [...inventory]
     .sort((a, b) => compareIp(a.host, b.host))
     .map((h) => {
@@ -214,7 +227,7 @@ export interface HostListRow extends InventoryRow {
  * строка. Хосты, заведённые вручную и ещё не сканированные, тоже попадают в
  * список. Сопоставление по нормализованному адресу (API отдаёт оба в одном виде).
  */
-export function hostListRows(inventory: InventoryHostOut[], assets: AssetOut[], findings: FindingOut[], runId: number | null): HostListRow[] {
+export function hostListRows(inventory: InventoryHostOut[], assets: AssetOut[], findings: FindingOut[] | HostRow[], runId: number | null): HostListRow[] {
   const byAddr = new Map(assets.map((a) => [a.address, a]));
   const rows: HostListRow[] = inventoryRows(inventory, findings, runId).map((r) => ({ ...r, asset: byAddr.get(r.host) ?? null, scanned: true }));
   const seen = new Set(rows.map((r) => r.host));

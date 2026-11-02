@@ -25,7 +25,8 @@ EVENT_TITLES = {RUN_FINISHED: "Прогон завершён",
 SEVERITIES = tuple(str(s) for s in Severity)                  # info … critical
 PRIORITIES = ("low", "medium", "high", "critical")            # ярлыки R6
 STATUS_TITLES = {"done": "завершён", "failed": "завершён с ошибкой",
-                 "stopped": "остановлен"}
+                 "stopped": "остановлен",
+                 "interrupted": "прерван (служба сканера перезапускалась)"}
 
 # В сообщении — не больше стольких находок, остальное «и ещё N».
 MAX_ITEMS_IN_PAYLOAD = 50
