@@ -1,0 +1,31 @@
+# Сквозной (e2e) сценарий: накладывается поверх docker-compose.yml и
+# docker-compose.prod.yml. Запускается только через scripts/e2e.sh — тот
+# копирует проект во временный каталог, пишет туда свой .env со случайными
+# секретами и поднимает отдельный стек (COMPOSE_PROJECT_NAME=scanner-e2e), так
+# что рабочая установка, её база и ./data не затрагиваются.
+#
+# Цель сканирования — контейнер target в изолированной сети e2e-lab
+# (internal: без выхода наружу). В allowlist договора e2e попадает только эта
+# сеть: сканер не трогает ничего, кроме стенда.
+
+services:
+  app:
+    networks:
+      default: {}
+      e2e-lab: {}
+
+  target:
+    # Заведомо устаревший Apache: discovery определяет версию, vuln находит CVE.
+    # Наружу не публикуется, доступен только сканеру.
+    image: httpd:2.4.49
+    networks:
+      e2e-lab:
+        ipv4_address: 172.29.250.10
+    restart: "no"
+
+networks:
+  e2e-lab:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.29.250.0/24

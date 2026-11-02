@@ -17,6 +17,11 @@ from scanner.core.db import Base, make_session_factory
 PG_URL = os.environ.get("SCANNER_TEST_DATABASE_URL")
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "e2e: сквозной сценарий на живом стеке Docker (scripts/e2e.sh)")
+
+
 @pytest.fixture
 def sqlite_factory():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False},

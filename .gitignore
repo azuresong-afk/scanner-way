@@ -13,3 +13,4 @@ build/
 # резервные копии scripts/backup.sh
 /backups/
 /data.before-restore-*/
+/e2e-artifacts/
