@@ -1,4 +1,4 @@
-"""Сравнение версий пакетов по правилам менеджеров пакетов: dpkg и rpm.
+"""Сравнение версий пакетов по правилам менеджеров пакетов: dpkg, rpm и apk.
 
 Нужно для учёта бэкпортов (R2): бюллетень дистрибутива говорит «исправлено в
 ``1.1.1n-0+deb11u5``», и решение «уязвим / закрыто» принимается сравнением
@@ -184,14 +184,68 @@ def rpm_compare(a: str, b: str) -> int:
     return _rpmvercmp(ra, rb)
 
 
+# ---------- apk (Alpine) ----------
+
+# Суффиксы apk-tools: до «без суффикса» — предрелизы, после — снимки и патчи.
+_APK_PRE = {"alpha": -4, "beta": -3, "pre": -2, "rc": -1}
+_APK_POST = {"cvs": 1, "svn": 2, "git": 3, "hg": 4, "p": 5}
+_APK_RE = re.compile(
+    r"^(?P<nums>\d+(?:\.\d+)*)(?P<letter>[a-z]?)(?P<suffixes>(?:_[a-z]+\d*)*)"
+    r"(?:~[0-9a-f]+)?(?:-r(?P<rel>\d+))?$")
+
+
+def parse_apk(version: str) -> tuple[list[int], int, list[tuple[int, int]], int]:
+    """``1.2.3b_rc1-r4`` -> ([1, 2, 3], ord('b'), [(-1, 1)], 4).
+
+    Нераспознанная строка сравнивается как один числовой компонент 0 — так
+    безопаснее: она окажется «раньше» любой нормальной версии (уязвима)."""
+    m = _APK_RE.match(version.strip())
+    if not m:
+        return [0], 0, [], 0
+    nums = [int(x) for x in m["nums"].split(".")]
+    letter = ord(m["letter"]) if m["letter"] else 0
+    suffixes: list[tuple[int, int]] = []
+    for part in filter(None, (m["suffixes"] or "").split("_")):
+        sm = re.match(r"([a-z]+)(\d*)$", part)
+        if not sm:
+            continue
+        name, num = sm[1], int(sm[2] or 0)
+        rank = _APK_PRE.get(name, _APK_POST.get(name, 0))
+        suffixes.append((rank, num))
+    return nums, letter, suffixes, int(m["rel"] or 0)
+
+
+def apk_compare(a: str, b: str) -> int:
+    """<0, 0, >0 — как ``apk version -t a b`` для обычных версий Alpine."""
+    na, la, sa, ra = parse_apk(a)
+    nb, lb, sb, rb = parse_apk(b)
+    for x, y in zip(na, nb, strict=False):
+        if x != y:
+            return -1 if x < y else 1
+    if len(na) != len(nb):
+        return -1 if len(na) < len(nb) else 1
+    if la != lb:
+        return -1 if la < lb else 1
+    for i in range(max(len(sa), len(sb))):
+        x = sa[i] if i < len(sa) else (0, 0)
+        y = sb[i] if i < len(sb) else (0, 0)
+        if x != y:
+            return -1 if x < y else 1
+    if ra != rb:
+        return -1 if ra < rb else 1
+    return 0
+
+
 # ---------- общее ----------
 
 def compare(manager: str, a: str, b: str) -> int:
-    """Сравнение версий по правилам менеджера пакетов (dpkg | rpm)."""
+    """Сравнение версий по правилам менеджера пакетов (dpkg | rpm | apk)."""
     if manager == "dpkg":
         return dpkg_compare(a, b)
     if manager == "rpm":
         return rpm_compare(a, b)
+    if manager == "apk":
+        return apk_compare(a, b)
     raise ValueError(f"сравнение версий для менеджера {manager!r} не поддержано")
 
 

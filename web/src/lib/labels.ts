@@ -72,7 +72,8 @@ export const MODULES: ModuleInfo[] = [
 
 export const MODULE_LABEL: Record<string, string> = {
   ...Object.fromEntries(MODULES.map((m) => [m.id, m.label])),
-  // Ставится автоматически вместе с аудитом конфигураций (COMPANION_MODULES на бэкенде).
+  // Ставится автоматически вместе с аудитом конфигураций (COMPANION_MODULES на бэкенде),
+  // как и auth_inventory — проверка пакетов по бюллетеням вендора по той же учётке.
   password_policy: "Парольная политика",
 };
 

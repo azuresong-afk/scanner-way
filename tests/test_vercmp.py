@@ -144,6 +144,7 @@ def test_parsers_and_dispatch():
     assert parse_evr("(none):8.8p1-6.el7") == (0, "8.8p1", "6.el7")
     assert compare("dpkg", "2.0~rc1", "2.0") < 0
     assert compare("rpm", "2.0~rc1", "2.0") < 0
+    assert compare("apk", "1", "2") < 0
     with pytest.raises(ValueError):
-        compare("apk", "1", "2")
+        compare("pacman", "1", "2")
     assert strip_zero_epoch("0:3.0.2-0ubuntu1.15") == "3.0.2-0ubuntu1.15"
