@@ -202,9 +202,11 @@ def test_sync_local_dir_compressed_and_download(tmp_path):
     assert by[("ubuntu", "jammy")].count == 6
     assert by[("alt", "p10")].count == 4 and by[("alt", "p10")].source == "alt.zip"
     assert by[("rhel", "9")].count == 4
-    assert fetched == [("https://security.access.redhat.com/data/oval/v2/RHEL9/"
-                        "rhel-9.oval.xml.bz2")]
-    assert "ADVISORY_URL_ASTRA" in by[("astra", "1.7")].error    # нет источника
+    assert fetched[0] == ("https://security.access.redhat.com/data/oval/v2/RHEL9/"
+                          "rhel-9.oval.xml.bz2")
+    # Astra: оглавление каталога al-oval прочитано, файла выпуска в нём нет
+    assert fetched[1].startswith("https://dl.astralinux.ru/artifactory/api/storage/al-oval")
+    assert "ADVISORY_URL_ASTRA" in by[("astra", "1.7")].error
     assert fp and ("astra", "1.7") not in store.releases()
 
 
@@ -223,6 +225,11 @@ def test_feed_source_registered(tmp_path, monkeypatch):
     from scanner.feeds.sources import FeedContext, FeedError, load_advisories
 
     assert "advisories" in SOURCES and SOURCES["advisories"].loader is load_advisories
+    from scanner.feeds.advisories import sync
+
+    def offline(url, dest):                     # в тестах в интернет не ходим
+        raise AdvisoryError(f"нет сети: {url}")
+    monkeypatch.setattr(sync, "_download", offline)
     (tmp_path / "debian.json").write_bytes((FIX / "debian.json").read_bytes())
     monkeypatch.setattr(settings, "advisory_dir", str(tmp_path))
     monkeypatch.setattr(settings, "advisory_releases", "debian:bookworm,astra:1.7")

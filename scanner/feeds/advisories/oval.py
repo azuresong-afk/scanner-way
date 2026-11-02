@@ -18,7 +18,7 @@ release-пакета, архитектура, ядро через uname) про�
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import IO
 
 from scanner.feeds.advisories.base import FIXED, Advisory, is_cve
@@ -39,13 +39,18 @@ def _child(el: ET.Element, name: str) -> ET.Element | None:
     return next((c for c in el if _local(c.tag) == name), None)
 
 
-def _definition(el: ET.Element) -> tuple[str | None, list[str], list[str]]:
-    """(id бюллетеня, CVE, test_ref) определения."""
+def _definition(el: ET.Element) -> tuple[str | None, list[str], list[str], list[str]]:
+    """(id бюллетеня, CVE, test_ref, платформы и комментарии критериев) определения."""
     cves: list[str] = []
     adv: str | None = None
     tests: list[str] = []
+    platforms: list[str] = []
     for sub in el.iter():
         tag = _local(sub.tag)
+        if tag == "platform" and (sub.text or "").strip():
+            platforms.append(sub.text.strip())  # type: ignore[union-attr]
+        if tag in ("criterion", "extend_definition") and sub.get("comment"):
+            platforms.append(sub.get("comment"))  # type: ignore[arg-type]
         if tag == "reference":
             src = (sub.get("source") or "").strip().upper()
             ref = (sub.get("ref_id") or "").strip()
@@ -66,7 +71,11 @@ def _definition(el: ET.Element) -> tuple[str | None, list[str], list[str]]:
             if head.split("-")[0].upper() in _ADVISORY_SOURCES and any(
                     ch.isdigit() for ch in head):
                 adv = head
-    return adv, list(dict.fromkeys(cves)), tests
+    return adv, list(dict.fromkeys(cves)), tests, platforms
+
+
+# (выпуски задания, платформы определения, исправленная версия) -> выпуски записи
+ReleaseMapper = Callable[[list[str], list[str], str], list[str]]
 
 
 def parse_oval(stream: IO[bytes], family: str, releases: Iterable[str]) -> Iterator[Advisory]:
@@ -75,9 +84,15 @@ def parse_oval(stream: IO[bytes], family: str, releases: Iterable[str]) -> Itera
     rels = list(releases)
     if len(rels) != 1:
         raise ValueError("файл OVAL описывает один выпуск дистрибутива")
-    release = rels[0]
+    return parse_oval_releases(stream, family, rels, lambda r, p, v: r)
 
-    definitions: list[tuple[str | None, list[str], list[str]]] = []
+
+def parse_oval_releases(stream: IO[bytes], family: str, releases: Iterable[str],
+                        mapper: ReleaseMapper) -> Iterator[Advisory]:
+    """OVAL на несколько выпусков (РЕД ОС — один redos.xml): выпуск записи
+    определяет mapper по платформам определения и версии исправления."""
+    rels = list(releases)
+    definitions: list[tuple[str | None, list[str], list[str], list[str]]] = []
     tests: dict[str, tuple[str | None, str | None]] = {}       # id -> (object, state)
     objects: dict[str, tuple[str | None, str | None]] = {}     # id -> (name, var_ref)
     states: dict[str, str] = {}                                # id -> evr (less than)
@@ -86,9 +101,9 @@ def parse_oval(stream: IO[bytes], family: str, releases: Iterable[str]) -> Itera
     for _event, el in ET.iterparse(stream, events=("end",)):
         tag = _local(el.tag)
         if tag == "definition":
-            adv, cves, refs = _definition(el)
+            adv, cves, refs, platforms = _definition(el)
             if cves and refs:
-                definitions.append((adv, cves, refs))
+                definitions.append((adv, cves, refs, platforms))
         elif tag in _TESTS:
             obj, st = _child(el, "object"), _child(el, "state")
             tests[el.get("id", "")] = (
@@ -111,8 +126,8 @@ def parse_oval(stream: IO[bytes], family: str, releases: Iterable[str]) -> Itera
             continue
         el.clear()
 
-    seen: set[tuple[str, str, str]] = set()
-    for adv, cves, refs in definitions:
+    seen: set[tuple[str, str, str, str]] = set()
+    for adv, cves, refs, platforms in definitions:
         for ref in refs:
             obj_id, state_id = tests.get(ref, (None, None))
             fixed = states.get(state_id or "")
@@ -120,10 +135,12 @@ def parse_oval(stream: IO[bytes], family: str, releases: Iterable[str]) -> Itera
                 continue
             obj_name, var = objects.get(obj_id, (None, None))
             names = [obj_name] if obj_name else variables.get(var or "", [])
-            for pkg in names:
-                for cve in cves:
-                    key = (pkg, cve, fixed)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    yield Advisory(family, release, pkg, cve, FIXED, fixed, adv)
+            targets = mapper(rels, platforms, fixed)
+            for release in targets:
+                for pkg in names:
+                    for cve in cves:
+                        key = (release, pkg, cve, fixed)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        yield Advisory(family, release, pkg, cve, FIXED, fixed, adv)

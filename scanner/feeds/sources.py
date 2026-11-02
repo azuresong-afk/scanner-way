@@ -321,7 +321,7 @@ SOURCES: dict[str, FeedSource] = {s.id: s for s in (
                time_of_day="02:30", description="Каталог CISA KEV (JSON) → таблица kev"),
     FeedSource("advisories", "Бюллетени дистрибутивов", load_advisories, kind="weekly",
                time_of_day="04:30", weekdays=(0,),
-               description="Трекер Debian, OVAL Ubuntu/RHEL/ALT, secdb Alpine (+ файлы "
-                           "Astra, РЕД ОС) — учёт бэкпортов; выпуски ОС берутся и с "
+               description="Трекер Debian, OVAL Ubuntu/RHEL/ALT/Astra/РЕД ОС, secdb "
+                           "Alpine — учёт бэкпортов; выпуски ОС берутся и с "
                            "просканированных хостов"),
 )}

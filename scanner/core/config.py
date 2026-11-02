@@ -32,7 +32,7 @@ class Settings(BaseSettings):
                               "ubuntu:jammy,ubuntu:noble,rhel:8,rhel:9,alt:p10")
     advisory_dir: str = "/data/advisories"
     # Свой адрес выгрузки семейства ({release} подставляется); пусто — адрес
-    # вендора по умолчанию (у Astra Linux и РЕД ОС его нет: файл или адрес оператора).
+    # вендора по умолчанию (Astra Linux — каталог al-oval, РЕД ОС — redos.xml).
     advisory_url_debian: str = ""
     advisory_url_ubuntu: str = ""
     advisory_url_rhel: str = ""

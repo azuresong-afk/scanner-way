@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oval_definitions xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5"
+    xmlns:linux="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+  <definitions>
+    <definition class="patch" id="oval:ru.redsoft:def:1" version="1">
+      <metadata>
+        <title>ROSA-SA-2024-0001: openssl (7.3)</title>
+        <affected family="unix"><platform>RED OS 7.3</platform></affected>
+        <reference ref_id="CVE-2024-0727" source="CVE"/>
+      </metadata>
+      <criteria operator="AND">
+        <criterion comment="openssl-libs is earlier than 1:1.1.1w-3.el7" test_ref="tst:1"/>
+      </criteria>
+    </definition>
+    <definition class="patch" id="oval:ru.redsoft:def:2" version="1">
+      <metadata>
+        <title>openssl (8)</title>
+        <reference ref_id="CVE-2024-0727" source="CVE"/>
+      </metadata>
+      <criteria operator="AND">
+        <criterion comment="РЕД ОС 8 установлена" test_ref="tst:0"/>
+        <criterion comment="openssl-libs is earlier than 1:3.0.13-1.red80" test_ref="tst:2"/>
+      </criteria>
+    </definition>
+    <definition class="patch" id="oval:ru.redsoft:def:3" version="1">
+      <metadata>
+        <title>curl</title>
+        <reference ref_id="CVE-2024-2398" source="CVE"/>
+      </metadata>
+      <criteria operator="AND">
+        <criterion comment="curl is earlier than 0:8.7.1-1.red80" test_ref="tst:3"/>
+      </criteria>
+    </definition>
+  </definitions>
+  <tests>
+    <linux:rpminfo_test id="tst:1"><linux:object object_ref="obj:1"/><linux:state state_ref="ste:1"/></linux:rpminfo_test>
+    <linux:rpminfo_test id="tst:2"><linux:object object_ref="obj:1"/><linux:state state_ref="ste:2"/></linux:rpminfo_test>
+    <linux:rpminfo_test id="tst:3"><linux:object object_ref="obj:3"/><linux:state state_ref="ste:3"/></linux:rpminfo_test>
+  </tests>
+  <objects>
+    <linux:rpminfo_object id="obj:1"><linux:name>openssl-libs</linux:name></linux:rpminfo_object>
+    <linux:rpminfo_object id="obj:3"><linux:name>curl</linux:name></linux:rpminfo_object>
+  </objects>
+  <states>
+    <linux:rpminfo_state id="ste:1"><linux:evr datatype="evr_string" operation="less than">1:1.1.1w-3.el7</linux:evr></linux:rpminfo_state>
+    <linux:rpminfo_state id="ste:2"><linux:evr datatype="evr_string" operation="less than">1:3.0.13-1.red80</linux:evr></linux:rpminfo_state>
+    <linux:rpminfo_state id="ste:3"><linux:evr datatype="evr_string" operation="less than">0:8.7.1-1.red80</linux:evr></linux:rpminfo_state>
+  </states>
+</oval_definitions>

@@ -120,6 +120,7 @@ class Job:
     releases: list[str]
     path: Path | None = None
     urls: tuple[str, ...] = ()
+    index: str | None = None           # оглавление вендора (spec.discover)
 
     @property
     def url(self) -> str | None:
@@ -127,7 +128,7 @@ class Job:
 
     @property
     def label(self) -> str:
-        return self.path.name if self.path else " ".join(self.urls)
+        return self.path.name if self.path else (" ".join(self.urls) or self.index or "")
 
 
 def plan(targets: list[tuple[str, str]], *, directory: Path | None,
@@ -150,21 +151,49 @@ def plan(targets: list[tuple[str, str]], *, directory: Path | None,
                 f"OVAL «{family}-{release}.xml» в каталог бюллетеней или задайте "
                 f"ADVISORY_URL_{family.upper()}"))
             continue
+        if spec.discover is not None and not urls.get(family):
+            # оглавление вендора: файлы выпуска находятся при загрузке
+            jobs[(family, f"{template}#{release}")] = Job(
+                spec, [release], index=template.replace("{release}", release))
+            continue
         job_urls = tuple(u.replace("{release}", release) for u in template.split())
         jobs.setdefault((family, " ".join(job_urls)), Job(spec, [], urls=job_urls)
                         ).releases.append(release)
     return list(jobs.values()), missing
 
 
+def _read_url(fetch: Callable[[str, Path], None], tmpdir: str) -> Callable[[str], bytes]:
+    def read(url: str) -> bytes:
+        p = Path(tmpdir) / "index"
+        fetch(url, p)
+        return p.read_bytes()
+    return read
+
+
 def run_job(job: Job, store: AdvisoryStore,
-            fetch: Callable[[str, Path], None] = _download) -> tuple[list[ReleaseResult], str]:
-    """Загружает один файл (для одного или нескольких выпусков). -> (итоги, sha256)."""
+            fetch: Callable[[str, Path], None] | None = None
+            ) -> tuple[list[ReleaseResult], str]:
+    """Загружает один файл (для одного или нескольких выпусков). -> (итоги, sha256).
+
+    Выпуск, для которого в непустом файле не нашлось ни одной записи, не
+    перезаписывается пустотой (вероятно, вендор поменял формат или разметку
+    выпусков) — он возвращается с ошибкой, прежние данные остаются."""
+    fetch = fetch or _download
     tmpdir: str | None = None
     try:
         paths: list[Path] = [job.path] if job.path is not None else []
         if not paths:
             tmpdir = tempfile.mkdtemp(prefix="advisory-")
-            for i, url in enumerate(job.urls):
+            job_urls = list(job.urls)
+            if job.index and job.spec.discover is not None:
+                job_urls = job.spec.discover(job.releases[0], _read_url(fetch, tmpdir))
+                if not job_urls:
+                    raise AdvisoryError(
+                        f"в каталоге {job.index} нет файла OVAL для {job.spec.label} "
+                        f"{job.releases[0]}: задайте ADVISORY_URL_{job.spec.family.upper()} "
+                        "или положите файл в каталог бюллетеней")
+                job.urls = tuple(job_urls)
+            for i, url in enumerate(job_urls):
                 p = Path(tmpdir) / f"payload{i}"
                 fetch(url, p)
                 paths.append(p)
@@ -177,7 +206,14 @@ def run_job(job: Job, store: AdvisoryStore,
                     for rec in job.spec.parser(stream, job.spec.family, job.releases):
                         buckets[rec.release].append(rec)
         results = []
+        total = sum(len(v) for v in buckets.values())
         for release in job.releases:
+            if total and not buckets.get(release):
+                results.append(ReleaseResult(
+                    job.spec.family, release, source=job.label,
+                    error=f"в файле нет записей для выпуска {release} — прежние данные "
+                          "оставлены"))
+                continue
             n = store.replace_release(job.spec.family, release, buckets.get(release, []))
             results.append(ReleaseResult(job.spec.family, release, n, job.label))
         return results, digest
@@ -188,7 +224,8 @@ def run_job(job: Job, store: AdvisoryStore,
 
 def sync_releases(store: AdvisoryStore, targets: list[tuple[str, str]], *,
                   directory: Path | None, urls: dict[str, str],
-                  fetch: Callable[[str, Path], None] = _download) -> tuple[list[ReleaseResult], str]:
+                  fetch: Callable[[str, Path], None] | None = None
+                  ) -> tuple[list[ReleaseResult], str]:
     """Загружает все выпуски; ошибка одного файла не мешает остальным.
     -> (итоги по выпускам, общий отпечаток загруженных файлов)."""
     jobs, results = plan(targets, directory=directory, urls=urls)
