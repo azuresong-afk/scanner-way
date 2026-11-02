@@ -431,7 +431,7 @@ class ReportRenderer:
         if c.engagement:
             meta.append(f"Договор / проект: {c.engagement}")
         if c.group:
-            meta.append(f"Группа активов: {c.group}")
+            meta.append(f"Группа хостов: {c.group}")
         if c.run_id is not None:
             meta.append(f"Прогон: {c.run_id}")
         if c.previous_run_id is not None:
@@ -536,7 +536,7 @@ class ReportRenderer:
                       ("Не выполнено", str(k["failed"]), SEVERITY_HEX[Severity.HIGH]),
                       ("Вручную / не проверено", f"{k['manual']} / {k['na']}", None)])
                 if c["groups"]:
-                    table(["Группа активов", "Хостов", "Выполнено", "Не выполнено",
+                    table(["Группа хостов", "Хостов", "Выполнено", "Не выполнено",
                            "Соответствие"],
                           [[g["group"], g["hosts"], g["passed"], g["failed"], pct(g["percent"])]
                            for g in c["groups"]], first_cm=5.0, num_from=1)

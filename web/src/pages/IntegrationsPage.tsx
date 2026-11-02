@@ -291,11 +291,11 @@ function ChannelModal({ channel, onClose, onSaved }: { channel: ChannelOut | nul
             </>
           )}
           <label className="field" style={{ flex: "1 1 220px" }}>
-            <span>Группы активов (через запятую)</span>
+            <span>Группы хостов (через запятую)</span>
             <input className="input" value={groups} onChange={(e) => setGroups(e.target.value)} placeholder="все группы" />
           </label>
           <label className="field" style={{ flex: "1 1 220px" }}>
-            <span>Владельцы активов (через запятую)</span>
+            <span>Владельцы хостов (через запятую)</span>
             <input className="input" value={owners} onChange={(e) => setOwners(e.target.value)} placeholder="все владельцы" />
           </label>
         </div>

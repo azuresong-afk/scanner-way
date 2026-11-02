@@ -64,7 +64,7 @@ def normalize_tags(tags: Iterable[str]) -> list[str]:
         if t not in out:
             out.append(t)
     if len(out) > MAX_TAGS:
-        raise AssetError(f"у актива не больше {MAX_TAGS} тегов")
+        raise AssetError(f"у хоста не больше {MAX_TAGS} тегов")
     return out
 
 
@@ -230,7 +230,7 @@ def create_asset(session: Session, engagement_id: int, *, address: str,
     check_criticality(criticality)
     tags = normalize_tags(tags)
     if _find_by_address(session, engagement_id, address) is not None:
-        raise DuplicateError(f"актив {address} уже есть в договоре")
+        raise DuplicateError(f"хост {address} уже заведён в договоре")
     row = AssetRow(engagement_id=engagement_id, address=address, hostname=_clean(hostname),
                    owner=_clean(owner), criticality=criticality, notes=_clean(notes),
                    created_by=created_by)
@@ -248,7 +248,7 @@ def update_asset(session: Session, row: AssetRow, changes: dict) -> AssetRow:
         address = normalize_address(changes["address"])
         other = _find_by_address(session, row.engagement_id, address)
         if other is not None and other.id != row.id:
-            raise DuplicateError(f"актив {address} уже есть в договоре")
+            raise DuplicateError(f"хост {address} уже заведён в договоре")
         row.address = address
     if "criticality" in changes:
         row.criticality = check_criticality(changes["criticality"])
