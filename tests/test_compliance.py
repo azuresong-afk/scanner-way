@@ -319,8 +319,22 @@ def test_api_end_to_end(client, sqlite_factory):
     assert client.post(f"/runs/{rid}/compliance/recompute").json()["rows"] > 0
     rep = client.get(f"/runs/{rid}/report", params={"format": "json"}).json()
     assert rep["compliance"][0]["profile"]["id"] == "fstec-117"
+    # раздел — опция отчёта: compliance=none убирает его, список — выбирает профили
+    rep = client.get(f"/runs/{rid}/report", params={"format": "json", "compliance": "none"})
+    assert rep.status_code == 200 and "compliance" not in rep.json()
+    assert rep.json()["meta"]["sections"] == {"plan": True, "compliance": False}
+    html = client.get(f"/runs/{rid}/report", params={"format": "html", "compliance": ""}).text
+    assert "Соответствие требованиям" not in html
+    rep = client.get(f"/runs/{rid}/report",
+                     params={"format": "json", "compliance": "cis-controls-v8"}).json()
+    assert [c["profile"]["id"] for c in rep["compliance"]] == ["cis-controls-v8"]
+    assert client.get(f"/runs/{rid}/report", params={"compliance": "nope"}).status_code == 422
     # профиль без «в отчёт» — раздела нет
     client.put(f"/engagements/{eid}/compliance-profiles/fstec-117",
                json={"level": "К3", "in_report": False})
     assert "compliance" not in client.get(f"/runs/{rid}/report",
                                           params={"format": "json"}).json()
+    # …но его можно включить явно для конкретного отчёта
+    rep = client.get(f"/runs/{rid}/report",
+                     params={"format": "json", "compliance": "fstec-117"}).json()
+    assert rep["compliance"][0]["level"] == "К3"

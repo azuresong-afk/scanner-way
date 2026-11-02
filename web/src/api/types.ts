@@ -7,6 +7,13 @@ export type ReportFormat = "html" | "pdf" | "docx" | "json";
 /** full — полный отчёт; brief — без плана устранения, по находкам только ссылки на устранение. */
 export type ReportVariant = "full" | "brief";
 
+/** Необязательные разделы отчёта. plan=false — без «Плана устранения»; compliance —
+ * профили соответствия в отчёте ([] — без раздела; не задано — по настройкам договора). */
+export interface ReportSections {
+  plan?: boolean;
+  compliance?: string[];
+}
+
 export interface TokenOut {
   access_token: string;
   token_type: string;

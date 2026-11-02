@@ -395,6 +395,8 @@ class Report:
     combined: Section
     modules: list[Section]
     brief: bool = False   # краткая версия: без плана и текстов рекомендаций
+    # раздел «План устранения» включён (опция отчёта; в краткой версии его нет всегда)
+    with_plan: bool = True
     false_positives: list[FalsePositiveView] = field(default_factory=list)
     priority: list[PriorityItem] = field(default_factory=list)   # топ по рангу (R6)
     priority_hosts: list[HostPriority] = field(default_factory=list)
@@ -406,6 +408,10 @@ class Report:
     @property
     def priority_formula(self) -> str:
         return FORMULA_TEXT
+
+    @property
+    def show_plan(self) -> bool:
+        return self.with_plan and not self.brief
 
     @property
     def has_trend(self) -> bool:
@@ -426,6 +432,7 @@ class Report:
                 "group": c.group,
                 "generated_at": c.generated_at.isoformat(),
                 "variant": self.variant,
+                "sections": {"plan": self.show_plan, "compliance": bool(self.compliance)},
             },
             "summary": self.summary.to_dict(),
             "remediation_plan": [p.to_dict() for p in self.plan],
@@ -439,8 +446,9 @@ class Report:
                                "hosts": [h.to_dict() for h in self.priority_hosts]}
         if self.compliance:
             out["compliance"] = [_compliance_dict(c, self.brief) for c in self.compliance]
-        if self.brief:
+        if not self.show_plan:
             del out["remediation_plan"]
+        if self.brief:
             for sec in [out["combined"], *out["modules"]]:
                 views = sec["findings"] + (sec["trend"]["fixed"] if sec["trend"] else [])
                 for f in views:
@@ -458,6 +466,13 @@ def _compliance_dict(c: dict, brief: bool) -> dict:
     return {**c, "failures": strip,
             "controls": [x for x in c.get("controls", []) if x.get("status") != "failed"]
             + strip}
+
+
+def without_plan(report: Report) -> Report:
+    """Отчёт без раздела «План устранения» (опция): рекомендации по находкам остаются."""
+    points = [p.replace(_PLAN_HINT, "") for p in report.summary.key_points]
+    return replace(report, plan=[], with_plan=False,
+                   summary=replace(report.summary, key_points=points))
 
 
 def brief_report(report: Report) -> Report:
@@ -567,6 +582,7 @@ def build_report(
     hosts: Collection[str] | None = None,
     risk: RiskContext | None = None,
     compliance: list[dict] | None = None,
+    with_plan: bool = True,
 ) -> Report:
     """Строит модель отчёта.
 
@@ -581,6 +597,7 @@ def build_report(
     «Соответствие требованиям»; None — без раздела.
     hosts — адреса хостов (например, активов группы): в отчёт попадают только
     находки этих хостов; None — без фильтра (поведение по умолчанию).
+    with_plan=False — без раздела «План устранения» (опция отчёта).
     """
     resolver = resolver or RemediationResolver()
     context = context or ReportContext()
@@ -622,7 +639,7 @@ def build_report(
         modules.append(Section(m, module_label(m),
                                [v for v in views if v.finding.module == m], trend))
 
-    return Report(
+    report = Report(
         context=context,
         summary=_summary(views, combined_trend, len(fp_views)),
         plan=_plan(views),
@@ -636,3 +653,4 @@ def build_report(
         has_priority=risk is not None,
         compliance=list(compliance or []),
     )
+    return report if with_plan else without_plan(report)

@@ -233,6 +233,8 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--brief", action="store_true",
                      help="краткая версия: без плана устранения, вместо рекомендаций "
                           "только ссылки на устранение")
+    rep.add_argument("--no-plan", action="store_true",
+                     help="без раздела «План устранения» (рекомендации по находкам остаются)")
     rep.set_defaults(handler=cmd_report)
     return p
 
@@ -554,7 +556,7 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
     resolver.add_host_os(os_names, override=False)
     report = build_report(current, previous=previous, historically_fixed=hist,
                           resolver=resolver, context=context,
-                          false_positives=marks, risk=risk)
+                          false_positives=marks, risk=risk, with_plan=not args.no_plan)
     variant = "brief" if args.brief else "full"
     try:
         body = ReportRenderer().render(report, args.format, variant=variant)

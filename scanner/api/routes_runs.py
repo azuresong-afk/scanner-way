@@ -328,12 +328,19 @@ def get_report(run_id: int, request: Request,
                format: Annotated[str, Query(pattern="^(html|pdf|docx|json)$")] = "html",
                variant: Annotated[str, Query(pattern="^(full|brief)$")] = "full",
                compare_to: int | None = None,
-               group_id: int | None = None) -> Response:
+               group_id: int | None = None,
+               plan: bool = True,
+               compliance: Annotated[str | None, Query(
+                   max_length=300, pattern=r"^[a-z0-9,-]*$")] = None) -> Response:
     """Отчёт по прогону. По умолчанию — только по этому прогону, без сравнения;
     compare_to=<id> — сравнить с выбранным более ранним прогоном договора.
     group_id=<id> — разрез по группе активов: только хосты группы.
     variant=brief — краткая версия: без плана устранения,
-    по находкам вместо рекомендаций только ссылки на устранение."""
+    по находкам вместо рекомендаций только ссылки на устранение.
+    plan=false — без раздела «План устранения» (рекомендации по находкам остаются).
+    compliance — профили соответствия в отчёте через запятую (fstec-117,cis-benchmark);
+    пусто или none — без раздела «Соответствие требованиям»; не задан — профили
+    договора с признаком «в отчёт»."""
     from scanner.reporting.model import ReportContext, build_report
     from scanner.reporting.render import (
         CONTENT_TYPES,
@@ -348,6 +355,7 @@ def get_report(run_id: int, request: Request,
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"scan run is {run.status}; report is available after it ends")
     eng = get_engagement(session, run.engagement_id)
+    profiles = _report_profiles(compliance)
     group = hosts = None
     if group_id is not None:
         from scanner.core import assets as asset_svc
@@ -378,13 +386,16 @@ def get_report(run_id: int, request: Request,
                               group=group.name if group else None),
         false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts,
         risk=build_risk_context(session, current, eng.id),
-        compliance=_compliance_sections(session, run_id, eng.id, hosts))
+        compliance=_compliance_sections(session, run_id, eng.id, hosts, profiles),
+        with_plan=plan)
     fmt, var = ReportFormat(format), ReportVariant(variant)
     body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",
                  result="ok", details={"format": fmt.value, "variant": var.value,
                                        "previous_run_id": prev_id, "findings": len(current),
-                                       "group_id": group_id})
+                                       "group_id": group_id, "plan": report.show_plan,
+                                       "compliance": [c["profile"]["id"]
+                                                      for c in report.compliance]})
     suffix = (f"-group-{group_id}" if group_id is not None else "") + (
         "-brief" if var is ReportVariant.BRIEF else "") + (
         f"-vs-{prev_id}" if prev_id is not None else "")
@@ -393,20 +404,32 @@ def get_report(run_id: int, request: Request,
             f'attachment; filename="report-run-{run_id}{suffix}.{fmt.value}"'})
 
 
+def _report_profiles(compliance: str | None) -> list[str] | None:
+    """Параметр compliance отчёта -> список профилей (None — по настройкам договора)."""
+    if compliance is None:
+        return None
+    from scanner.compliance.catalog import default_catalog
+    ids = [x for x in dict.fromkeys(compliance.split(",")) if x and x != "none"]
+    unknown = [x for x in ids if x not in default_catalog().profiles]
+    if unknown:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            f"unknown compliance profile: {', '.join(unknown)}")
+    return ids
+
+
 def _compliance_sections(session: Session, run_id: int, engagement_id: int,
-                         hosts: set[str] | None) -> list[dict]:
-    """Сводки соответствия (R5) по профилям договора с признаком «в отчёт»."""
+                         hosts: set[str] | None,
+                         profiles: list[str] | None = None) -> list[dict]:
+    """Сводки соответствия (R5): по выбранным для отчёта профилям, а если выбор не
+    передан — по профилям договора с признаком «в отчёт»."""
     from scanner.compliance import store as compliance_store
     from scanner.compliance.catalog import default_catalog
-    rows = [r for r in compliance_store.list_profiles(session, engagement_id) if r.in_report]
-    if not rows or not compliance_store.has_results(session, run_id):
+    if profiles is None:
+        profiles = [r.profile for r in compliance_store.list_profiles(session, engagement_id)
+                    if r.in_report]
+    if not profiles or not compliance_store.has_results(session, run_id):
         return []
     catalog = default_catalog()
-    out = []
-    for r in rows:
-        if r.profile not in catalog.profiles:
-            continue
-        out.append(compliance_store.run_summary(
-            session, run_id, engagement_id, catalog.profiles[r.profile], catalog=catalog,
-            hosts=hosts))
-    return out
+    return [compliance_store.run_summary(session, run_id, engagement_id,
+                                         catalog.profiles[p], catalog=catalog, hosts=hosts)
+            for p in profiles if p in catalog.profiles]

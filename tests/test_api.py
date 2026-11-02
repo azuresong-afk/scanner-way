@@ -489,6 +489,16 @@ def test_second_run_statuses_and_report_export(api, sqlite_factory, cves):
     assert f"report-run-{second}-brief.json" in brief.headers["content-disposition"]
     assert brief.json()["meta"]["variant"] == "brief"
     assert "remediation_plan" not in brief.json()
+    noplan = api.c.get(f"/runs/{second}/report", headers=aud,
+                       params={"format": "json", "plan": "false"})
+    assert noplan.status_code == 200, noplan.text
+    assert "remediation_plan" not in noplan.json()
+    assert noplan.json()["meta"]["sections"]["plan"] is False
+    assert noplan.json()["meta"]["variant"] == "full"     # рекомендации по находкам — на месте
+    assert report["meta"]["sections"]["plan"] is True and "remediation_plan" in report
+    noplan_html = api.c.get(f"/runs/{second}/report", headers=aud,
+                            params={"format": "html", "plan": "false"}).text
+    assert "План устранения" not in noplan_html and "Рекомендация по устранению" in noplan_html
     assert api.c.get(f"/runs/{second}/report", headers=aud,
                      params={"variant": "short"}).status_code == 422
     assert ("user:aud", "export", f"scan_run:{second}", "ok") in api.audit(sqlite_factory)
