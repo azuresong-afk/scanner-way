@@ -1,0 +1,31 @@
+# Production-развёртывание: накладывается поверх docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# (или один раз: export COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml —
+# тогда хватает обычных docker compose up/ps/logs и скриптов scripts/*.sh).
+#
+# Отличия от варианта для разработки:
+#   * код app берётся только из образа: исходники хоста не монтируются, поэтому
+#     обновление — это всегда пересборка образа (воспроизводимо, без «правки на
+#     живую»);
+#   * SCANNER_ENV=production: при пустых или шаблонных (CHANGE_ME) секретах
+#     контейнер app не стартует и пишет причину в лог (scanner/core/preflight.py);
+#   * restart: always — сервисы поднимаются после перезагрузки сервера.
+# Требуется Docker Compose v2.24.4+ (тег !override).
+
+services:
+  app:
+    environment:
+      SCANNER_ENV: production
+    volumes: !override
+      - ./data:/data
+      - nuclei_templates:/root/nuclei-templates
+      - nuclei_config:/root/.config/nuclei
+    restart: always
+
+  web:
+    restart: always
+
+  db:
+    restart: always

@@ -55,6 +55,10 @@ class ApiSettings(BaseSettings):
     notify_tick_seconds: float = 30.0
     public_url: str = ""
 
+    # /health/ready сверяет версию схемы БД с последней миграцией Alembic
+    # (выключается только в тестах на схеме без Alembic).
+    ready_check_migrations: bool = True
+
     # Проверок доступности хоста (без прогона) на пользователя в минуту.
     reachability_per_minute: int = 10
 

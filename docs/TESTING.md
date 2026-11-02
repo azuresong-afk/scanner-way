@@ -637,10 +637,14 @@ Benchmark по правилам OpenSCAP). Профили — данные в
 | # | Действие | Ожидаемый результат |
 |---|---|---|
 | 14.1 | `docker compose down && docker compose up -d` (затем снова `docker network connect lab-net …`) | Пользователи, договоры, прогоны и справочники на месте |
-| 14.2 | Резервная копия: `docker compose exec -T db pg_dump -U scanner scanner \| gzip > backup.sql.gz` | Файл создан, ненулевой размер |
+| 14.2 | Резервная копия: `scripts/backup.sh` | Каталог `backups/<дата>` с `db.dump` и `data.tar.gz`, ненулевой размер |
 | 14.3 | Остановить `db` во время работы (`docker compose stop db`), открыть веб | Понятная ошибка, после `docker compose start db` всё работает |
 | 14.4 | Обновить до свежей версии: `git pull`, затем `docker compose up --build -d` | Образы пересобираются, контейнеры пересоздаются, миграции применяются сами; пользователи, договоры, прогоны и справочники на месте. Так обновляются и новые функции: зависимости Python ставятся в образ, а веб-интерфейс компилируется в образ `web` (простой `restart app` его не обновит) |
-| 14.5 | Точечная правка только Python-кода (без новых зависимостей и правок веба): `git pull`, затем `docker compose restart app` | Изменения подхватываются без пересборки — код `app` примонтирован как `./:/app` |
+| 14.5 | Точечная правка только Python-кода (без новых зависимостей и правок веба): `git pull`, затем `docker compose restart app` | Изменения подхватываются без пересборки — код `app` примонтирован как `./:/app` (только без `docker-compose.prod.yml`: в production код берётся из образа, нужен `up -d --build`) |
+| 14.6 | Production: `export COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml`, затем `docker compose up -d --build` | `docker compose ps`: `app`, `web`, `db` — `(healthy)`; `curl -s 127.0.0.1:${SCANNER_API_PORT}/health/ready` — `"status":"ok"`, `"migration"` равна `"expected"` |
+| 14.7 | В `.env` вернуть `SCANNER_API_SECRET=CHANGE_ME…`, `docker compose up -d` | `app` не стартует, в `docker compose logs app` — `[preflight] ОШИБКА: SCANNER_API_SECRET содержит шаблон CHANGE_ME`. Вернуть ключ — всё стартует |
+| 14.8 | `docker compose stop db`, затем `curl -s -w '%{http_code}' 127.0.0.1:${SCANNER_API_PORT}/health/ready` | `503`, `"database":"error"`; `/health` при этом `200`. `docker compose start db` — снова `200` |
+| 14.9 | `scripts/backup.sh`, затем создать договор «после копии», затем `scripts/restore.sh backups/<каталог> --yes` | Копия: `db.dump`, `data.tar.gz`, `manifest.txt`, `SHA256SUMS`. После восстановления договора «после копии» нет, остальные данные и `./data` на месте, `app` — `(healthy)` |
 
 - [ ] Шаг 14 пройден
 
