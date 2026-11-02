@@ -153,12 +153,13 @@ def host_blocks(report: Report) -> list[HostBlock]:
 
 
 def section_numbers(brief: bool, priority: bool = False,
-                    compliance: bool = False) -> dict[str, int]:
-    """Номера разделов: в краткой версии раздела «План устранения» нет; раздел
+                    compliance: bool = False, plan: bool = True) -> dict[str, int]:
+    """Номера разделов: в краткой версии (или с отключённой опцией plan) раздела
+    «План устранения» нет; раздел
     «Исправить в первую очередь» есть, только если считалась приоритизация;
     «Соответствие требованиям» — если в отчёт включены профили (R5)."""
     keys = ["summary", "plan", "trend", "hosts", "details"]
-    if brief:
+    if brief or not plan:
         keys.remove("plan")
     if priority:
         keys.insert(1, "priority")
@@ -237,7 +238,8 @@ class ReportRenderer:
         charts = {k: Markup(v.to_svg()) for k, v in build_charts(report, history).items()}
         return _env().get_template("report.html.j2").render(
             r=report, charts=charts, hosts=host_blocks(report),
-            num=section_numbers(report.brief, report.has_priority, bool(report.compliance)))
+            num=section_numbers(report.brief, report.has_priority, bool(report.compliance),
+                              report.with_plan))
 
     def render_pdf(self, report: Report, history: Sequence[RunPoint] | None = None) -> bytes:
         try:
@@ -413,7 +415,8 @@ class ReportRenderer:
         c = report.context
         s = report.summary
         t = report.combined.trend
-        num = section_numbers(report.brief, report.has_priority, bool(report.compliance))
+        num = section_numbers(report.brief, report.has_priority, bool(report.compliance),
+                              report.with_plan)
 
         # Обложка
         spacer(60)
@@ -490,8 +493,8 @@ class ReportRenderer:
             else:
                 doc.add_paragraph("Находок для ранжирования нет.")
 
-        # План устранения (только в полной версии)
-        if not report.brief:
+        # План устранения (только в полной версии и если раздел включён)
+        if report.show_plan:
             heading(num["plan"], "План устранения")
             if report.plan:
                 small(doc.add_paragraph(), "Одинаковые меры объединены: одна строка — одно "

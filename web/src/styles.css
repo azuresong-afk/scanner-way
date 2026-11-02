@@ -260,6 +260,10 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 /* «Сравнить с» в меню отчёта — по высоте как кнопки рядом. */
 .report-compare .select { width: auto; max-width: 233px; height: 34px; }
 .report-compare.sm .select { height: 30px; font-size: 13px; }
+.report-sections { gap: 6px 16px; flex-wrap: wrap; font-size: 13px; color: var(--text-2); }
+.report-sections label { gap: 6px; cursor: pointer; }
+.report-sections input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.report-sections.sm { font-size: 12px; }
 @media (max-width: 600px) {
   .seg { flex-basis: 100%; }
   .seg button { flex: 1 1 0; }

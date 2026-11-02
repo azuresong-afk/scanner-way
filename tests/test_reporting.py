@@ -243,3 +243,23 @@ def test_brief_empty_report():
     for fmt in ReportFormat:
         if fmt is not ReportFormat.PDF:
             assert ReportRenderer().render(r, fmt, variant="brief")
+
+
+def test_plan_section_is_optional():
+    """«План устранения» — опция отчёта: без него рекомендации по находкам остаются."""
+    from scanner.reporting.render import section_numbers
+    report = build_report(fx.current_run(), previous=fx.previous_run(),
+                          resolver=fx.resolver(), with_plan=False)
+    assert report.plan == [] and not report.show_plan and not report.brief
+    assert not any("план устранения" in p for p in report.summary.key_points)
+    data = report.to_dict()
+    assert "remediation_plan" not in data and data["meta"]["sections"]["plan"] is False
+    assert data["combined"]["findings"][0]["remediation"]["text"]
+    html = ReportRenderer().render(report, "html").decode()
+    assert "План устранения" not in html and "Рекомендация по устранению" in html
+    docx = ReportRenderer().render(report, "docx")
+    xml = zipfile.ZipFile(io.BytesIO(docx)).read("word/document.xml").decode()
+    assert "План устранения" not in xml and "Рекомендация по устранению" in xml
+    assert "plan" not in section_numbers(False, plan=False)
+    full = build_report(fx.current_run(), resolver=fx.resolver()).to_dict()
+    assert full["meta"]["sections"]["plan"] is True and "remediation_plan" in full

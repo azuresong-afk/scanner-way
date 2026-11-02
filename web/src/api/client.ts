@@ -2,6 +2,7 @@
 
 import type {
   AllowlistIn,
+  ReportSections,
   AssetBulkIn,
   AssetFilters,
   AssetGroupOut,
@@ -304,10 +305,15 @@ export const api = {
     variant: ReportVariant = "full",
     compareTo: number | null = null,
     groupId: number | null = null,
+    sections: ReportSections = {},
   ): Promise<Blob> => {
     const cmp = compareTo === null ? "" : `&compare_to=${compareTo}`;
     const grp = groupId === null ? "" : `&group_id=${groupId}`;
-    const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}${cmp}${grp}`);
+    // Разделы-опции: без плана — plan=false; профили соответствия — списком (none — без раздела).
+    const plan = sections.plan === false ? "&plan=false" : "";
+    const cmpl =
+      sections.compliance === undefined ? "" : `&compliance=${encodeURIComponent(sections.compliance.join(",") || "none")}`;
+    const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}${cmp}${grp}${plan}${cmpl}`);
     return res.blob();
   },
 

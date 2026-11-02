@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Download, Eye } from "lucide-react";
 import { api } from "../api/client";
-import type { AssetGroupOut, ReportFormat, ReportVariant, RunOut } from "../api/types";
+import type { AssetGroupOut, ReportFormat, ReportSections, ReportVariant, RunOut } from "../api/types";
 import { saveBlob } from "../lib/download";
 import { fmtDate } from "../lib/format";
 import { Modal } from "./ui";
@@ -27,6 +27,10 @@ const VARIANTS: { id: ReportVariant; label: string; hint: string }[] = [
  * Отчёт по умолчанию строится только по этому прогону. Если передан список прогонов
  * договора (`runs`), появляется «Сравнить с»: можно выбрать более ранний успешно
  * завершённый прогон, и в отчёт добавятся новые/закрытые/регрессии и тренд.
+ *
+ * «Разделы» — необязательные части отчёта: «План устранения» (в кратком его нет всегда)
+ * и «Соответствие» по каждому профилю договора (ФСТЭК №117 нужен не всем — только ГИС).
+ * По умолчанию профили отмечены по признаку «в отчёт» со страницы «Соответствие».
  */
 export function ReportMenu({
   runId,
@@ -51,6 +55,27 @@ export function ReportMenu({
   const [compareTo, setCompareTo] = useState<number | null>(null);
   const [groupId, setGroupId] = useState<number | null>(null);
   const [groups, setGroups] = useState<AssetGroupOut[]>([]);
+  const [withPlan, setWithPlan] = useState(true);
+  // Профили соответствия договора: id, подпись и отмечен ли для этого отчёта.
+  const [profiles, setProfiles] = useState<{ id: string; label: string; on: boolean }[]>([]);
+  useEffect(() => {
+    if (engagementId === undefined) return;
+    Promise.all([api.complianceProfiles(engagementId), api.complianceCatalog().catch(() => [])]).then(
+      ([rows, catalog]) =>
+        setProfiles(
+          rows.map((r) => ({
+            id: r.profile,
+            label: catalog.find((c) => c.id === r.profile)?.short ?? r.profile,
+            on: r.in_report,
+          })),
+        ),
+      () => setProfiles([]),
+    );
+  }, [engagementId]);
+  const sections: ReportSections = {
+    ...(withPlan ? {} : { plan: false }),
+    ...(profiles.length > 0 ? { compliance: profiles.filter((p) => p.on).map((p) => p.id) } : {}),
+  };
   useEffect(() => {
     if (engagementId === undefined) return;
     // Группы нужны только для необязательного разреза; без права на активы отчёт остаётся полным.
@@ -64,7 +89,7 @@ export function ReportMenu({
     setBusy(fmt);
     setError(null);
     try {
-      saveBlob(await api.report(runId, fmt, variant, compareTo, groupId), `report-run-${runId}${suffix}.${fmt}`);
+      saveBlob(await api.report(runId, fmt, variant, compareTo, groupId, sections), `report-run-${runId}${suffix}.${fmt}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -78,7 +103,7 @@ export function ReportMenu({
     setBusy("view");
     setError(null);
     try {
-      setHtml(await (await api.report(runId, "html", variant, compareTo, groupId)).text());
+      setHtml(await (await api.report(runId, "html", variant, compareTo, groupId, sections)).text());
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -170,6 +195,31 @@ export function ReportMenu({
           </button>
         ))}
       </div>
+      {!compact && (
+        <div className={`inline report-sections${small ? " sm" : ""}`} role="group" aria-label="Разделы отчёта">
+          <span className="faint nowrap">Разделы:</span>
+          <label className="inline nowrap" title={variant === "brief" ? "В кратком отчёте плана устранения нет" : undefined}>
+            <input
+              type="checkbox"
+              checked={withPlan && variant !== "brief"}
+              disabled={disabled || !!busy || variant === "brief"}
+              onChange={(e) => setWithPlan(e.target.checked)}
+            />
+            План устранения
+          </label>
+          {profiles.map((p) => (
+            <label key={p.id} className="inline nowrap">
+              <input
+                type="checkbox"
+                checked={p.on}
+                disabled={disabled || !!busy}
+                onChange={(e) => setProfiles((ps) => ps.map((x) => (x.id === p.id ? { ...x, on: e.target.checked } : x)))}
+              />
+              Соответствие: {p.label}
+            </label>
+          ))}
+        </div>
+      )}
       {error && <span style={{ color: "var(--danger)", fontSize: 12 }}>{error}</span>}
       {html !== null && (
         <Modal

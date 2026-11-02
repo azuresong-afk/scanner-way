@@ -112,3 +112,43 @@ it("выбор группы активов добавляет group_id в зап
   expect(seen).toEqual([null, "3"]);
   expect(save.mock.calls[1][1]).toBe("report-run-7-group-3.pdf");
 });
+
+it("разделы: план и профили соответствия — опции отчёта", async () => {
+  setToken("t");
+  const seen: { plan: string | null; compliance: string | null }[] = [];
+  mockApi({
+    "GET /engagements/5/asset-groups": [],
+    "GET /engagements/5/compliance-profiles": [
+      { profile: "fstec-117", level: "К2", excluded: [], added: [], in_report: true },
+      { profile: "cis-controls-v8", level: null, excluded: [], added: [], in_report: false },
+    ],
+    "GET /compliance/profiles": [{ id: "fstec-117", short: "ФСТЭК №117" }],
+    "GET /runs/7/report": (_init: RequestInit | undefined, url: URL) => {
+      seen.push({ plan: url.searchParams.get("plan"), compliance: url.searchParams.get("compliance") });
+      return new Response("x");
+    },
+  });
+  const save = vi.spyOn(download, "saveBlob").mockImplementation(() => {});
+  render(<ReportMenu runId={7} engagementId={5} />);
+
+  const fstec = await screen.findByRole("checkbox", { name: "Соответствие: ФСТЭК №117" });
+  expect(fstec).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Соответствие: cis-controls-v8" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "План устранения" })).toBeChecked();
+  await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+  // клиент не ГИС: убираем №117 и план
+  await userEvent.click(fstec);
+  await userEvent.click(screen.getByRole("checkbox", { name: "План устранения" }));
+  await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(seen).toEqual([
+    { plan: null, compliance: "fstec-117" },
+    { plan: "false", compliance: "none" },
+  ]);
+
+  // в кратком отчёте плана нет всегда — флажок недоступен
+  await userEvent.click(screen.getByRole("radio", { name: "Краткий" }));
+  expect(screen.getByRole("checkbox", { name: "План устранения" })).toBeDisabled();
+});

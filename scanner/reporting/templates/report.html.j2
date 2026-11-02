@@ -221,7 +221,7 @@
   <div class="kpi"><small>Критических и высоких</small><b>{{ sc.critical + sc.high }}</b>
     <span class="sub">устранять в первую очередь</span></div>
   <div class="kpi"><small>Хостов с находками</small><b>{{ r.summary.hosts }}</b>
-    <span class="sub">{% if r.brief %}по всем модулям сканирования{% else %}мер в плане устранения: {{ r.plan|length }}{% endif %}</span></div>
+    <span class="sub">{% if not r.show_plan %}по всем модулям сканирования{% else %}мер в плане устранения: {{ r.plan|length }}{% endif %}</span></div>
   {% if t %}
   <div class="kpi"><small>Новые / повторные</small><b>{{ t.counts.new }} / {{ t.counts.regression }}</b>
     <span class="sub">устранено: <span class="down">{{ t.counts.fixed }}</span></span></div>
@@ -285,7 +285,7 @@
 {% endif %}
 {% endif %}
 
-{% if not r.brief %}
+{% if r.show_plan %}
 <h2><span class="n">{{ "%02d"|format(num.plan) }}</span>План устранения</h2>
 {% if r.plan %}
 <p class="lead">Одинаковые меры объединены: одна строка — одно действие и все хосты, где его нужно выполнить.
