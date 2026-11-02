@@ -37,6 +37,8 @@ class Decision:
 
 def _branch(manager: str, version: str) -> str:
     """Ветка версии: эпоха + первый числовой компонент апстрима (``1:18``)."""
+    if manager == "apk":
+        return f"0:{vercmp.parse_apk(version)[0][0]}"
     parse = vercmp.parse_dpkg if manager == "dpkg" else vercmp.parse_evr
     epoch, upstream, _ = parse(version)
     m = re.match(r"\d+", upstream)

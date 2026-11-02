@@ -39,13 +39,20 @@ class Settings(BaseSettings):
     advisory_url_alt: str = ""
     advisory_url_astra: str = ""
     advisory_url_redos: str = ""
+    advisory_url_alpine: str = ""
+    # Подгрузка бюллетеней недостающих выпусков ОС прямо в прогоне (выпуски
+    # берутся с самих хостов): auto — из интернета, только если в «Справочниках»
+    # включено автообновление «Бюллетени дистрибутивов» (согласие оператора на
+    # выход в интернет); 1 — всегда; 0 — никогда. Файлы из ADVISORY_DIR
+    # подхватываются при любом значении, кроме 0.
+    advisory_on_demand: str = "auto"
 
     # gentle | normal | aggressive
     default_rate_profile: str = "gentle"
 
     def advisory_urls(self) -> dict[str, str]:
         return {f: getattr(self, f"advisory_url_{f}") for f in
-                ("debian", "ubuntu", "rhel", "alt", "astra", "redos")
+                ("debian", "ubuntu", "rhel", "alt", "astra", "redos", "alpine")
                 if getattr(self, f"advisory_url_{f}").strip()}
 
     @property

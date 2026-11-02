@@ -159,6 +159,17 @@ def test_lynis_warnings_and_suggestions():
     assert rem["LYNIS:DEB-0880"].startswith("Install fail2ban")
 
 
+def test_lynis_vulnerable_packages_is_config_signal_not_vuln_source():
+    """PKGS-7392 остаётся находкой аудита конфигураций (без CVE/БДУ) и отсылает к
+    сверке пакетов с бюллетенями вендора (auth_inventory)."""
+    findings, _ = parse_lynis_report(LYNIS, "10.0.0.6")
+    f = next(f for f in findings if f.vuln_id == "LYNIS:PKGS-7392")
+    assert f.finding_type is FindingType.CONFIG and not f.cve_ids and not f.bdu_ids
+    assert "бюллетенями вендора" in f.evidence
+    other = next(f for f in findings if f.vuln_id == "LYNIS:SSH-7408")
+    assert "бюллетенями вендора" not in other.evidence
+
+
 def test_lynis_same_test_id_merged_into_one_finding():
     findings, _ = parse_lynis_report(LYNIS, "10.0.0.6")
     f6310 = [f for f in findings if f.vuln_id == "LYNIS:FILE-6310"]

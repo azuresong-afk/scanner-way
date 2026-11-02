@@ -227,7 +227,8 @@ class _HostAdvisories:
     """Данные вендора для одного хоста: выпуск ОС и записи по его пакетам."""
 
     def __init__(self, inv: HostInventory, store: AdvisoryStore | None,
-                 loaded: set[tuple[str, str]] | None):
+                 loaded: set[tuple[str, str]] | None,
+                 fetch_errors: dict[tuple[str, str], str] | None = None):
         self.spec: FamilySpec | None = None
         self.release: str | None = None
         self._rows: dict[str, list[Advisory]] = {}
@@ -242,7 +243,9 @@ class _HostAdvisories:
         if family != self.spec.family:   # Rocky/Alma/… по данным Red Hat
             label += f" (для {family_label(family)})"
         if store is None or loaded is None or (self.spec.family, self.release) not in loaded:
-            self.report = BackportReport(f"бюллетени {label} не загружены")
+            why = (fetch_errors or {}).get((self.spec.family, self.release))
+            self.report = BackportReport(f"бюллетени {label} не загружены"
+                                         + (f" ({why})" if why else ""))
             return
         names = {n for p in inv.packages for n in (p.name, p.source) if n}
         self._rows = store.for_packages(self.spec.family, self.release, names)
@@ -314,10 +317,13 @@ class AuthInventoryModule(ScanModule):
     def __init__(self, options: AuthInventoryOptions | None = None,
                  matcher: _Matcher | None = None, connector: Connector | None = None,
                  sleep: Callable[[float], None] = time.sleep,
-                 advisories: AdvisoryStore | None = None):
+                 advisories: AdvisoryStore | None = None,
+                 fetch_advisories: Callable[[list[tuple[str, str]]], list] | None = None):
         self.options = options or AuthInventoryOptions()
         self._matcher = matcher
         self._advisories = advisories
+        # Подгрузка бюллетеней выпусков, встреченных на хостах (feeds.advisories.ondemand)
+        self._fetch_advisories = fetch_advisories
         self._connect = connector or connect
         self._sleep = sleep
 
@@ -500,7 +506,8 @@ class AuthInventoryModule(ScanModule):
                        evidence=evidence)
 
     def _summary(self, inv: HostInventory, cred: HostCredential | None,
-                 matched: int, backports: BackportReport | None = None) -> Finding:
+                 matched: int, backports: BackportReport | None = None,
+                 bdu_linked: int | None = None) -> Finding:
         managers = sorted({p.manager for p in inv.packages})
         lines = [f"ОС: {inv.os_label or 'не определена'}"]
         if inv.kernel:
@@ -511,6 +518,11 @@ class AuthInventoryModule(ScanModule):
         lines.append(f"пакетов: {len(inv.packages)}"
                      + (f" ({', '.join(managers)})" if managers else ""))
         lines.append(f"уязвимостей по версиям пакетов: {matched}")
+        if bdu_linked is not None:
+            lines.append(f"привязано к БДУ ФСТЭК: {bdu_linked} из {matched}"
+                         + ("" if bdu_linked == matched else
+                            " (у остальных CVE записи в БДУ нет или справочник БДУ "
+                            "не загружен)"))
         if backports is not None:
             lines.append(backports.summary())
         if cred is not None:
@@ -569,13 +581,18 @@ class AuthInventoryModule(ScanModule):
                                  target="bdu_software_names", result="error",
                                  details=f"{type(e).__name__}: {e}"[:300])
         advisories, loaded = self._run_advisories(ctx)
+        inventories = [inv for _, (inv, _) in collected if inv is not None]
+        fetch_errors = self._fetch_missing(ctx, inventories, loaded)
+        if fetch_errors is not None and any(v is None for v in fetch_errors.values()):
+            advisories, loaded = self._run_advisories(ctx)   # перечитать с новыми выпусками
+        errors = {k: v for k, v in (fetch_errors or {}).items() if v}
         findings: list[Finding] = []
         for (host, creds), (inv, notes) in collected:
             findings.extend(notes)
             if inv is None:
                 continue
             ctx.inventory[host] = inv
-            adv = self._host_advisories(ctx, inv, advisories, loaded)
+            adv = self._host_advisories(ctx, inv, advisories, loaded, errors)
             matched = (self._match(ctx, inv, matcher, bdu_names, adv)
                        if matcher or (adv and adv.has_data) else [])
             if adv is not None:
@@ -587,8 +604,10 @@ class AuthInventoryModule(ScanModule):
                                           "confirmed": r.confirmed, "added": r.added,
                                           "no_record": r.no_record})
             cred = next((c for c in creds if c.id == inv.credential_id), None)
-            findings.append(self._summary(inv, cred, len(matched),
-                                          adv.report if adv else None))
+            vulns = [f for f in matched if f.finding_type is FindingType.VULN]
+            findings.append(self._summary(inv, cred, len(vulns),
+                                          adv.report if adv else None,
+                                          bdu_linked=sum(1 for f in vulns if f.bdu_ids)))
             findings.extend(matched)
         return findings
 
@@ -606,14 +625,50 @@ class AuthInventoryModule(ScanModule):
                              details=f"{type(e).__name__}: {e}"[:300])
             return None, None
 
+    def _fetch_missing(self, ctx: ScanContext, inventories: list[HostInventory],
+                       loaded: set[tuple[str, str]] | None
+                       ) -> dict[tuple[str, str], str | None] | None:
+        """Подгружает бюллетени выпусков ОС хостов, которых ещё нет в базе.
+        -> {(семейство, выпуск): None | причина неудачи}; None — нечего делать."""
+        if self._fetch_advisories is None or self._advisories is None or loaded is None:
+            return None
+        needed: set[tuple[str, str]] = set()
+        for inv in inventories:
+            if not inv.packages:
+                continue
+            target = host_release(inv.os_family, inv.os_version, inv.os_codename)
+            if target is not None:
+                needed.add((target[0].family, target[1]))
+        missing = sorted(needed - loaded)
+        if not missing:
+            return None
+        try:
+            results = self._fetch_advisories(missing)
+        except Exception as e:  # noqa: BLE001 — без бюллетеней работаем как раньше
+            ctx.audit.record(subject="scanner", action="advisory_fetch",
+                             target=",".join(f"{f}:{r}" for f, r in missing),
+                             result="error", details=f"{type(e).__name__}: {e}"[:300])
+            return {t: f"{type(e).__name__}: {e}"[:300] for t in missing}
+        out: dict[tuple[str, str], str | None] = {}
+        for r in results:
+            out[(r.family, r.release)] = r.error
+            ctx.audit.record(subject="scanner", action="advisory_fetch",
+                             target=f"{r.family}:{r.release}",
+                             result="error" if r.error else "ok",
+                             details={"records": r.count, "source": r.source[:300],
+                                      "error": (r.error or "")[:300] or None})
+        return out
+
     @staticmethod
     def _host_advisories(ctx: ScanContext, inv: HostInventory,
                          store: AdvisoryStore | None,
-                         loaded: set[tuple[str, str]] | None) -> _HostAdvisories | None:
+                         loaded: set[tuple[str, str]] | None,
+                         fetch_errors: dict[tuple[str, str], str] | None = None
+                         ) -> _HostAdvisories | None:
         if not inv.packages:
             return None
         try:
-            return _HostAdvisories(inv, store, loaded)
+            return _HostAdvisories(inv, store, loaded, fetch_errors)
         except Exception as e:  # noqa: BLE001
             ctx.audit.record(subject="scanner", action="auth_inventory_backport",
                              target=inv.host, result="error",

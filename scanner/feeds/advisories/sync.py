@@ -4,7 +4,8 @@
 1. каталог ADVISORY_DIR (закрытый контур): ``<семейство>-<выпуск>.<расш>``,
    а для общего на все выпуски источника (трекер Debian) — ``<семейство>.<расш>``;
 2. адрес ADVISORY_URL_<СЕМЕЙСТВО> или адрес вендора по умолчанию
-   (``{release}`` подставляется).
+   (``{release}`` подставляется; несколько адресов через пробел — данные
+   выпуска собираются из всех, например main + community у Alpine).
 Сжатие (bz2, gzip, zip) определяется по содержимому, не по имени.
 """
 from __future__ import annotations
@@ -118,11 +119,15 @@ class Job:
     spec: FamilySpec
     releases: list[str]
     path: Path | None = None
-    url: str | None = None
+    urls: tuple[str, ...] = ()
+
+    @property
+    def url(self) -> str | None:
+        return self.urls[0] if self.urls else None
 
     @property
     def label(self) -> str:
-        return self.path.name if self.path else (self.url or "")
+        return self.path.name if self.path else " ".join(self.urls)
 
 
 def plan(targets: list[tuple[str, str]], *, directory: Path | None,
@@ -145,8 +150,9 @@ def plan(targets: list[tuple[str, str]], *, directory: Path | None,
                 f"OVAL «{family}-{release}.xml» в каталог бюллетеней или задайте "
                 f"ADVISORY_URL_{family.upper()}"))
             continue
-        url = template.replace("{release}", release)
-        jobs.setdefault((family, url), Job(spec, [], url=url)).releases.append(release)
+        job_urls = tuple(u.replace("{release}", release) for u in template.split())
+        jobs.setdefault((family, " ".join(job_urls)), Job(spec, [], urls=job_urls)
+                        ).releases.append(release)
     return list(jobs.values()), missing
 
 
@@ -155,17 +161,21 @@ def run_job(job: Job, store: AdvisoryStore,
     """Загружает один файл (для одного или нескольких выпусков). -> (итоги, sha256)."""
     tmpdir: str | None = None
     try:
-        path = job.path
-        if path is None:
+        paths: list[Path] = [job.path] if job.path is not None else []
+        if not paths:
             tmpdir = tempfile.mkdtemp(prefix="advisory-")
-            path = Path(tmpdir) / "payload"
-            fetch(job.url or "", path)
-        digest = sha256(path)
+            for i, url in enumerate(job.urls):
+                p = Path(tmpdir) / f"payload{i}"
+                fetch(url, p)
+                paths.append(p)
+        digest = hashlib.sha256("".join(sha256(p) for p in paths).encode()).hexdigest() \
+            if len(paths) > 1 else sha256(paths[0])
         buckets: dict[str, list[Advisory]] = defaultdict(list)
-        with open_payload(path) as streams:
-            for stream in streams:
-                for rec in job.spec.parser(stream, job.spec.family, job.releases):
-                    buckets[rec.release].append(rec)
+        for path in paths:
+            with open_payload(path) as streams:
+                for stream in streams:
+                    for rec in job.spec.parser(stream, job.spec.family, job.releases):
+                        buckets[rec.release].append(rec)
         results = []
         for release in job.releases:
             n = store.replace_release(job.spec.family, release, buckets.get(release, []))

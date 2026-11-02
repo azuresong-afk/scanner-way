@@ -98,7 +98,8 @@ def test_release_mapping():
     assert host_release("astra", "1.7_x86-64", None)[1] == "1.7"
     assert host_release("redos", "7.3", None)[1] == "7.3"
     assert host_release("redos", "8.0", None)[1] == "8"
-    assert host_release("alpine", "3.19", None) is None
+    assert host_release("alpine", "3.19.1", None)[1] == "3.19"   # secdb Alpine
+    assert host_release("gentoo", "2.15", None) is None
     assert host_release("linux", None, None) is None
 
 
@@ -230,9 +231,17 @@ def test_feed_source_registered(tmp_path, monkeypatch):
     res = load_advisories(ctx)
     assert res.count == 6 and "debian:bookworm — 6" in res.message
     assert "astra:1.7 — ошибка" in res.message
+    # Уже загруженный выпуск (в том числе подгруженный прогоном) обновляется
+    # по расписанию, даже если его нет в ADVISORY_RELEASES.
     monkeypatch.setattr(settings, "advisory_releases", "astra:1.7")
+    res = load_advisories(ctx)
+    assert "debian:bookworm — 6" in res.message
+    # Нечего загружать ни из списка, ни из базы, ни из каталога — ошибка.
+    empty = sqlite_store()
+    monkeypatch.setattr(settings, "advisory_dir", str(tmp_path / "none"))
     with pytest.raises(FeedError):
-        load_advisories(ctx)
+        load_advisories(FeedContext(engine=empty.engine, audit=Audit(),
+                                    now=None))  # type: ignore[arg-type]
 
 
 # ---------- инвентаризация: решение по находкам ----------
@@ -378,6 +387,6 @@ def test_broken_advisory_store_falls_back():
 
 
 def test_families_registry_is_complete():
-    assert set(FAMILIES) == {"debian", "ubuntu", "rhel", "alt", "astra", "redos"}
-    assert all(s.manager in ("dpkg", "rpm") for s in FAMILIES.values())
+    assert set(FAMILIES) == {"debian", "ubuntu", "rhel", "alt", "astra", "redos", "alpine"}
+    assert all(s.manager in ("dpkg", "rpm", "apk") for s in FAMILIES.values())
     json.dumps({k: v.default_url for k, v in FAMILIES.items()})

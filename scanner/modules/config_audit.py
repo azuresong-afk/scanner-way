@@ -582,6 +582,13 @@ def parse_openscap_results(data: bytes, host: str, module: str = "config_audit",
 # --- Разбор Lynis (report.dat) -------------------------------------------------
 
 _LYNIS_KIND = {"warning[]": Severity.MEDIUM, "suggestion[]": Severity.LOW}
+# Тесты Lynis про «уязвимые пакеты» (apt/yum security): это сигнал аудита
+# конфигурации (не обновляется), а не источник уязвимостей — CVE и БДУ ФСТЭК по
+# пакетам даёт auth_inventory со сверкой по бюллетеням вендора.
+_LYNIS_PACKAGE_TESTS = frozenset({"PKGS-7392"})
+_LYNIS_PACKAGE_NOTE = ("Конкретные уязвимости пакетов (CVE, БДУ ФСТЭК, версия "
+                       "исправления) — в находках «Уязвимости (учётка)»: сверка с "
+                       "бюллетенями вендора ОС")
 _FIELD_MAX = 1000
 
 
@@ -643,6 +650,9 @@ def parse_lynis_report(text: str, host: str, module: str = "config_audit",
         evidence = [f"Lynis {meta.get('lynis_version', '')}".strip()
                     + f": тест {test_id} — {kind}"]
         evidence += e["items"]
+        if test_id in _LYNIS_PACKAGE_TESTS or any(
+                "vulnerable package" in i.lower() for i in e["items"]):
+            evidence.append(_LYNIS_PACKAGE_NOTE)
         evidence.append(f"https://cisofy.com/lynis/controls/{test_id}/")
         fix = "; ".join(e["solutions"] or e["items"])
         findings.append(Finding(module=module, host=host, finding_type=FindingType.CONFIG,

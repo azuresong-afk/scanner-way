@@ -360,6 +360,12 @@ export function StartRunModal({
                 NOPASSWD) или вход под root. OpenSCAP и Lynis передаются во временный каталог и удаляются после проверки.
               </small>
             )}
+            {configAudit && !eng.modules.includes("auth_inventory") && (
+              <small className="muted">
+                По той же учётке автоматически проверяются пакеты хоста: версии сверяются с бюллетенями вендора ОС (с учётом бэкпортов) и
+                привязываются к CVE и БДУ ФСТЭК. Lynis и OpenSCAP остаются аудитом конфигураций.
+              </small>
+            )}
             <small className="muted">На хост пробуется не больше трёх учёток — сначала с самой узкой областью действия.</small>
           </fieldset>
         )}

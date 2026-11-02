@@ -57,7 +57,14 @@ CREDENTIAL_MODULES = frozenset({"auth_inventory", "win_inventory", "config_audit
 # Модули-спутники: ставятся в прогон вместе с основным. password_policy оценивает
 # парольную политику, которую собирает config_audit (ctx.host_policy_configs);
 # сам по себе в сеть не ходит и без config_audit инертен.
-COMPANION_MODULES: dict[str, tuple[str, ...]] = {"config_audit": ("password_policy",)}
+# auth_inventory едет с config_audit всегда: раз оператор дал SSH-учётку, пакеты
+# хоста сверяются с бюллетенями вендора (CVE → БДУ ФСТЭК) по той же учётке.
+# Иначе при движке «Nuclei» + аудит конфигураций уязвимости ПО на хосте
+# оставались непроверенными и единственным сигналом о пакетах был Lynis
+# (PKGS-7392, без CVE/БДУ). Lynis/OpenSCAP — источник аудита конфигураций,
+# не уязвимостей.
+COMPANION_MODULES: dict[str, tuple[str, ...]] = {
+    "config_audit": ("auth_inventory", "password_policy")}
 
 # Защита от опечатки вида 10.0.0.0/8 в запросе: столько адресов за прогон
 # с запасом покрывает «десятки–сотни хостов».
@@ -92,7 +99,8 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
             AuthInventoryOptions,
         )
         return AuthInventoryModule(AuthInventoryOptions(ssh=options_from_env()),
-                                   matcher=matcher, advisories=_advisory_store(matcher))
+                                   matcher=matcher, advisories=_advisory_store(matcher),
+                                   fetch_advisories=_advisory_fetcher(matcher))
 
     def win_inventory() -> ScanModule:
         from scanner.core.winexec import options_from_env
@@ -130,6 +138,35 @@ def _advisory_store(matcher: object | None):
         return None
     from scanner.feeds.advisories.store import SqlAdvisoryStore
     return SqlAdvisoryStore(engine)
+
+
+def _advisory_fetcher(matcher: object | None):
+    """Подгрузка бюллетеней выпусков ОС, встреченных в прогоне (см.
+    feeds.advisories.ondemand). None — выключено (ADVISORY_ON_DEMAND=0) или нет БД."""
+    from scanner.core.config import settings
+    mode = (settings.advisory_on_demand or "auto").strip().lower()
+    engine = getattr(getattr(matcher, "store", None), "engine", None)
+    if engine is None or mode in ("0", "false", "no", "off"):
+        return None
+    from pathlib import Path
+
+    from scanner.feeds.advisories.ondemand import AdvisoryFetcher
+    from scanner.feeds.advisories.store import SqlAdvisoryStore
+
+    def allow_network() -> bool:
+        if mode in ("1", "true", "yes", "on"):
+            return True
+        # auto: согласие оператора = включённое автообновление бюллетеней
+        from sqlalchemy import select
+
+        from scanner.core.db import FeedSync
+        with Session(engine) as s:
+            return bool(s.scalar(select(FeedSync.enabled)
+                                 .where(FeedSync.source == "advisories")))
+
+    directory = Path(settings.advisory_dir) if settings.advisory_dir else None
+    return AdvisoryFetcher(SqlAdvisoryStore(engine), directory=directory,
+                           urls=settings.advisory_urls(), allow_network=allow_network)
 
 
 def with_companions(names: Iterable[str], known: Iterable[str] | None = None) -> list[str]:

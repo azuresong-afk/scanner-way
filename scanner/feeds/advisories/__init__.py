@@ -10,15 +10,16 @@
 Источники — по файлу на семейство: ``debian`` (трекер безопасности),
 ``ubuntu`` (OVAL USN), ``redhat`` (OVAL v2; и для CentOS/Rocky/Alma/Oracle),
 ``alt`` (OVAL errata), ``astra`` и ``redos`` (OVAL вендора, файл/адрес задаёт
-оператор). Загрузка — ``sync.sync_releases``, решение — ``assess``.
+оператор), ``alpine`` (secdb). Загрузка — ``sync.sync_releases``, решение — ``assess``.
 """
 from __future__ import annotations
 
-from scanner.feeds.advisories import alt, astra, debian, redhat, redos, ubuntu
+from scanner.feeds.advisories import alpine, alt, astra, debian, redhat, redos, ubuntu
 from scanner.feeds.advisories.base import Advisory, FamilySpec
 
 FAMILIES: dict[str, FamilySpec] = {s.family: s for s in (
-    debian.SPEC, ubuntu.SPEC, redhat.SPEC, alt.SPEC, astra.SPEC, redos.SPEC)}
+    debian.SPEC, ubuntu.SPEC, redhat.SPEC, alt.SPEC, astra.SPEC, redos.SPEC,
+    alpine.SPEC)}
 
 # семейство хоста (scanner.core.osfamily) -> данные какого вендора
 _BY_HOST = {hf: spec for spec in FAMILIES.values() for hf in spec.host_families}

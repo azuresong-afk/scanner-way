@@ -254,8 +254,11 @@ def test_password_policy_inert_without_config_audit(world, sqlite_factory):
 
 def test_with_companions_respects_registry():
     from scanner.core.orchestrator import with_companions
+    # Учётка аудита конфигураций сразу проверяет и пакеты по бюллетеням вендора.
     assert with_companions(["discovery", "config_audit"]) == [
-        "discovery", "config_audit", "password_policy"]
+        "discovery", "config_audit", "auth_inventory", "password_policy"]
     assert with_companions(["config_audit"], known={"config_audit"}) == ["config_audit"]
     assert with_companions(["config_audit", "password_policy"]) == [
-        "config_audit", "password_policy"]
+        "config_audit", "password_policy", "auth_inventory"]
+    assert with_companions(["auth_inventory", "config_audit"]) == [
+        "auth_inventory", "config_audit", "password_policy"]

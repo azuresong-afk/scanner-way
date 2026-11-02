@@ -271,9 +271,11 @@ def load_kev(ctx: FeedContext) -> FeedResult:
     return FeedResult(count=n, message=f"Загружено записей KEV: {n}", fingerprint=fingerprint)
 # ---------- Бюллетени дистрибутивов (учёт бэкпортов, R2) ----------
 def load_advisories(ctx: FeedContext) -> FeedResult:
-    """Трекер Debian и OVAL вендоров для выпусков из ADVISORY_RELEASES.
-    Ошибка одного выпуска не мешает остальным; FeedError — если не загрузился
-    ни один."""
+    """Трекер Debian, OVAL и secdb вендоров. Выпуски: ADVISORY_RELEASES, плюс уже
+    загруженные (в том числе подгруженные прогоном для встреченных на хостах ОС),
+    плюс файлы в каталоге бюллетеней. Ошибка одного выпуска не мешает остальным;
+    FeedError — если не загрузился ни один."""
+    from scanner.feeds.advisories.ondemand import wanted_releases
     from scanner.feeds.advisories.store import SqlAdvisoryStore
     from scanner.feeds.advisories.sync import (
         AdvisoryError,
@@ -282,13 +284,16 @@ def load_advisories(ctx: FeedContext) -> FeedResult:
     )
 
     try:
-        targets = parse_targets(settings.advisory_releases)
+        configured = parse_targets(settings.advisory_releases)
     except AdvisoryError as e:
         raise FeedError(f"ADVISORY_RELEASES: {e}") from e
-    if not targets:
-        raise FeedError("не заданы выпуски для загрузки (ADVISORY_RELEASES)")
     directory = Path(settings.advisory_dir) if settings.advisory_dir else None
-    results, fingerprint = sync_releases(SqlAdvisoryStore(ctx.engine), targets,
+    store = SqlAdvisoryStore(ctx.engine)
+    targets = wanted_releases(configured, store, directory)
+    if not targets:
+        raise FeedError("не заданы выпуски для загрузки (ADVISORY_RELEASES), и прогоны "
+                        "ещё не встречали хостов с поддерживаемыми ОС")
+    results, fingerprint = sync_releases(store, targets,
                                          directory=directory, urls=settings.advisory_urls())
     ok = [r for r in results if r.error is None]
     failed = [r for r in results if r.error is not None]
@@ -316,6 +321,7 @@ SOURCES: dict[str, FeedSource] = {s.id: s for s in (
                time_of_day="02:30", description="Каталог CISA KEV (JSON) → таблица kev"),
     FeedSource("advisories", "Бюллетени дистрибутивов", load_advisories, kind="weekly",
                time_of_day="04:30", weekdays=(0,),
-               description="Трекер Debian, OVAL Ubuntu/RHEL/ALT (+ файлы Astra, РЕД ОС) — "
-                           "учёт бэкпортов"),
+               description="Трекер Debian, OVAL Ubuntu/RHEL/ALT, secdb Alpine (+ файлы "
+                           "Astra, РЕД ОС) — учёт бэкпортов; выпуски ОС берутся и с "
+                           "просканированных хостов"),
 )}
