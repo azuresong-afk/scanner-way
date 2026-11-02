@@ -25,7 +25,6 @@ from scanner.feeds.advisories.store import AdvisoryStore
 from scanner.feeds.advisories.sync import (
     EXTENSIONS,
     ReleaseResult,
-    _download,
     local_file,
     sync_releases,
 )
@@ -74,7 +73,7 @@ class AdvisoryFetcher:
     # Согласие на выход в интернет проверяется в момент прогона: оператор мог
     # включить/выключить автообновление после старта API.
     allow_network: Callable[[], bool] = lambda: False
-    fetch: Callable[[str, Path], None] = _download
+    fetch: Callable[[str, Path], None] | None = None   # None — sync._download
 
     def __call__(self, targets: Iterable[tuple[str, str]]) -> list[ReleaseResult]:
         targets = [t for t in dict.fromkeys(targets) if t[0] in FAMILIES]

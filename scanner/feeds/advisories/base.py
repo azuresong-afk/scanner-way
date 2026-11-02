@@ -43,6 +43,10 @@ class FamilySpec:
     # VERSION_ID / VERSION_CODENAME из os-release -> выпуск в данных вендора.
     release_of: Callable[[str | None, str | None], str | None] = lambda v, c: v
     note: str = ""
+    # Каталог вендора вместо прямого адреса: (выпуск, чтение адреса -> байты) ->
+    # адреса файлов выпуска. Используется, когда default_url — оглавление
+    # (Astra Linux публикует OVAL каталогом в Artifactory).
+    discover: Callable[[str, Callable[[str], bytes]], list[str]] | None = None
 
 
 _ID_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")
