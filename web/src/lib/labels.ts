@@ -33,10 +33,14 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
   done: "Завершён",
   failed: "Ошибка",
   stopped: "Остановлен",
+  interrupted: "Прерван",
 };
 
-export const FINISHED: RunStatus[] = ["done", "failed", "stopped"];
+export const FINISHED: RunStatus[] = ["done", "failed", "stopped", "interrupted"];
 export const isFinished = (s: RunStatus) => FINISHED.includes(s);
+/** Прогоны, которые можно повторить кнопкой «Повторить». */
+export const RETRYABLE: RunStatus[] = ["failed", "interrupted", "stopped"];
+export const isRetryable = (s: RunStatus) => RETRYABLE.includes(s);
 
 export interface ModuleInfo {
   id: string;

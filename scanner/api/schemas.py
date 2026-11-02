@@ -225,6 +225,10 @@ class RunOut(_Orm):
     started_at: datetime | None
     finished_at: datetime | None
     created_at: datetime | None
+    # Причина ошибки или прерывания — для пользователя (миграция 0017).
+    error_message: str | None = None
+    # Прогон, который повторяет этот («Повторить»).
+    retry_of: int | None = None
 
     @model_validator(mode="after")
     def _default_name(self) -> RunOut:

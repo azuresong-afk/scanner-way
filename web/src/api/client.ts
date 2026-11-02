@@ -258,6 +258,7 @@ export const api = {
   checkReachability: (engagementId: number, data: ReachabilityIn) =>
     json<ReachabilityOut>(`/engagements/${engagementId}/reachability`, { method: "POST", ...body(data) }),
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),
+  retryRun: (id: number) => json<RunCreated>(`/runs/${id}/retry`, { method: "POST" }),
   findings: (runId: number) => json<FindingOut[]>(`/runs/${runId}/findings`),
   /** Отметить находку хоста как ложное срабатывание (действует и в следующих прогонах). */
   markFalsePositive: (findingId: number, reason: string | null) =>

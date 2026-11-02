@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { CheckCircle2, Square } from "lucide-react";
+import { CheckCircle2, RotateCcw, Square } from "lucide-react";
 import { api } from "../api/client";
 import type { FindingOut, RunCreated } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -12,7 +12,7 @@ import { ReportMenu } from "../components/ReportMenu";
 import { ServicesTable } from "../components/ServicesTable";
 import { Empty, ErrorAlert, Kpi, Loading, RunStatusPill } from "../components/ui";
 import { fmtDateFull, fmtDuration } from "../lib/format";
-import { isFinished, MODULE_LABEL, RATE_PROFILES, runName } from "../lib/labels";
+import { isFinished, isRetryable, MODULE_LABEL, RATE_PROFILES, runName } from "../lib/labels";
 import { byHost, isFalsePositive, isIssue, replaceFinding, summarize } from "../lib/stats";
 import { useAsync, useInterval } from "../lib/useAsync";
 
@@ -57,6 +57,16 @@ export function RunDetailPage() {
     }
   };
 
+  const retry = async () => {
+    setStopError(null);
+    try {
+      const created = await api.retryRun(id);
+      navigate(`/runs/${created.id}`, { state: { created } });
+    } catch (e) {
+      setStopError((e as Error).message);
+    }
+  };
+
   return (
     <>
       <div className="page-head">
@@ -69,6 +79,12 @@ export function RunDetailPage() {
                 · <Link to="/schedules">по расписанию</Link>
               </>
             )}
+            {r.retry_of != null && (
+              <>
+                {" "}
+                · повтор <Link to={`/runs/${r.retry_of}`}>прогона №{r.retry_of}</Link>
+              </>
+            )}
           </span>
           <h1 className="inline" style={{ gap: 12 }}>
             {runName(r)} <RunStatusPill status={r.status} />
@@ -78,6 +94,11 @@ export function RunDetailPage() {
           {has("run_scan") && !finished && (
             <button type="button" className="btn btn-danger" onClick={stop}>
               <Square size={14} /> Остановить
+            </button>
+          )}
+          {has("run_scan") && isRetryable(r.status) && (
+            <button type="button" className="btn" onClick={retry}>
+              <RotateCcw size={14} /> Повторить
             </button>
           )}
           {finished && has("view_report") && <ReportMenu runId={r.id} runs={engRuns.data ?? []} engagementId={r.engagement_id} />}
@@ -124,7 +145,12 @@ export function RunDetailPage() {
       )}
 
       {finished && r.status === "failed" && (
-        <ErrorAlert error="Прогон завершился с ошибкой. Подробности — в журнале аудита; сохранённые до сбоя находки показаны ниже." />
+        <ErrorAlert error={`${r.error_message ?? "Прогон завершился с ошибкой."} Подробности — в журнале аудита; сохранённые находки показаны ниже.`} />
+      )}
+      {r.status === "interrupted" && (
+        <div className="alert alert-warn" role="alert">
+          <span>{r.error_message ?? "Прогон прерван: служба сканера остановилась во время выполнения."}</span>
+        </div>
       )}
 
       {finished && (findings.loading && !findings.data ? <Loading /> : findings.error ? <ErrorAlert error={findings.error} onRetry={findings.reload} /> : summary && (

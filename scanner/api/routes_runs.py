@@ -25,6 +25,7 @@ from scanner.core import repository as repo
 from scanner.core.audit import AuditSink
 from scanner.core.db import ScanRun
 from scanner.core.orchestrator import (
+    RETRYABLE,
     VULN_ENGINES,
     RunService,
     TargetPlan,
@@ -34,7 +35,7 @@ from scanner.core.ratelimit import PROFILES
 
 router = APIRouter(tags=["runs"])
 
-FINISHED = {"done", "failed", "stopped"}
+FINISHED = repo.FINISHED_RUN_STATUSES
 
 
 def _runs(request: Request) -> RunService:
@@ -190,6 +191,36 @@ def stop_run(run_id: int, user: Annotated[Principal, Depends(require(Perm.RUN_SC
     runs.request_stop(run_id, actor=user.subject)
     session.expire_all()
     return _get_run(session, run_id)
+
+
+@router.post("/runs/{run_id}/retry", response_model=RunCreated, status_code=202)
+def retry_run(run_id: int, request: Request,
+              user: Annotated[Principal, Depends(require(Perm.RUN_SCAN))],
+              session: SessionDep, audit: AuditDep,
+              runs: Annotated[RunService, Depends(_runs)]) -> RunCreated:
+    """«Повторить»: новый прогон с параметрами прогона с ошибкой, прерванного или
+    остановленного. Права, учётки и allowlist проверяются заново, как при
+    обычном запуске; исходный прогон и его результаты не меняются."""
+    run = _get_run(session, run_id)
+    if run.status not in RETRYABLE:
+        raise HTTPException(409, "повторить можно только прогон с ошибкой, прерванный "
+                                 f"или остановленный (сейчас: {run.status})")
+    modules = list(run.modules)
+    check_run_options(run.engagement_id, modules=modules, rate_profile=run.rate_profile,
+                      credential_ids=list(run.credential_ids or []),
+                      cred_set_ids=list(run.cred_set_ids or []),
+                      user=user, request=request, audit=audit, runs=runs)
+    plan, denied = check_targets(run.engagement_id, list(run.targets or []), user=user,
+                                 audit=audit, runs=runs)
+    session.commit()
+    try:
+        new_id = runs.retry(run_id, actor=user.subject, started_by=user.id)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    session.expire_all()
+    new = _get_run(session, new_id)
+    return RunCreated(**RunOut.model_validate(new).model_dump(),
+                      accepted_targets=len(plan.allowed), denied_targets=denied)
 
 
 @router.get("/runs/{run_id}/findings", response_model=list[FindingOut])

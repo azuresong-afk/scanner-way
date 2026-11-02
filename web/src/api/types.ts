@@ -2,7 +2,7 @@
 
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 export type FindingStatus = "open" | "fixed" | "new" | "regression";
-export type RunStatus = "pending" | "running" | "done" | "failed" | "stopped";
+export type RunStatus = "pending" | "running" | "done" | "failed" | "stopped" | "interrupted";
 export type ReportFormat = "html" | "pdf" | "docx" | "json";
 /** full — полный отчёт; brief — без плана устранения, по находкам только ссылки на устранение. */
 export type ReportVariant = "full" | "brief";
@@ -255,6 +255,10 @@ export interface RunOut {
   started_at: string | null;
   finished_at: string | null;
   created_at: string | null;
+  /** Причина ошибки или прерывания — для пользователя. */
+  error_message?: string | null;
+  /** Прогон, который повторяет этот («Повторить»). */
+  retry_of?: number | null;
 }
 
 export interface RunCreated extends RunOut {

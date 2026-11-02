@@ -129,6 +129,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         bootstrap(session_factory, settings, audit)
         seed_feed_sync(session_factory, timezone=settings.timezone,
                        sources=app.state.feed_scheduler.sources)
+        app.state.runs.start()        # прогоны, оставшиеся от прошлого процесса
         app.state.scheduler.start()
         app.state.feed_scheduler.start()
         app.state.notifier.start()
@@ -136,6 +137,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         app.state.scheduler.stop()
         app.state.feed_scheduler.stop()
         app.state.notifier.stop()
+        app.state.runs.stop()
         if own_executor:
             executor.shutdown(wait=False, cancel_futures=False)
 
@@ -153,7 +155,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         tick_seconds=settings.notify_tick_seconds)
     app.state.runs = RunService(session_factory, audit, registry=registry,
                                 executor=executor, vault=vault,
-                                notifier=app.state.notifier.notify_run_finished)
+                                notifier=app.state.notifier.notify_run_finished,
+                                heartbeat_seconds=settings.run_heartbeat_seconds,
+                                stale_seconds=settings.run_stale_seconds)
     app.state.scheduler = Scheduler(session_factory, app.state.runs, audit,
                                     tick_seconds=settings.scheduler_tick_seconds)
     app.state.feed_scheduler = FeedScheduler(

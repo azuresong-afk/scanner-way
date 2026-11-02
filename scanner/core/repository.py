@@ -11,7 +11,7 @@ from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from scanner.core.allowlist import AllowlistGate
@@ -62,7 +62,11 @@ from scanner.core.osfamily import GENERIC_LINUX, SOURCE_RANK, family_label, is_d
 from scanner.core.osfamily import UNKNOWN as UNKNOWN_OS
 from scanner.core.osfamily import classify as classify_os
 
-RUN_STATUSES = {"pending", "running", "done", "failed", "stopped"}
+RUN_STATUSES = {"pending", "running", "done", "failed", "stopped", "interrupted"}
+# Итоговые статусы: прогон больше не исполняется. interrupted — процесс,
+# который вёл прогон, остановился посреди работы (миграция 0017).
+FINISHED_RUN_STATUSES = frozenset({"done", "failed", "stopped", "interrupted"})
+ACTIVE_RUN_STATUSES = frozenset({"pending", "running"})
 
 
 # ========== Engagement + allowlist ==========
@@ -314,18 +318,24 @@ def create_scan_run(session: Session, *, engagement_id: int, modules: list[str],
                     rate_profile: str = "gentle", started_by: int | None = None,
                     credential_ids: Iterable[int] = (),
                     cred_set_ids: Iterable[int] = (), name: str | None = None,
-                    targets: Iterable[str] = (), schedule_id: int | None = None) -> int:
+                    targets: Iterable[str] = (), schedule_id: int | None = None,
+                    retry_of: int | None = None, worker_id: str | None = None) -> int:
     run = ScanRun(engagement_id=engagement_id, modules=list(modules),
                   rate_profile=rate_profile, started_by=started_by, status="pending",
                   credential_ids=[int(i) for i in credential_ids],
                   cred_set_ids=[int(i) for i in cred_set_ids], name=name,
-                  targets=list(targets), schedule_id=schedule_id)
+                  targets=list(targets), schedule_id=schedule_id, retry_of=retry_of,
+                  worker_id=worker_id,
+                  heartbeat_at=None if worker_id is None else datetime.now(UTC))
     session.add(run)
     session.flush()
     return run.id
 
 
-def set_scan_run_status(session: Session, scan_run_id: int, status: str) -> None:
+def set_scan_run_status(session: Session, scan_run_id: int, status: str,
+                        error_message: str | None = None) -> None:
+    """Статус прогона; error_message — причина ошибки/прерывания для
+    пользователя (сохраняется, только если передана)."""
     if status not in RUN_STATUSES:
         raise ValueError(f"unknown scan run status: {status}")
     run = session.get(ScanRun, scan_run_id)
@@ -335,8 +345,62 @@ def set_scan_run_status(session: Session, scan_run_id: int, status: str) -> None
     run.status = status
     if status == "running" and run.started_at is None:
         run.started_at = now
-    if status in {"done", "failed", "stopped"}:
+    if status in FINISHED_RUN_STATUSES:
         run.finished_at = now
+    if error_message is not None:
+        run.error_message = error_message[:2000]
+    session.flush()
+
+
+def claim_scan_run(session: Session, scan_run_id: int, worker_id: str) -> bool:
+    """Атомарно pending -> running за процессом worker_id.
+
+    Условный UPDATE: если прогон уже взял другой исполнитель (или его
+    остановили), строка не меняется и возвращается False — так один прогон не
+    исполняется дважды, даже если его поставили в очередь повторно."""
+    now = datetime.now(UTC)
+    res = session.execute(
+        update(ScanRun)
+        .where(ScanRun.id == scan_run_id, ScanRun.status == "pending")
+        .values(status="running", worker_id=worker_id, heartbeat_at=now,
+                started_at=func.coalesce(ScanRun.started_at, now))
+        .execution_options(synchronize_session=False))
+    session.flush()
+    return res.rowcount == 1
+
+
+def touch_scan_runs(session: Session, run_ids: Iterable[int], worker_id: str) -> int:
+    """Отметка «жив» для активных прогонов, которые ведёт этот процесс."""
+    ids = list(run_ids)
+    if not ids:
+        return 0
+    res = session.execute(
+        update(ScanRun)
+        .where(ScanRun.id.in_(ids), ScanRun.worker_id == worker_id,
+               ScanRun.status.in_(ACTIVE_RUN_STATUSES))
+        .values(heartbeat_at=datetime.now(UTC))
+        .execution_options(synchronize_session=False))
+    return res.rowcount
+
+
+def active_scan_runs(session: Session) -> list[ScanRun]:
+    """Прогоны pending/running — кандидаты для сторожа осиротевших прогонов."""
+    return list(session.scalars(select(ScanRun)
+                                .where(ScanRun.status.in_(ACTIVE_RUN_STATUSES))
+                                .order_by(ScanRun.id)))
+
+
+def clear_scan_run_results(session: Session, scan_run_id: int) -> None:
+    """Удалить результаты прогона перед их записью.
+
+    Результаты пишутся одной транзакцией вместе с этой очисткой, поэтому
+    повторное исполнение того же прогона заменяет его строки, а не дублирует.
+    Сервисы и пакеты удаляются каскадом вместе с host_results."""
+    session.execute(delete(FindingRow).where(FindingRow.scan_run_id == scan_run_id))
+    session.execute(delete(HostPackageRow).where(HostPackageRow.scan_run_id == scan_run_id))
+    host_ids = select(HostResult.id).where(HostResult.scan_run_id == scan_run_id)
+    session.execute(delete(ServiceResult).where(ServiceResult.host_id.in_(host_ids)))
+    session.execute(delete(HostResult).where(HostResult.scan_run_id == scan_run_id))
     session.flush()
 
 

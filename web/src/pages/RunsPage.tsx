@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Play, Radar, Square } from "lucide-react";
+import { Play, Radar, RotateCcw, Square } from "lucide-react";
 import { api } from "../api/client";
 import type { RunStatus } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -8,10 +8,10 @@ import { useEngagement } from "../auth/EngagementContext";
 import { StartRunModal } from "../components/StartRunModal";
 import { Empty, ErrorAlert, Loading, RunName, RunStatusPill } from "../components/ui";
 import { fmtDate, fmtDuration } from "../lib/format";
-import { isFinished, RATE_PROFILES, RUN_STATUS_LABEL } from "../lib/labels";
+import { isFinished, isRetryable, RATE_PROFILES, RUN_STATUS_LABEL } from "../lib/labels";
 import { useAsync, useInterval } from "../lib/useAsync";
 
-const FILTERS: (RunStatus | "all")[] = ["all", "running", "done", "stopped", "failed"];
+const FILTERS: (RunStatus | "all")[] = ["all", "running", "done", "stopped", "interrupted", "failed"];
 
 export function RunsPage() {
   const { has } = useAuth();
@@ -40,6 +40,16 @@ export function RunsPage() {
     try {
       await api.stopRun(id);
       await runs.reload();
+    } catch (e) {
+      setStopError((e as Error).message);
+    }
+  };
+
+  const retry = async (id: number) => {
+    setStopError(null);
+    try {
+      const created = await api.retryRun(id);
+      navigate(`/runs/${created.id}`, { state: { created } });
     } catch (e) {
       setStopError((e as Error).message);
     }
@@ -103,7 +113,7 @@ export function RunsPage() {
                       <RunName run={r} />
                     </td>
                     <td className="muted">{RATE_PROFILES.find((p) => p.id === r.rate_profile)?.label ?? r.rate_profile}</td>
-                    <td>
+                    <td title={r.error_message ?? undefined}>
                       <RunStatusPill status={r.status} />
                     </td>
                     <td className="muted nowrap">{fmtDate(r.started_at ?? r.created_at)}</td>
@@ -120,6 +130,18 @@ export function RunsPage() {
                           }}
                         >
                           <Square size={12} /> Остановить
+                        </button>
+                      )}
+                      {has("run_scan") && isRetryable(r.status) && (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void retry(r.id);
+                          }}
+                        >
+                          <RotateCcw size={12} /> Повторить
                         </button>
                       )}
                     </td>

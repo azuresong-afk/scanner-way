@@ -21,7 +21,7 @@ from scanner.core import repository as repo
 
 router = APIRouter(tags=["compliance"])
 
-FINISHED = {"done", "failed", "stopped"}
+FINISHED = repo.FINISHED_RUN_STATUSES
 
 
 def _profile(profile_id: str) -> Profile:
