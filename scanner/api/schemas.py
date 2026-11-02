@@ -83,17 +83,49 @@ class AllowlistIn(BaseModel):
     note: str | None = Field(default=None, max_length=512)
 
 
+class AllowlistBulkIn(BaseModel):
+    """Несколько целей сразу: адреса, подсети CIDR, диапазоны «начало-конец»."""
+    items: list[str] = Field(min_length=1, max_length=4096)
+    note: str | None = Field(default=None, max_length=512)
+
+    @field_validator("items")
+    @classmethod
+    def _items_len(cls, v: list[str]) -> list[str]:
+        if any(len(i) > 128 for i in v):
+            raise ValueError("слишком длинная запись цели")
+        return v
+
+
 class AllowlistOut(_Orm):
     id: int
     cidr: str
     note: str | None
     added_by: int | None
     added_at: datetime | None
+    # Диапазон «начало-конец», частью которого является подсеть (иначе null).
+    range_spec: str | None = None
 
     @field_validator("cidr", mode="before")
     @classmethod
     def _cidr_str(cls, v: object) -> str:
         return str(v)      # psycopg отдаёт CIDR как ipaddress.IPv4Network
+
+
+class AllowlistSkippedOut(BaseModel):
+    item: str
+    reason: str                 # duplicate — уже целиком в allowlist
+    existing_cidr: str | None = None
+
+
+class AllowlistPartialOut(BaseModel):
+    item: str
+    covered_parts: int          # сколько подсетей диапазона уже было в allowlist
+
+
+class AllowlistBulkOut(BaseModel):
+    added: list[AllowlistOut]
+    skipped: list[AllowlistSkippedOut]
+    partial: list[AllowlistPartialOut]
 
 
 # ---- учётные записи активов ----

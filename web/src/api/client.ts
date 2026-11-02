@@ -1,6 +1,8 @@
 // Тонкий клиент REST API сканера: Bearer-токен, разбор ошибок FastAPI.
 
 import type {
+  AllowlistBulkIn,
+  AllowlistBulkOut,
   AllowlistIn,
   ReportSections,
   AssetBulkIn,
@@ -197,8 +199,10 @@ export const api = {
   allowlist: (engagementId: number) => json<AllowlistOut[]>(`/engagements/${engagementId}/allowlist`),
   addAllowlist: (engagementId: number, data: AllowlistIn) =>
     json<AllowlistOut>(`/engagements/${engagementId}/allowlist`, { method: "POST", ...body(data) }),
-  removeAllowlist: (engagementId: number, entryId: number) =>
-    request(`/engagements/${engagementId}/allowlist/${entryId}`, { method: "DELETE" }).then(() => undefined),
+  addAllowlistBulk: (engagementId: number, data: AllowlistBulkIn) =>
+    json<AllowlistBulkOut>(`/engagements/${engagementId}/allowlist/bulk`, { method: "POST", ...body(data) }),
+  removeAllowlist: (engagementId: number, entryId: number, wholeRange = false) =>
+    request(`/engagements/${engagementId}/allowlist/${entryId}${wholeRange ? "?whole_range=true" : ""}`, { method: "DELETE" }).then(() => undefined),
 
   credentials: (engagementId: number) => json<CredentialOut[]>(`/engagements/${engagementId}/credentials`),
   createCredential: (engagementId: number, data: CredentialIn) =>

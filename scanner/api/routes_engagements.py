@@ -10,14 +10,19 @@ from sqlalchemy.orm import Session
 from scanner.api.deps import AuditDep, Principal, SessionDep, require
 from scanner.api.rbac import Perm
 from scanner.api.schemas import (
+    AllowlistBulkIn,
+    AllowlistBulkOut,
     AllowlistIn,
     AllowlistOut,
+    AllowlistPartialOut,
+    AllowlistSkippedOut,
     EngagementIn,
     EngagementOut,
     EngagementUpdate,
 )
 from scanner.core import repository as repo
 from scanner.core.db import AllowlistEntry, Engagement, ScanRun
+from scanner.core.targetspec import parse_target
 
 router = APIRouter(prefix="/engagements", tags=["engagements"])
 
@@ -132,18 +137,65 @@ def add_allowlist(engagement_id: int, body: AllowlistIn,
     return entry
 
 
+@router.post("/{engagement_id}/allowlist/bulk", response_model=AllowlistBulkOut, status_code=201)
+def add_allowlist_bulk(engagement_id: int, body: AllowlistBulkIn,
+                       user: Annotated[Principal, Depends(require(Perm.MANAGE_ALLOWLIST))],
+                       session: SessionDep,
+                       audit: AuditDep) -> AllowlistBulkOut:
+    """Добавить сразу несколько целей: адреса, подсети, диапазоны «начало-конец».
+
+    Всё или ничего по формату: хоть одна нераспознанная запись — 422 и ничего не
+    занесено. Дубли (цель уже целиком в allowlist) пропускаются и перечисляются.
+    """
+    get_engagement(session, engagement_id)
+    invalid = []
+    for item in body.items:
+        try:
+            if item.strip():
+                parse_target(item)
+        except ValueError:
+            invalid.append(item.strip())
+    if invalid:
+        raise HTTPException(422, {
+            "message": "Не IP-адрес, подсеть или диапазон: " + ", ".join(invalid[:10])
+                       + ("…" if len(invalid) > 10 else ""),
+            "code": "allowlist_invalid", "invalid": invalid[:100]})
+    res = repo.add_allowlist_specs(session, engagement_id=engagement_id, specs=body.items,
+                                   note=body.note, added_by=user.id)
+    session.commit()
+    added = [session.get(AllowlistEntry, i) for i in res.added_ids]
+    if added:
+        audit.record(subject=user.subject, action="allowlist_add",
+                     target=f"engagement:{engagement_id}", result="ok",
+                     details={"entry_ids": res.added_ids,
+                              "cidrs": [str(e.cidr) for e in added][:500],
+                              "ranges": sorted({e.range_spec for e in added if e.range_spec}),
+                              "skipped": len(res.skipped), "note": body.note})
+    return AllowlistBulkOut(
+        added=[AllowlistOut.model_validate(e) for e in added],
+        skipped=[AllowlistSkippedOut(item=i, reason=r, existing_cidr=c) for i, r, c in res.skipped],
+        partial=[AllowlistPartialOut(item=i, covered_parts=n) for i, n in res.partial])
+
+
 @router.delete("/{engagement_id}/allowlist/{entry_id}", status_code=204)
 def delete_allowlist(engagement_id: int, entry_id: int,
                      user: Annotated[Principal, Depends(require(Perm.MANAGE_ALLOWLIST))],
                      session: SessionDep,
-                     audit: AuditDep) -> Response:
+                     audit: AuditDep,
+                     whole_range: bool = False) -> Response:
+    """Удалить запись. whole_range=true — вместе со всеми подсетями её диапазона."""
     entry = session.get(AllowlistEntry, entry_id)
     if entry is None or entry.engagement_id != engagement_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "allowlist entry not found")
     cidr = str(entry.cidr)
-    session.delete(entry)
+    range_spec = entry.range_spec
+    if whole_range and range_spec:
+        cidrs = repo.remove_allowlist_range(session, engagement_id, range_spec)
+        details = {"entry_id": entry_id, "range": range_spec, "cidrs": cidrs}
+    else:
+        session.delete(entry)
+        details = {"entry_id": entry_id, "cidr": cidr}
     session.commit()
     audit.record(subject=user.subject, action="allowlist_remove",
-                 target=f"engagement:{engagement_id}", result="ok",
-                 details={"entry_id": entry_id, "cidr": cidr})
+                 target=f"engagement:{engagement_id}", result="ok", details=details)
     return Response(status_code=204)

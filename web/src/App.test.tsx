@@ -170,6 +170,39 @@ describe("модуль cred_audit в форме запуска", () => {
     expect(within(dlg).getByText("Аудит учётных данных")).toBeInTheDocument();
   });
 
+  it("цели: выбор хостов из активов и записей allowlist, диапазоны уходят в запрос", async () => {
+    const host = (h: string) => ({ host: h, os_guess: null, os_family: "debian", os_family_label: "Debian", run_ids: [1], services_run_id: 1, packages_run_id: null, package_count: 0, services: [] });
+    const { dlg, api } = await openForm(OPERATOR, {
+      "GET /engagements/1/allowlist": [
+        { id: 1, cidr: "10.0.0.0/24", note: null, added_by: 1, added_at: null, range_spec: null },
+        { id: 2, cidr: "10.0.5.1/32", note: null, added_by: 1, added_at: null, range_spec: "10.0.5.1-10.0.5.3" },
+        { id: 3, cidr: "10.0.5.2/31", note: null, added_by: 1, added_at: null, range_spec: "10.0.5.1-10.0.5.3" },
+      ],
+      "GET /engagements/1/hosts": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.9", "10.9.9.9"].map(host),
+      "GET /engagements/1/assets": [],
+      "GET /engagements/1/asset-groups": [],
+      "GET /engagements/1/asset-tags": [],
+      "POST /engagements/1/runs": { id: 9, engagement_id: 1, modules: [], rate_profile: "gentle", credential_ids: [], cred_set_ids: [], status: "pending",
+        started_by: 1, started_at: null, finished_at: null, created_at: null, accepted_targets: 7, denied_targets: [] },
+    });
+    // запись-диапазон allowlist — одна кнопка
+    await userEvent.click(await within(dlg).findByRole("button", { name: "10.0.5.1-10.0.5.3" }));
+    await userEvent.click(within(dlg).getByRole("button", { name: /Выбрать хосты из активов/ }));
+    const picker = await screen.findByRole("dialog", { name: "Цели прогона из активов" });
+    expect(await within(picker).findByRole("checkbox", { name: "Выбрать 10.9.9.9" })).toBeDisabled();
+    await userEvent.click(within(picker).getByRole("button", { name: /Выбрать все \(4\)/ }));
+    await userEvent.click(within(picker).getByRole("button", { name: "Добавить в цели (4)" }));
+    const form = await screen.findByRole("dialog", { name: "Новый прогон" });
+    const box = within(form).getByRole("textbox", { name: /Цели/ });
+    expect(box).toHaveValue("10.0.5.1-10.0.5.3\n10.0.0.1-10.0.0.3\n10.0.0.9");
+    expect(within(form).getByText(/3 записей · до 7 адресов/)).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("checkbox", { name: /Подтверждаю/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Запустить" }));
+    await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/runs" && c.method === "POST")).toBe(true));
+    const sent = JSON.parse(String(api.calls.find((c) => c.path === "/engagements/1/runs" && c.method === "POST")!.init!.body));
+    expect(sent.targets).toEqual(["10.0.5.1-10.0.5.3", "10.0.0.1-10.0.0.3", "10.0.0.9"]);
+  });
+
   it("запуск требует подтверждения объёма работ", async () => {
     const { dlg } = await openForm(OPERATOR);
     await userEvent.click(within(dlg).getByRole("button", { name: /Подставить весь allowlist/ }));
@@ -393,6 +426,44 @@ it("повторно занесённая цель не дублируется �
   expect(row).toHaveClass("selected");
   expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
   expect(screen.getAllByRole("row")).toHaveLength(2); // заголовок + одна запись
+});
+
+it("allowlist: диапазоны и несколько целей добавляются одним действием, диапазон — одна строка", async () => {
+  setToken("t");
+  let list: unknown[] = [{ id: 1, cidr: "10.0.0.0/24", note: null, added_by: 1, added_at: null, range_spec: null }];
+  const { calls, fn } = mockApi({
+    "GET /me": me(["admin"], ADMIN),
+    "GET /engagements": [ENG],
+    "GET /engagements/1": ENG,
+    "GET /engagements/1/runs": [],
+    "GET /engagements/1/allowlist": () => list,
+    "POST /engagements/1/allowlist/bulk": () => {
+      const added = [
+        { id: 2, cidr: "10.0.5.1/32", note: "ДМЗ-2", added_by: 1, added_at: null, range_spec: "10.0.5.1-10.0.5.3" },
+        { id: 3, cidr: "10.0.5.2/31", note: "ДМЗ-2", added_by: 1, added_at: null, range_spec: "10.0.5.1-10.0.5.3" },
+      ];
+      list = [...list, ...added];
+      return new Response(JSON.stringify({ added, skipped: [{ item: "10.0.0.7/32", reason: "duplicate", existing_cidr: "10.0.0.0/24" }], partial: [] }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+    "DELETE /engagements/1/allowlist/2": () => new Response(null, { status: 204 }),
+  });
+  renderApp("/engagements/1");
+  await userEvent.type(await screen.findByPlaceholderText("10.0.0.0/24"), "10.0.5.1 - 3, 10.0.0.7");
+  await userEvent.type(screen.getByPlaceholderText(/ДМЗ/), "ДМЗ-2");
+  await userEvent.click(screen.getByRole("button", { name: /^Добавить$/ }));
+  expect(await screen.findByText(/Добавлено записей: 1; уже в allowlist: 10\.0\.0\.7\/32 \(входит в 10\.0\.0\.0\/24\)/)).toBeInTheDocument();
+  const post = calls.find((c) => c.method === "POST")!;
+  expect(JSON.parse(String(post.init!.body))).toEqual({ items: ["10.0.5.1-3", "10.0.0.7"], note: "ДМЗ-2" });
+  expect(await screen.findByText("10.0.5.1-10.0.5.3")).toBeInTheDocument();
+  expect(screen.getByText(/диапазон · 3 адресов/)).toBeInTheDocument();
+  expect(screen.getAllByRole("row")).toHaveLength(3); // заголовок + /24 + диапазон одной строкой
+  await userEvent.click(screen.getByRole("button", { name: "Удалить 10.0.5.1-10.0.5.3" }));
+  await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.path === "/engagements/1/allowlist/2")).toBe(true));
+  // диапазон удаляется целиком
+  expect(fn.mock.calls.map(([u]) => String(u)).find((u) => u.includes("/allowlist/2"))).toMatch(/whole_range=true$/);
 });
 
 describe("проверка доступности хоста на странице договора", () => {

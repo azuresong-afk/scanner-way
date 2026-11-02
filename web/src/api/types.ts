@@ -71,6 +71,22 @@ export interface AllowlistOut {
   note: string | null;
   added_by: number | null;
   added_at: string | null;
+  /** Диапазон «начало-конец», частью которого является подсеть; null — обычная запись. */
+  range_spec?: string | null;
+}
+
+/** Несколько целей сразу: адреса, подсети CIDR, диапазоны «начало-конец». */
+export interface AllowlistBulkIn {
+  items: string[];
+  note?: string | null;
+}
+
+export interface AllowlistBulkOut {
+  added: AllowlistOut[];
+  /** Уже целиком в allowlist — не добавлены. */
+  skipped: { item: string; reason: string; existing_cidr: string | null }[];
+  /** Диапазоны, часть подсетей которых уже была в allowlist. */
+  partial: { item: string; covered_parts: number }[];
 }
 
 /** Движок поиска уязвимостей: сетевые проверки Nuclei и/или пакеты по учётной записи. */

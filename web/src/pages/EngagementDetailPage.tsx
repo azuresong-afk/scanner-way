@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { ListChecks, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { ApiError, api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
@@ -11,9 +11,11 @@ import { StartRunModal } from "../components/StartRunModal";
 import { Empty, ErrorAlert, Loading, Modal, RunName, RunStatusPill } from "../components/ui";
 import { fmtDate, fmtDuration } from "../lib/format";
 import { RATE_PROFILES } from "../lib/labels";
-import { isIpOrCidr } from "../lib/targets";
+import { compactAddresses, isIpOrCidr, parseTargets, specSize } from "../lib/targets";
+import type { AllowlistBulkOut, AllowlistOut } from "../api/types";
 import { useAsync } from "../lib/useAsync";
 import { EngagementForm } from "../components/EngagementForm";
+import { HostPicker } from "../components/HostPicker";
 
 export function EngagementDetailPage() {
   const id = Number(useParams().id);
@@ -31,6 +33,9 @@ export function EngagementDetailPage() {
   const [allowError, setAllowError] = useState<string | null>(null);
   const [dupId, setDupId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [allowInfo, setAllowInfo] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [pickError, setPickError] = useState<string | null>(null);
 
   if (eng.loading && !eng.data) return <Loading />;
   if (eng.error) return <ErrorAlert error={eng.error} onRetry={eng.reload} />;
@@ -38,18 +43,42 @@ export function EngagementDetailPage() {
   const canAllow = has("manage_allowlist");
   const runList = [...(runs.data ?? [])].sort((a, b) => b.id - a.id);
 
+  /** Итог массового добавления — одной строкой; дубль подсвечивает покрывающую запись. */
+  const applyBulk = (res: AllowlistBulkOut) => {
+    const parts: string[] = [];
+    if (res.added.length) {
+      const items = new Set(res.added.map((a) => a.range_spec ?? a.cidr));
+      parts.push(`Добавлено записей: ${items.size}`);
+    }
+    if (res.skipped.length) {
+      parts.push(`уже в allowlist: ${res.skipped.map((x) => (x.existing_cidr && x.existing_cidr !== x.item ? `${x.item} (входит в ${x.existing_cidr})` : x.item)).slice(0, 5).join(", ")}${res.skipped.length > 5 ? "…" : ""}`);
+    }
+    if (res.partial.length) parts.push(`частично уже были: ${res.partial.map((x) => x.item).join(", ")}`);
+    setAllowInfo(parts.join("; ") || null);
+    const first = res.skipped.find((x) => x.existing_cidr);
+    const existing = first ? allow.data?.find((a) => a.cidr === first.existing_cidr) : undefined;
+    setDupId(existing?.id ?? null);
+  };
+
   const add = async (ev: FormEvent) => {
     ev.preventDefault();
-    const value = cidr.trim();
-    if (!isIpOrCidr(value)) {
-      setAllowError("Укажите IP-адрес или подсеть в нотации CIDR, например 10.0.0.0/24");
+    const { targets: items, invalid } = parseTargets(cidr);
+    if (invalid.length || items.length === 0) {
+      setAllowError(
+        `Не IP-адрес, подсеть или диапазон: ${invalid.slice(0, 5).join(", ")}. Примеры: 10.0.0.5, 10.0.0.0/24, 10.0.0.1-10.0.0.50 или 10.0.0.1-50`,
+      );
       return;
     }
     setBusy(true);
     setAllowError(null);
+    setAllowInfo(null);
     setDupId(null);
     try {
-      await api.addAllowlist(id, { cidr: value, note: note.trim() || null });
+      if (items.length === 1 && isIpOrCidr(items[0])) {
+        await api.addAllowlist(id, { cidr: items[0], note: note.trim() || null });
+      } else {
+        applyBulk(await api.addAllowlistBulk(id, { items, note: note.trim() || null }));
+      }
       setCidr("");
       setNote("");
       await allow.reload();
@@ -63,11 +92,28 @@ export function EngagementDetailPage() {
     }
   };
 
-  const remove = async (entryId: number) => {
+  const addPicked = async (addrs: string[]) => {
+    setBusy(true);
+    setPickError(null);
     setAllowError(null);
     setDupId(null);
     try {
-      await api.removeAllowlist(id, entryId);
+      applyBulk(await api.addAllowlistBulk(id, { items: compactAddresses(addrs), note: note.trim() || "из «Активов»" }));
+      setPicking(false);
+      await allow.reload();
+    } catch (err) {
+      setPickError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (entryId: number, wholeRange = false) => {
+    setAllowError(null);
+    setAllowInfo(null);
+    setDupId(null);
+    try {
+      await api.removeAllowlist(id, entryId, wholeRange);
       await allow.reload();
     } catch (err) {
       setAllowError((err as Error).message);
@@ -120,8 +166,8 @@ export function EngagementDetailPage() {
           </div>
           {canAllow && (
             <form onSubmit={add} className="inline" style={{ padding: "0 20px 14px", alignItems: "flex-end" }}>
-              <label className="field" style={{ flex: "1 1 180px" }}>
-                <span>IP или подсеть</span>
+              <label className="field" style={{ flex: "1 1 240px" }}>
+                <span>IP, подсеть или диапазон</span>
                 <input
                   className="input mono"
                   value={cidr}
@@ -139,7 +185,22 @@ export function EngagementDetailPage() {
               <button type="submit" className="btn btn-primary" disabled={busy || !cidr.trim()}>
                 <Plus size={16} /> Добавить
               </button>
+              {has("view_report") && (
+                <button type="button" className="btn" onClick={() => (setPickError(null), setPicking(true))}>
+                  <ListChecks size={16} /> Из активов…
+                </button>
+              )}
+              <small className="muted" style={{ flexBasis: "100%" }}>
+                Можно несколько через запятую или с новой строки. Диапазон: 10.0.0.1-10.0.0.50 или коротко 10.0.0.1-50.
+              </small>
             </form>
+          )}
+          {allowInfo && (
+            <div style={{ padding: "0 20px 14px" }}>
+              <div className="alert alert-info" role="status">
+                {allowInfo}
+              </div>
+            </div>
           )}
           {allowError && (
             <div style={{ padding: "0 20px 14px" }}>
@@ -166,20 +227,36 @@ export function EngagementDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {allow.data!.map((a) => (
-                    <tr key={a.id} className={a.id === dupId ? "selected" : undefined} aria-current={a.id === dupId || undefined}>
-                      <td className="mono">{a.cidr}</td>
-                      <td className="muted">{a.note ?? "—"}</td>
-                      <td className="muted nowrap">{fmtDate(a.added_at)}</td>
-                      {canAllow && (
-                        <td className="right">
-                          <button type="button" className="btn btn-sm btn-ghost" aria-label={`Удалить ${a.cidr}`} onClick={() => remove(a.id)}>
-                            <Trash2 size={14} />
-                          </button>
+                  {allowRows(allow.data!).map(({ entry: a, label, parts }) => {
+                    const hit = parts.some((p) => p.id === dupId);
+                    const isRange = parts.length > 1 || !!a.range_spec;
+                    return (
+                      <tr key={a.id} className={hit ? "selected" : undefined} aria-current={hit || undefined}>
+                        <td className="mono">
+                          {label}
+                          {isRange && (
+                            <small className="faint os-name" title={parts.map((p) => p.cidr).join(", ")}>
+                              диапазон · {parts.reduce((n, p) => n + specSize(p.cidr), 0).toLocaleString("ru-RU")} адресов
+                            </small>
+                          )}
                         </td>
-                      )}
-                    </tr>
-                  ))}
+                        <td className="muted">{a.note ?? "—"}</td>
+                        <td className="muted nowrap">{fmtDate(a.added_at)}</td>
+                        {canAllow && (
+                          <td className="right">
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-ghost"
+                              aria-label={`Удалить ${label}`}
+                              onClick={() => remove(a.id, isRange)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -278,8 +355,40 @@ export function EngagementDetailPage() {
           }}
         />
       )}
+      {picking && (
+        <HostPicker
+          engagementId={id}
+          allowlist={(allow.data ?? []).map((a) => a.cidr)}
+          mode="allowlist"
+          busy={busy}
+          error={pickError}
+          onClose={() => setPicking(false)}
+          onPick={addPicked}
+        />
+      )}
     </>
   );
+}
+
+/** Строки таблицы allowlist: подсети одного диапазона — одной строкой. */
+function allowRows(entries: AllowlistOut[]): { entry: AllowlistOut; label: string; parts: AllowlistOut[] }[] {
+  const rows: { entry: AllowlistOut; label: string; parts: AllowlistOut[] }[] = [];
+  const byRange = new Map<string, { entry: AllowlistOut; label: string; parts: AllowlistOut[] }>();
+  for (const e of entries) {
+    if (e.range_spec) {
+      const row = byRange.get(e.range_spec);
+      if (row) {
+        row.parts.push(e);
+        continue;
+      }
+      const created = { entry: e, label: e.range_spec, parts: [e] };
+      byRange.set(e.range_spec, created);
+      rows.push(created);
+    } else {
+      rows.push({ entry: e, label: e.cidr, parts: [e] });
+    }
+  }
+  return rows;
 }
 
 function DeleteEngagement({ id, name, onClose, onDone }: { id: number; name: string; onClose: () => void; onDone: () => void }) {
