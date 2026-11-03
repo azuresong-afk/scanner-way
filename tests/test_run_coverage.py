@@ -214,6 +214,15 @@ def test_ssh_timeout_makes_run_partial(svc, sqlite_factory, net):
     assert found["CVE-2025-26465"].confidence == "low"
     assert "пакеты не проверены" in found["INFO:auth-inventory-unreachable"].title
     assert any(w["kind"] == "banner_only" for w in run.warnings)
+    # отчёт: пробел покрытия и предупреждение видны, находка по баннеру — не подтверждена
+    from scanner.reporting.model import build_report
+    from scanner.reporting.render import ReportRenderer
+    rep = build_report(list(found.values()), coverage=cov, run_status=run.status,
+                       warnings=list(run.warnings))
+    assert rep.coverage_gaps
+    html = ReportRenderer().render_html(rep)
+    assert "Полнота проверки" in html and "Таймаут" in html
+    assert "Не подтверждено" in html or "низкая" in html.lower()
 
 
 # ---------- предварительная проверка TCP/SSH ----------
@@ -406,3 +415,30 @@ def test_win_inventory_not_applicable_on_linux_host():
 class _NullAudit:
     def record(self, **kw):
         pass
+
+
+# ---------- отчёт: выключенный хост и неполная проверка ----------
+def test_report_for_down_host_says_not_checked(svc, sqlite_factory):
+    """Отчёт по выключенному хосту не говорит «уязвимостей не выявлено»."""
+    import io
+
+    from docx import Document
+
+    from scanner.reporting.model import build_report
+    from scanner.reporting.render import ReportRenderer
+    eid = _eng(sqlite_factory)
+    rid = _submit(svc, eid, ["10.0.0.7"], ["discovery", "vuln"])
+    with session_scope(sqlite_factory) as s:
+        cov = repo.run_coverage(s, rid)
+    rep = build_report([], coverage=cov, run_status="failed", hosts=["10.0.0.7"])
+    assert rep.summary.risk_label == "Не оценён"
+    r = ReportRenderer()
+    html = r.render_html(rep)
+    assert "Полнота проверки" in html and cv.MSG_HOST_DOWN in html
+    assert "не выявлено" not in html.lower()
+    data = r.render_json(rep).decode()
+    assert '"unreachable"' in data
+    doc = Document(io.BytesIO(r.render_docx(rep)))
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert "Полнота проверки" in text and "не выявлено" not in text.lower()
+
