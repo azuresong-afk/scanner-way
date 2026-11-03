@@ -349,6 +349,8 @@ def _vendor_line(adv: _HostAdvisories, d: Decision) -> str:
 
 # ---------- ядро ----------
 
+KERNEL_LABEL = "Ядро Linux"
+
 @dataclass(slots=True)
 class KernelReport:
     """Итог проверки работающего ядра (для сводки и аудита)."""
@@ -379,6 +381,14 @@ class KernelReport:
         if self.livepatch_modules:
             parts.append("активны модули livepatch: " + ", ".join(self.livepatch_modules[:5]))
         return "; ".join(parts)
+
+
+def _kernel_head(st: kn.KernelState) -> str:
+    """Первая строка evidence находок по ядру: по ней страница хоста и отчёт
+    относят находку к ПО «Ядро Linux <uname -r>» (scanner.core.software)."""
+    run = st.package
+    pkg = f"{run.name} ({run.version})" if run else f"ядра ({st.release})"
+    return f"Пакет {pkg} → {KERNEL_LABEL} {st.release}"
 
 
 def _kernel_line(adv: _HostAdvisories, d: Decision, release: str) -> str:
@@ -589,7 +599,11 @@ class AuthInventoryModule(ScanModule):
                     f.severity = Severity.MEDIUM
                     note = ("\nУровень опасности не найден в NVD/БДУ — принят средний; "
                             "уточните по бюллетеню.")
-                f.evidence = f"Пакет {p.name} ({p.version}) по бюллетеню вендора.\n{line}{note}"
+                sw = pk.lookup(p.name)
+                label = (f"{sw.label if sw else p.name} "
+                         f"{pk.upstream_version(p.version) or pk.distro_version(p.version)}")
+                f.evidence = (f"Пакет {p.name} ({p.version}) → {label}\n"
+                              f"Находка по бюллетеню вендора.\n{line}{note}")
                 added[cve] = f
         rep.added = len(added)
         out.update(added)
@@ -645,17 +659,20 @@ class AuthInventoryModule(ScanModule):
                 rep.checked = True
                 out.extend(self._kernel_vulns(ctx, inv, adv, matcher, existing, st, rep,
                                               sources, manager))
+        head = _kernel_head(st)
         if not rep.checked and st.release:
-            out.append(self._info(
+            # Не INFO: пробел в проверке ядра должен быть виден среди уязвимостей хоста.
+            note = self._info(
                 inv.host, "INFO:kernel-unchecked",
                 f"Уязвимости ядра {st.release} не проверены",
-                f"{rep.reason}. Загрузите бюллетени дистрибутива («Справочники» → "
+                f"{head}\n{rep.reason}. Загрузите бюллетени дистрибутива («Справочники» → "
                 "«Бюллетени дистрибутивов» или файл в каталоге бюллетеней) и повторите "
-                "проверку."))
+                "проверку.")
+            note.severity = Severity.LOW
+            out.append(note)
         if st.pending is not None:
             sev = Severity.MEDIUM if rep.fixed_by_reboot else Severity.LOW
-            ev = [f"Работает ядро {st.release}" + (f" (пакет {run.name} {run.version})"
-                                                    if run else "") + ".",
+            ev = [head,
                   (f"Установлено более новое ядро {st.pending_release} (пакет "
                    f"{st.pending.name} {st.pending.version}), но хост с него не загружен.")]
             if rep.fixed_by_reboot:
@@ -734,8 +751,7 @@ class AuthInventoryModule(ScanModule):
                 f.severity = Severity.MEDIUM
                 note = ("\nУровень опасности не найден в NVD/БДУ — принят средний; "
                         "уточните по бюллетеню.")
-            ev = [f"Работает ядро {st.release}" + (f" (пакет {run.name} {run.version})"
-                                                    if run else "") + ".", line]
+            ev = [_kernel_head(st), line]
             if reboot:
                 ev.append(f"Исправленное ядро {st.pending_release} уже установлено, но хост "
                           "не перезагружен.")
