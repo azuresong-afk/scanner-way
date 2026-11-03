@@ -240,6 +240,10 @@ it("сводка показывает открытые уязвимости и �
   expect(within(tile("Новые")).getByText("1")).toBeInTheDocument();
   expect(within(tile("Закрытые")).getByText("1")).toBeInTheDocument();
   expect(within(tile("Регрессии")).getByText("0")).toBeInTheDocument();
+  // сводка разгружена: ни кнопок отчёта, ни запуска прогона сверху
+  expect(screen.queryByRole("button", { name: /Новый прогон/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Скачать отчёт/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("radiogroup", { name: "Версия отчёта" })).not.toBeInTheDocument();
 });
 
 it("вкладка «Активы»: список постоянный, от прогона меняются только счётчики", async () => {
@@ -486,6 +490,13 @@ describe("вкладка «Доступность»", () => {
     expect(screen.getByRole("link", { name: /Доступность/ })).toHaveAttribute("href", "/reachability");
     expect(await screen.findByRole("form", { name: "Новая проверка доступности" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "10.0.0.0/24" })).toBeInTheDocument();
+  });
+
+  it("страница договора без прогонов: нет кнопки запуска и списка прогонов", async () => {
+    open(["operator"], OPERATOR, "/engagements/1");
+    await screen.findByRole("heading", { name: "Allowlist — разрешённые цели" });
+    expect(screen.queryByRole("button", { name: /Новый прогон/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Прогоны по договору" })).not.toBeInTheDocument();
   });
 
   it("на странице договора проверки больше нет", async () => {
