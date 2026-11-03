@@ -27,7 +27,7 @@ LAB = os.environ.get("SCANNER_E2E_LAB", "172.29.250.0/24")
 STACK_DIR = Path(os.environ.get("SCANNER_E2E_DIR", "."))
 ARTIFACTS = Path(os.environ.get("SCANNER_E2E_ARTIFACTS", "e2e-artifacts"))
 RUN_TIMEOUT = float(os.environ.get("SCANNER_E2E_RUN_TIMEOUT", "900"))
-FINISHED = {"done", "failed", "stopped", "interrupted"}
+FINISHED = {"done", "partial", "failed", "stopped", "interrupted"}
 
 S: dict = {}          # состояние сценария между шагами
 
@@ -156,7 +156,16 @@ def test_04_scan_lab_target(api):
     assert r.status_code == 202, r.text
     S["run"] = r.json()["id"]
     run = wait_run(api, S["run"])
-    assert run["status"] == "done", run
+    if run["status"] == "partial" and os.environ.get("SCANNER_E2E_EXPECT_FINDINGS") != "1":
+        # «Частично» допустимо, только если не отработал Nuclei (например, шаблоны не
+        # скачались) — и это явно видно в покрытии прогона, а не «чисто».
+        cov = api.get(f"/runs/{S['run']}/coverage", headers=S["h"]).json()
+        gaps = [e for e in cov["entries"] if e["status"] not in ("completed", "not_applicable")]
+        assert gaps and all(e["module"] == "vuln" for e in gaps), cov
+        assert next(e for e in cov["entries"] if e["module"] == "discovery")["status"] == "completed"
+    else:
+        assert run["status"] == S["run_status"], run
+    S["run_status"] = run["status"]
     services = api.get(f"/runs/{S['run']}/services", headers=S["h"]).json()
     http = [s for s in services if s["host"] == TARGET and s["port"] == 80]
     assert http, f"discovery не нашёл 80/tcp на {TARGET}: {services}"
@@ -240,11 +249,12 @@ def test_08_retry_interrupted_run(api):
     # повтор — обычный прогон: его можно остановить
     wait_run(api, new["id"], statuses={"running", *FINISHED}, timeout=120, poll=0.5)
     api.post(f"/runs/{new['id']}/stop", headers=S["h"])
-    assert wait_run(api, new["id"], timeout=300)["status"] in {"stopped", "done"}
+    assert wait_run(api, new["id"], timeout=300)["status"] in {"stopped", "done", "partial"}
     # успешно завершённый прогон повторять нельзя (повтор — только для
-    # «Ошибка» / «Прервано» / «Остановлен»)
-    assert get_run(api, S["run"])["status"] == "done"
-    assert api.post(f"/runs/{S['run']}/retry", headers=S["h"]).status_code == 409
+    # «Ошибка» / «Частично» / «Прервано» / «Остановлен»)
+    assert get_run(api, S["run"])["status"] == S["run_status"]
+    if S["run_status"] == "done":
+        assert api.post(f"/runs/{S['run']}/retry", headers=S["h"]).status_code == 409
 
 
 def test_09_backup_and_restore(api):
@@ -268,7 +278,7 @@ def test_09_backup_and_restore(api):
     names = {e["name"] for e in api.get("/engagements", headers=S["admin"]).json()}
     assert "e2e основной" in names and "e2e после копии" not in names
     run = get_run(api, S["run"])
-    assert run["status"] == "done"
+    assert run["status"] == S["run_status"]
     total = api.get(f"/runs/{S['run']}/findings", headers=S["h"],
                     params={"limit": 1}).headers["X-Total-Count"]
     assert int(total) == S["findings"]
