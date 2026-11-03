@@ -34,6 +34,7 @@ from scanner.api import (
     routes_feeds,
     routes_findings,
     routes_integrations,
+    routes_portscan,
     routes_reachability,
     routes_runs,
     routes_schedules,
@@ -47,6 +48,7 @@ from scanner.core.credentials import CredentialVault, load_vault
 from scanner.core.db import User, make_engine, make_session_factory, session_scope
 from scanner.core.health import check_database, is_ready
 from scanner.core.models import Finding
+from scanner.core.netscan import PortScanService
 from scanner.core.orchestrator import ModuleFactory, RunService
 from scanner.core.reachability import CheckThrottle, ReachabilityResult, check_host
 from scanner.feeds.scheduler import FeedScheduler, seed_feed_sync
@@ -129,7 +131,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
                feed_sources: Mapping[str, FeedSource] | None = None,
                feed_executor: Executor | None = None,
                notify_transports: Transports | None = None,
-               notify_executor: Executor | None = None) -> FastAPI:
+               notify_executor: Executor | None = None,
+               portscan_executor: Executor | None = None,
+               portscan_runner=None) -> FastAPI:
     settings = settings or ApiSettings()
     if session_factory is None:
         session_factory = make_session_factory(make_engine())
@@ -152,6 +156,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         seed_feed_sync(session_factory, timezone=settings.timezone,
                        sources=app.state.feed_scheduler.sources)
         app.state.runs.start()        # прогоны, оставшиеся от прошлого процесса
+        app.state.portscans.recover()  # проверки доступности — тоже
         app.state.scheduler.start()
         app.state.feed_scheduler.start()
         app.state.notifier.start()
@@ -160,6 +165,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         app.state.feed_scheduler.stop()
         app.state.notifier.stop()
         app.state.runs.stop()
+        app.state.portscans.shutdown()
         if own_executor:
             executor.shutdown(wait=False, cancel_futures=False)
 
@@ -195,6 +201,13 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.state.credcheck_throttle = CheckThrottle(
         settings.credential_check_hosts_per_minute, 60.0)
     app.state.credcheck_workers = settings.credential_check_workers
+    app.state.portscans = PortScanService(session_factory, audit,
+                                          executor=portscan_executor,
+                                          runner=portscan_runner,
+                                          workers=settings.portscan_workers)
+    app.state.portscan_throttle = CheckThrottle(settings.portscan_per_minute, 60.0)
+    app.state.portscan_settings = {"max_targets": settings.portscan_max_targets,
+                                   "max_active": settings.portscan_max_active}
 
     # Только явно перечисленные origin'ы; токен передаётся в заголовке
     # Authorization, cookie не используются — allow_credentials не нужен.
@@ -233,6 +246,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_feeds.router)
     app.include_router(routes_integrations.router)
     app.include_router(routes_reachability.router)
+    app.include_router(routes_portscan.router)
     app.include_router(routes_credcheck.router)
     app.include_router(routes_compliance.router)
     app.include_router(routes_audit.router)

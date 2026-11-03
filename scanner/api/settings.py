@@ -68,6 +68,14 @@ class ApiSettings(BaseSettings):
     credential_check_hosts_per_minute: int = 120
     credential_check_workers: int = 4
 
+    # Проверка сетевой доступности (вкладка «Доступность», nmap): запусков на
+    # пользователя в минуту, одновременных заданий у пользователя, адресов в
+    # одном задании и сколько заданий исполняется параллельно в процессе API.
+    portscan_per_minute: int = 6
+    portscan_max_active: int = 2
+    portscan_max_targets: int = 1024
+    portscan_workers: int = 2
+
     # Origin'ы веб-интерфейса через запятую (https://scanner.example.local).
     # Пусто — CORS выключен: штатно интерфейс отдаётся с того же origin, что и
     # API (nginx из web/Dockerfile проксирует /api), и CORS не нужен.

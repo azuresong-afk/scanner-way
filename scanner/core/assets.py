@@ -292,7 +292,7 @@ def delete_asset(session: Session, row: AssetRow) -> None:
 
 def record_seen(session: Session, engagement_id: int, hosts: Iterable[str], *,
                 source: str, hostnames: Mapping[str, str] | None = None,
-                seen_at: datetime | None = None) -> int:
+                seen_at: datetime | None = None, created_by: int | None = None) -> int:
     """Завести или обновить активы по обнаруженным хостам.
 
     Новый адрес — актив с критичностью по умолчанию, `source` и отметками
@@ -329,7 +329,7 @@ def record_seen(session: Session, engagement_id: int, hosts: Iterable[str], *,
             session.add(AssetRow(engagement_id=engagement_id, address=a,
                                  hostname=names.get(a), criticality=DEFAULT_CRITICALITY,
                                  source=source, first_seen_at=seen_at,
-                                 last_seen_at=seen_at))
+                                 last_seen_at=seen_at, created_by=created_by))
             created += 1
             continue
         if row.first_seen_at is None:
