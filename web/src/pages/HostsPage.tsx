@@ -285,7 +285,7 @@ export function HostsPage() {
     );
   }
 
-  if (!engagement) return <div className="card"><Empty title="Выберите или создайте договор" /></div>;
+  if (!engagement) return <div className="card"><Empty title="Выберите или создайте проект" /></div>;
 
   // Пока нет данных — загрузка (у находок флаг loading включается не сразу после выбора прогона).
   const pending = (enabled: boolean, s: { data?: unknown; error: Error | null }) => enabled && s.data === undefined && !s.error;
@@ -430,7 +430,7 @@ export function HostsPage() {
             <Loading />
           ) : hosts.length === 0 && run ? (
             <Empty title={`В прогоне №${run.id} хостов нет`} icon={<Server size={28} />}>
-              Хосты договора — в режиме «Последние данные».
+              Хосты проекта — в режиме «Последние данные».
             </Empty>
           ) : hosts.length === 0 ? (
             <Empty title="Активов пока нет" icon={<Server size={28} />}>

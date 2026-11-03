@@ -36,7 +36,7 @@ function errorMessage(err: unknown): string {
     return err.message.includes("in progress")
       ? "У вас уже идут две проверки — дождитесь окончания одной из них."
       : "Слишком много проверок подряд. Повторите через минуту.";
-  if (err.message.includes("allowlist")) return "Ни один адрес не входит в allowlist договора — проверять их нельзя.";
+  if (err.message.includes("allowlist")) return "Ни один адрес не входит в allowlist проекта — проверять их нельзя.";
   return err.message.replace(/^ports: /, "Порты: ");
 }
 
@@ -74,7 +74,7 @@ export function PortScanPage() {
   if (!current) {
     return (
       <div className="card">
-        <Empty title="Выберите или создайте договор" />
+        <Empty title="Выберите или создайте проект" />
       </div>
     );
   }
@@ -91,7 +91,7 @@ export function PortScanPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">{current.client ? `${current.client} · ${current.name}` : current.name}</span>
-          <h1>Проверка доступности</h1>
+          <h1>Сетевой поиск</h1>
         </div>
       </div>
 

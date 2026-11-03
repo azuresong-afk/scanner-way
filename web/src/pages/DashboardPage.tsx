@@ -323,8 +323,8 @@ export function DashboardPage() {
   if (!current) {
     return (
       <div className="card">
-        <Empty title="Нет договоров" icon={<Radar size={28} />}>
-          {has("manage_engagements") ? <Link to="/engagements">Создайте договор и задайте allowlist</Link> : "Попросите администратора создать договор и выдать доступ."}
+        <Empty title="Нет проектов" icon={<Radar size={28} />}>
+          {has("manage_engagements") ? <Link to="/engagements">Создайте проект и задайте allowlist</Link> : "Попросите администратора создать проект и выдать доступ."}
         </Empty>
       </div>
     );
@@ -337,10 +337,10 @@ export function DashboardPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">
-            {current.client ?? "Договор"} {current.contract_ref ? `· ${current.contract_ref}` : ""}
+            {current.client ?? "Проект"} {current.contract_ref ? `· ${current.contract_ref}` : ""}
             {latest ? ` · последний прогон №${latest.id}, ${fmtDate(latest.finished_at ?? latest.started_at)}` : ""}
           </span>
-          <h1>Сводка по договору</h1>
+          <h1>Сводка по проекту</h1>
         </div>
       </div>
 
@@ -362,7 +362,7 @@ export function DashboardPage() {
           <Empty title="Завершённых прогонов пока нет">
             {has("run_scan") ? (
               <>
-                Запустите первый прогон в разделе <Link to="/runs">«Прогоны»</Link>.
+                Запустите первый прогон в разделе <Link to="/runs">«Сканирование»</Link>.
               </>
             ) : (
               "Данные появятся после первого прогона."

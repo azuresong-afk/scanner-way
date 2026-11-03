@@ -89,7 +89,7 @@ export function RunDetailPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">
-            <Link to="/runs">Прогоны</Link> / <Link to={`/engagements/${r.engagement_id}`}>договор #{r.engagement_id}</Link> / прогон №{r.id}
+            <Link to="/runs">Сканирование</Link> / <Link to={`/engagements/${r.engagement_id}`}>проект #{r.engagement_id}</Link> / прогон №{r.id}
             {r.schedule_id !== null && (
               <>
                 {" "}

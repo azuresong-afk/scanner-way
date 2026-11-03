@@ -254,13 +254,13 @@ export const FINDING_TYPE_LABEL: Record<string, string> = {
 };
 
 export const RATE_PROFILES = [
-  { id: "gentle", label: "Щадящий", description: "Минимальная нагрузка на сеть заказчика" },
+  { id: "gentle", label: "Медленный", description: "Минимальная нагрузка на сеть заказчика" },
   { id: "normal", label: "Обычный", description: "Баланс скорости и нагрузки" },
   { id: "aggressive", label: "Быстрый", description: "Только для согласованных окон" },
 ];
 
 export const ROLES = [
-  { id: "admin", label: "Администратор", description: "Пользователи, договоры, allowlist, журнал аудита. Не запускает прогоны." },
+  { id: "admin", label: "Администратор", description: "Пользователи, проекты, allowlist, журнал аудита. Не запускает прогоны." },
   { id: "operator", label: "Оператор", description: "Запуск и остановка прогонов, просмотр результатов, отметка ложных срабатываний" },
   { id: "auditor", label: "Аудитор", description: "Просмотр и экспорт отчётов, журнал аудита" },
   { id: "cred_audit", label: "Право cred_audit", description: "Доступ к модулю аудита учётных данных (вдобавок к оператору)" },

@@ -38,7 +38,7 @@ export function RunsPage() {
   if (!current) {
     return (
       <div className="card">
-        <Empty title="Выберите или создайте договор" />
+        <Empty title="Выберите или создайте проект" />
       </div>
     );
   }
@@ -70,7 +70,7 @@ export function RunsPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">{current.client ? `${current.client} · ${current.name}` : current.name}</span>
-          <h1>Прогоны</h1>
+          <h1>Сканирование</h1>
         </div>
         <div className="actions">
           {has("run_scan") && (

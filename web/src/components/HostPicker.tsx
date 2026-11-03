@@ -132,7 +132,7 @@ export function HostPicker({
       <div className="stack" style={{ gap: 13 }}>
         {mode === "run" ? (
           <small className="muted">
-            Выбирать можно только хосты из allowlist договора — хосты вне его показаны серым. Подряд идущие адреса сворачиваются в диапазон.
+            Выбирать можно только хосты из allowlist проекта — хосты вне его показаны серым. Подряд идущие адреса сворачиваются в диапазон.
           </small>
         ) : (
           <small style={{ color: "var(--warn)" }}>

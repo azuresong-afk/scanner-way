@@ -26,7 +26,7 @@ export function SchedulesPage() {
   if (!current) {
     return (
       <div className="card">
-        <Empty title="Выберите или создайте договор" />
+        <Empty title="Выберите или создайте проект" />
       </div>
     );
   }
@@ -54,7 +54,7 @@ export function SchedulesPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">{current.client ? `${current.client} · ${current.name}` : current.name}</span>
-          <h1>Расписания</h1>
+          <h1>Расписание</h1>
         </div>
         <div className="actions">
           {canEdit && (
