@@ -48,6 +48,10 @@ import type {
   MeOut,
   PackageOut,
   Page,
+  PortScanCreated,
+  PortScanDetail,
+  PortScanIn,
+  PortScanOut,
   ReachabilityIn,
   ReachabilityOut,
   ReportFormat,
@@ -307,6 +311,11 @@ export const api = {
   deleteSchedule: (id: number) => request(`/schedules/${id}`, { method: "DELETE" }).then(() => undefined),
   checkReachability: (engagementId: number, data: ReachabilityIn) =>
     json<ReachabilityOut>(`/engagements/${engagementId}/reachability`, { method: "POST", ...body(data) }),
+  startPortScan: (engagementId: number, data: PortScanIn) =>
+    json<PortScanCreated>(`/engagements/${engagementId}/port-scans`, { method: "POST", ...body(data) }),
+  portScans: (engagementId: number) => json<PortScanOut[]>(`/engagements/${engagementId}/port-scans`),
+  portScan: (id: number) => json<PortScanDetail>(`/port-scans/${id}`),
+  stopPortScan: (id: number) => json<PortScanOut>(`/port-scans/${id}/stop`, { method: "POST" }),
   checkCredentials: (engagementId: number, data: CredentialCheckIn) =>
     json<CredentialCheckOut>(`/engagements/${engagementId}/credential-check`, { method: "POST", ...body(data) }),
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),

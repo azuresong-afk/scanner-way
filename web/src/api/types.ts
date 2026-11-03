@@ -636,6 +636,70 @@ export interface ReachabilityOut {
   checked_at: string;
 }
 
+// ---- проверка сетевой доступности (вкладка «Доступность») ----
+export type PortMode = "top" | "list";
+export type PortScanStatus = "queued" | "running" | "done" | "failed" | "stopped" | "interrupted";
+
+export interface PortScanIn {
+  targets: string[];
+  port_mode: PortMode;
+  ports?: string;
+  exclude_ports?: string;
+  no_ping: boolean;
+  service_detection: boolean;
+  rate_profile: string;
+}
+
+export interface PortScanOpenPort {
+  port: number;
+  protocol: string;
+  service: string | null;
+  product: string | null;
+  version: string | null;
+}
+
+export interface PortScanHost {
+  host: string;
+  up: boolean;
+  reason: string | null;
+  hostname: string | null;
+  mac: string | null;
+  vendor: string | null;
+  ports: PortScanOpenPort[];
+}
+
+export interface PortScanOut {
+  id: number;
+  engagement_id: number;
+  status: PortScanStatus;
+  requested_targets: string[];
+  port_mode: PortMode;
+  ports: string | null;
+  exclude_ports: string | null;
+  port_count: number | null;
+  no_ping: boolean;
+  service_detection: boolean;
+  rate_profile: string;
+  hosts_total: number;
+  hosts_done: number;
+  hosts_up: number;
+  open_ports: number;
+  assets_created: number;
+  error: string | null;
+  actor: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface PortScanDetail extends PortScanOut {
+  results: PortScanHost[];
+}
+
+export interface PortScanCreated extends PortScanOut {
+  denied_targets: DeniedTarget[];
+}
+
 // ---- проверка входа по учётным записям активов ----
 export type CredLoginStatus = "ok" | "auth_failed" | "timeout" | "unreachable" | "host_key_mismatch" | "error";
 export type CredHostStatus = CredLoginStatus | "partial" | "no_credential" | "not_in_allowlist";

@@ -470,33 +470,37 @@ it("allowlist: диапазоны и несколько целей добавл�
   expect(fn.mock.calls.map(([u]) => String(u)).find((u) => u.includes("/allowlist/2"))).toMatch(/whole_range=true$/);
 });
 
-describe("проверка доступности хоста на странице договора", () => {
-  function open(roles: string[], perms: string[]) {
+describe("вкладка «Доступность»", () => {
+  function open(roles: string[], perms: string[], path: string) {
     setToken("t");
     mockApi({
       "GET /me": me(roles, perms),
       "GET /engagements": [ENG],
       "GET /engagements/1": ENG,
       "GET /engagements/1/runs": [],
+      "GET /engagements/1/port-scans": [],
       "GET /engagements/1/allowlist": [{ id: 1, cidr: "10.0.0.0/24", note: null, added_by: 1, added_at: null }],
     });
-    renderApp("/engagements/1");
+    renderApp(path);
   }
 
-  it("видна оператору", async () => {
-    open(["operator"], OPERATOR);
-    expect(await screen.findByRole("heading", { name: "Проверка доступности хоста" })).toBeInTheDocument();
+  it("оператор видит пункт меню и форму проверки", async () => {
+    open(["operator"], OPERATOR, "/reachability");
+    expect(await screen.findByRole("heading", { name: "Проверка доступности" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Доступность/ })).toHaveAttribute("href", "/reachability");
+    expect(await screen.findByRole("form", { name: "Новая проверка доступности" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "10.0.0.0/24" })).toBeInTheDocument();
   });
 
   it("страница договора без прогонов: нет кнопки запуска и списка прогонов", async () => {
-    open(["operator"], OPERATOR);
+    open(["operator"], OPERATOR, "/engagements/1");
     await screen.findByRole("heading", { name: "Allowlist — разрешённые цели" });
     expect(screen.queryByRole("button", { name: /Новый прогон/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Прогоны по договору" })).not.toBeInTheDocument();
   });
 
-  it("скрыта от администратора (не сканирует)", async () => {
-    open(["admin"], ADMIN);
+  it("на странице договора проверки больше нет", async () => {
+    open(["operator"], OPERATOR, "/engagements/1");
     expect(await screen.findByRole("heading", { name: "Периметр" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Проверка доступности хоста" })).not.toBeInTheDocument();
   });

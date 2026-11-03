@@ -448,6 +448,38 @@ class AssetGroupRow(Base):
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
 
 
+# ========== Проверка доступности (вкладка «Доступность») ==========
+class PortScanRow(Base):
+    """Задание проверки сетевой доступности: какие хосты в сети и какие на них
+    открыты TCP-порты (nmap без прогона). results — по хосту: up, причина,
+    открытые порты; живые хосты заносятся в «Активы»."""
+    __tablename__ = "port_scans"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("engagements.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(Text, default="queued")
+    requested_targets: Mapped[list] = mapped_column(Jsonb, default=list)
+    targets: Mapped[list] = mapped_column(Jsonb, default=list)
+    port_mode: Mapped[str] = mapped_column(Text, default="top")
+    ports: Mapped[str | None] = mapped_column(Text)
+    exclude_ports: Mapped[str | None] = mapped_column(Text)
+    no_ping: Mapped[bool] = mapped_column(Boolean, default=False)
+    service_detection: Mapped[bool] = mapped_column(Boolean, default=False)
+    rate_profile: Mapped[str] = mapped_column(Text, default="gentle")
+    hosts_total: Mapped[int] = mapped_column(Integer, default=0)
+    hosts_done: Mapped[int] = mapped_column(Integer, default=0)
+    hosts_up: Mapped[int] = mapped_column(Integer, default=0)
+    open_ports: Mapped[int] = mapped_column(Integer, default=0)
+    assets_created: Mapped[int] = mapped_column(Integer, default=0)
+    results: Mapped[list] = mapped_column(Jsonb, default=list)
+    error: Mapped[str | None] = mapped_column(Text)
+    actor: Mapped[str | None] = mapped_column(Text)
+    started_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(TsTz)
+    finished_at: Mapped[datetime | None] = mapped_column(TsTz)
+
+
 # ========== Соответствие (R5) ==========
 class ComplianceProfileRow(Base):
     """Профиль соответствия, выбранный для договора: уровень и адаптация набора."""

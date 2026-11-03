@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   Sun,
   Users,
+  Wifi,
 } from "lucide-react";
 import { useAuth, type Perm } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
@@ -38,6 +39,7 @@ const NAV: NavItem[] = [
   { to: "/schedules", label: "Расписания", icon: <CalendarClock size={18} />, perm: "view_report" },
   { to: "/findings", label: "Находки", icon: <ShieldAlert size={18} />, perm: "view_report" },
   { to: "/hosts", label: "Активы", icon: <Server size={18} />, perm: "view_report" },
+  { to: "/reachability", label: "Доступность", icon: <Wifi size={18} />, perm: "view_report" },
   { to: "/compliance", label: "Соответствие", icon: <ClipboardCheck size={18} />, perm: "view_report" },
   { to: "/reports", label: "Отчёты", icon: <BarChart3 size={18} />, perm: "view_report" },
   { to: "/feeds", label: "Справочники", icon: <Database size={18} />, perm: "view_engagements", admin: true },

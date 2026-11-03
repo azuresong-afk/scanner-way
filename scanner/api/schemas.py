@@ -533,6 +533,69 @@ class ReachabilityOut(BaseModel):
     checked_at: datetime
 
 
+# ---- проверка сетевой доступности (вкладка «Доступность») ----
+class PortScanIn(BaseModel):
+    # адреса, подсети (CIDR) и диапазоны «начало-конец» — только из allowlist
+    targets: list[str] = Field(min_length=1, max_length=100)
+    port_mode: Literal["top", "list"] = "top"
+    ports: str | None = Field(default=None, max_length=2000)          # «22, 80, 8000-8100»
+    exclude_ports: str | None = Field(default=None, max_length=2000)
+    no_ping: bool = False
+    service_detection: bool = False
+    rate_profile: str = "gentle"
+
+
+class PortScanOpenPort(BaseModel):
+    port: int
+    protocol: str = "tcp"
+    service: str | None = None
+    product: str | None = None
+    version: str | None = None
+
+
+class PortScanHost(BaseModel):
+    host: str
+    up: bool
+    reason: str | None = None
+    hostname: str | None = None
+    mac: str | None = None
+    vendor: str | None = None
+    ports: list[PortScanOpenPort] = []
+
+
+class PortScanOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    engagement_id: int
+    status: str
+    requested_targets: list[str]
+    port_mode: str
+    ports: str | None
+    exclude_ports: str | None
+    port_count: int | None = None          # сколько портов на хост (для list)
+    no_ping: bool
+    service_detection: bool
+    rate_profile: str
+    hosts_total: int
+    hosts_done: int
+    hosts_up: int
+    open_ports: int
+    assets_created: int
+    error: str | None
+    actor: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class PortScanDetail(PortScanOut):
+    results: list[PortScanHost] = []
+
+
+class PortScanCreated(PortScanOut):
+    denied_targets: list[dict] = []
+
+
 # ---- проверка входа по учётным записям активов ----
 class CredentialCheckIn(BaseModel):
     hosts: list[str] = Field(min_length=1, max_length=16)
