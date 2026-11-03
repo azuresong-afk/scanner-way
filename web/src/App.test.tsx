@@ -552,7 +552,7 @@ it("находки: фильтры и страницы — на сервере, 
     "GET /runs/3/findings": () => new Response(JSON.stringify(page), { status: 200, headers: { "Content-Type": "application/json", "X-Total-Count": "120" } }),
     "GET /runs/3/findings/summary": { ...summaryOf(page), counts: { critical: 0, high: 120, medium: 0, low: 0, info: 0 } },
   });
-  renderApp("/findings?run=3&sev=high&page=2");
+  renderApp("/findings?view=all&run=3&sev=high&page=2");
   expect(await screen.findByText("Показано 51–100 из 120")).toBeInTheDocument();
   const lastQuery = () =>
     api.fn.mock.calls.map((c) => new URL(String(c[0]), "http://x")).filter((u) => u.pathname.endsWith("/runs/3/findings")).at(-1)!.searchParams;

@@ -146,3 +146,79 @@ it("без права manage_engagements атрибуты видны, но из�
   expect(screen.queryByRole("checkbox", { name: "Выбрать все" })).toBeNull();
   expect(screen.queryByRole("button", { name: /Изменить 10\.0\.0\.1/ })).toBeNull();
 });
+
+const login = (host: string, status: string, message: string) => ({
+  host,
+  status,
+  message,
+  elapsed_ms: 120,
+  results:
+    status === "no_credential"
+      ? []
+      : [{ credential_id: 4, credential: "Linux-аудит", protocol: "ssh", username: "audit", port: 22, status, message, elapsed_ms: 120 }],
+});
+
+it("оператор с правом на учётки проверяет вход на всех активах и видит причину по каждому", async () => {
+  setToken("t");
+  const { calls } = mockApi(
+    routes([asset()], {
+      "POST /engagements/5/credential-check": (init?: RequestInit) => {
+        const hosts = JSON.parse(String(init?.body)).hosts as string[];
+        return {
+          checked_at: "2026-11-03T12:00:00Z",
+          hosts: hosts.map((h) =>
+            h === "10.0.0.1" ? login(h, "ok", "SSH: вход выполнен") : login(h, "auth_failed", "SSH: логин или пароль/ключ отклонены хостом"),
+          ),
+        };
+      },
+    }),
+  );
+  renderPage([...OPERATOR, "host_credentials"]);
+  await screen.findByText("10.0.0.2");
+  // без выбора кнопка проверяет все показанные активы
+  await userEvent.click(screen.getByRole("button", { name: /Проверить учётки всех \(2\)/ }));
+  const dialog = screen.getByRole("dialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: /Проверить вход/ }));
+  await within(dialog).findByText(/Проверено/);
+  const table = within(dialog).getByRole("table");
+  expect(within(table).getAllByText("Вход выполнен").length).toBeGreaterThan(0);
+  expect(within(table).getAllByText("Отказ в доступе").length).toBeGreaterThan(0);
+  expect(within(table).getAllByText(/отклонены хостом/).length).toBeGreaterThan(0);
+  const req = calls.find((c) => c.path === "/engagements/5/credential-check")!;
+  expect(JSON.parse(String(req.init?.body))).toEqual({ hosts: ["10.0.0.1", "10.0.0.2"] });
+  // неудачные можно перепроверить
+  expect(within(dialog).getByRole("button", { name: /Повторить неудачные \(1\)/ })).toBeInTheDocument();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Готово" }));
+  // итог остаётся у хоста в списке
+  expect(within(await rowOf("10.0.0.2")).getByText("Отказ в доступе")).toBeInTheDocument();
+});
+
+it("проверка одного актива из строки и подсказка, когда учётка не привязана", async () => {
+  setToken("t");
+  mockApi(
+    routes([asset()], {
+      "POST /engagements/5/credential-check": {
+        checked_at: "2026-11-03T12:00:00Z",
+        hosts: [login("10.0.0.2", "no_credential", "к хосту не привязана ни одна учётная запись")],
+      },
+    }),
+  );
+  renderPage([...OPERATOR, "host_credentials"]);
+  await screen.findByText("10.0.0.2");
+  // выбор доступен без права на изменение учёта
+  expect(screen.getByRole("checkbox", { name: "Выбрать все" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Изменить 10\.0\.0\.2/ })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Проверить учётные записи 10.0.0.2" }));
+  const dialog = screen.getByRole("dialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: /Проверить вход/ }));
+  expect(await within(dialog).findByText(/Область действия ни одной учётки/)).toBeInTheDocument();
+});
+
+it("без права на учётки кнопок проверки нет", async () => {
+  setToken("t");
+  mockApi(routes([asset()]));
+  renderPage([...ADMIN]);
+  await screen.findByText("10.0.0.2");
+  expect(screen.queryByRole("button", { name: /Проверить учётки/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Проверить учётные записи/ })).toBeNull();
+});

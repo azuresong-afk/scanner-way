@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import threading
 import time
@@ -13,7 +14,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,11 +26,14 @@ from scanner.api.schemas import (
     FalsePositiveMarkOut,
     FalsePositiveOut,
     FindingOut,
+    FixPlanOut,
     PriorityOut,
+    SoftwareFalsePositiveIn,
+    SoftwareFalsePositiveOut,
 )
 from scanner.core import findings_query as fq
 from scanner.core import repository as repo
-from scanner.core.db import AssetRow, FindingRow
+from scanner.core.db import AssetRow, FindingRow, HostPackageRow
 from scanner.core.models import (
     FalsePositiveMark,
     Finding,
@@ -166,6 +170,7 @@ def clear_priority_cache() -> None:
     with _priority_lock:
         _priority_cache.clear()
         _priority_latest.clear()
+        _fix_plan_cache.clear()
 
 
 def finding_out(row: FindingRow, marks: dict[str, FalsePositiveMark],
@@ -250,3 +255,204 @@ def list_false_positives(engagement_id: int,
                 module=r.module, title=r.title, reason=r.reason,
                 marked_by=marks[r.dedup_key].marked_by, marked_at=r.marked_at)
             for r in repo.list_false_positives(session, engagement_id)]
+
+
+@router.get("/findings/{finding_id}", response_model=FindingOut)
+def read_finding(finding_id: int,
+                 _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                 session: SessionDep) -> FindingOut:
+    """Одна находка — для карточки из плана исправлений (отметка ложного срабатывания)."""
+    row = _get_finding(session, finding_id)
+    marks = repo.false_positive_marks(session, row.engagement_id)
+    return finding_out(row, marks, services_by_port(session, row.scan_run_id),
+                       run_priorities(session, row.scan_run_id, row.engagement_id, marks))
+
+
+# --- план исправлений («Находки» → «Что исправить») ---------------------------
+# Строится по всем находкам прогона, поэтому кэшируется так же, как приоритеты:
+# ключ — прогон и набор отметок «ложное срабатывание».
+FIX_PLAN_TTL = 300.0
+_FIX_PLAN_CACHE_SIZE = 16
+_fix_plan_cache: OrderedDict[tuple[int, int], tuple[float, list, int]] = OrderedDict()
+
+
+def _host_managers(session: Session, scan_run_id: int) -> dict[str, str]:
+    rows = session.execute(select(HostPackageRow.host, HostPackageRow.manager)
+                           .where(HostPackageRow.scan_run_id == scan_run_id)
+                           .distinct()).all()
+    return {str(h): m for h, m in rows}
+
+
+def fix_plan(request: Request, session: Session, scan_run_id: int, engagement_id: int,
+             cacheable: bool = True):
+    """(действия исправления, исключено ложных срабатываний) по прогону.
+    cacheable=False — прогон ещё идёт, находки добавляются: без кэша."""
+    from scanner.reporting.fixplan import build_fix_plan
+
+    marks = repo.false_positive_marks(session, engagement_id)
+    key = (scan_run_id, hash(frozenset(marks)))
+    now = time.monotonic()
+    with _priority_lock:
+        hit = _fix_plan_cache.get(key)
+        if cacheable and hit is not None and now - hit[0] < FIX_PLAN_TTL:
+            _fix_plan_cache.move_to_end(key)
+            return hit[1], hit[2]
+    rows = repo.get_finding_rows(session, scan_run_id)
+    items, fps = [], 0
+    for r in rows:
+        if r.dedup_key in marks:
+            fps += 1
+            continue
+        items.append((r.id, repo.row_to_finding(r)))
+    findings = [f for _, f in items]
+    resolver = request.app.state.resolver_factory(findings)
+    # ОС хостов без учётки — из инвентаря договора; ОС из прогона точнее
+    resolver.add_host_os(repo.host_os_names(session, engagement_id), override=False)
+    tasks = build_fix_plan(
+        items, resolver=resolver, managers=_host_managers(session, scan_run_id),
+        services=services_by_port(session, scan_run_id),
+        priorities=run_priorities(session, scan_run_id, engagement_id, marks))
+    if not cacheable:
+        return tasks, fps
+    with _priority_lock:
+        _fix_plan_cache[key] = (now, tasks, fps)
+        _fix_plan_cache.move_to_end(key)
+        while len(_fix_plan_cache) > _FIX_PLAN_CACHE_SIZE:
+            _fix_plan_cache.popitem(last=False)
+    return tasks, fps
+
+
+@router.get("/runs/{run_id}/fixes", response_model=FixPlanOut)
+def list_fixes(run_id: int, request: Request,
+               _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+               session: SessionDep,
+               severity: Annotated[list[str] | None, Query()] = None,
+               kind: Annotated[list[str] | None, Query()] = None,
+               os: Annotated[list[str] | None, Query()] = None,
+               host: Annotated[str | None, Query(max_length=64)] = None,
+               q: Annotated[str | None, Query(max_length=200)] = None,
+               limit: Annotated[int, Query(ge=1, le=500)] = 50,
+               offset: Annotated[int, Query(ge=0)] = 0) -> dict:
+    """План исправлений прогона для администраторов: находки, собранные в
+    действия («обновить пакет P до версии V на ОС X»), с командами для менеджера
+    пакетов ОС хоста, проверкой результата и списком хостов. Ложные
+    срабатывания не входят. Порядок — по приоритету (R6), затем по уровню.
+    os — подпись ОС («Debian 12»); «-» — действия без привязки к ОС."""
+    from scanner.api.routes_runs import FINISHED, _get_run
+    from scanner.reporting.fixplan import KINDS
+
+    run = _get_run(session, run_id)
+    tasks, fps = fix_plan(request, session, run_id, run.engagement_id,
+                          cacheable=run.status in FINISHED)
+    hosts = {h.host for t in tasks for h in t.hosts}
+    out = {"tasks": len(tasks), "hosts": len(hosts),
+           "findings": sum(t.findings for t in tasks), "false_positives": fps,
+           "kinds": {}, "os": {}, "severities": {}}
+    for t in tasks:
+        out["kinds"][t.kind] = out["kinds"].get(t.kind, 0) + 1
+        out["os"][t.os or "-"] = out["os"].get(t.os or "-", 0) + 1
+        out["severities"][str(t.severity)] = out["severities"].get(str(t.severity), 0) + 1
+    out["kinds"] = {k: out["kinds"][k] for k in KINDS if k in out["kinds"]}
+    sel = tasks
+    if severity:
+        sel = [t for t in sel if str(t.severity) in severity]
+    if kind:
+        kinds = set(kind)
+        if "package" in kinds:             # «обновление пакета» — с версией и без
+            kinds.add("package_upgrade")
+        sel = [t for t in sel if t.kind in kinds]
+    if os:
+        sel = [t for t in sel if (t.os or "-") in os]
+    if host:
+        h = host.strip()
+        sel = [t for t in sel if any(x.host == h for x in t.hosts)]
+    if q and q.strip():
+        needle = q.strip().lower()
+        sel = [t for t in sel if needle in t.search_text()]
+    out["total"] = len(sel)
+    out["items"] = [t.to_dict() for t in sel[offset:offset + limit]]
+    return out
+
+
+# В журнал аудита массового действия — не больше стольких находок поимённо.
+AUDIT_FINDINGS_LIMIT = 200
+
+
+def _software_rows(session: Session, run_id: int,
+                   body: SoftwareFalsePositiveIn) -> list[FindingRow]:
+    """Уязвимости прогона (без info), относящиеся к указанному ПО."""
+    q = select(FindingRow).where(FindingRow.scan_run_id == run_id,
+                                 FindingRow.severity != Severity.INFO.value)
+    if not body.all_hosts:
+        try:
+            q = q.where(FindingRow.host == str(ipaddress.ip_address(body.host)))
+        except ValueError:
+            raise HTTPException(422, "host must be an IP address") from None
+    services = services_by_port(session, run_id)
+    name = body.software.casefold()
+    out = []
+    for row in session.scalars(q.order_by(FindingRow.id)):
+        sw = software_of(repo.row_to_finding(row), services)
+        if sw is not None and sw.name.casefold() == name and \
+                (sw.version or None) == body.version:
+            out.append(row)
+    return out
+
+
+def _software_fp(run_id: int, body: SoftwareFalsePositiveIn, user: Principal,
+                 session: Session, audit, *, mark: bool) -> SoftwareFalsePositiveOut:
+    run = repo.get_scan_run(session, run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "scan run not found")
+    rows = _software_rows(session, run_id, body)
+    marks = repo.false_positive_marks(session, run.engagement_id)
+    # одна отметка на dedup_key; меняем только то, что ещё не в нужном состоянии
+    todo: dict[str, FindingRow] = {}
+    for r in rows:
+        if (r.dedup_key in marks) != mark:
+            todo.setdefault(r.dedup_key, r)
+    result = SoftwareFalsePositiveOut(matched=len(rows), changed=len(todo),
+                                      hosts=len({str(r.host) for r in rows}),
+                                      dry_run=body.dry_run)
+    if body.dry_run or not todo:
+        return result
+    for r in todo.values():
+        if mark:
+            repo.mark_false_positive(session, r, reason=body.reason, marked_by=user.id)
+        else:
+            repo.unmark_false_positive(session, run.engagement_id, r.dedup_key)
+    session.commit()
+    changed = list(todo.values())
+    audit.record(
+        subject=user.subject,
+        action="false_positive_mark_software" if mark else "false_positive_unmark_software",
+        target=f"engagement:{run.engagement_id}", result="ok",
+        details={"scan_run_id": run_id, "software": body.software,
+                 "version": body.version,
+                 "host": "*" if body.all_hosts else body.host,
+                 "reason": body.reason if mark else None,
+                 "count": len(changed), "hosts": result.hosts,
+                 "findings": [{"host": str(r.host), "port": r.port,
+                               "vuln_id": r.vuln_id, "module": r.module}
+                              for r in changed[:AUDIT_FINDINGS_LIMIT]]})
+    return result
+
+
+@router.post("/runs/{run_id}/false-positives/by-software",
+             response_model=SoftwareFalsePositiveOut)
+def mark_software_false_positive(run_id: int, body: SoftwareFalsePositiveIn,
+                                 user: TriageUser, session: SessionDep,
+                                 audit: AuditDep) -> SoftwareFalsePositiveOut:
+    """Все уязвимости ПО на хосте (или на всех хостах прогона) — в ложные
+    срабатывания одним действием. Уже отмеченные не трогаются (их обоснование
+    сохраняется). Действие пишется в аудит одной записью со списком находок."""
+    return _software_fp(run_id, body, user, session, audit, mark=True)
+
+
+@router.post("/runs/{run_id}/false-positives/by-software/unmark",
+             response_model=SoftwareFalsePositiveOut)
+def unmark_software_false_positive(run_id: int, body: SoftwareFalsePositiveIn,
+                                   user: TriageUser, session: SessionDep,
+                                   audit: AuditDep) -> SoftwareFalsePositiveOut:
+    """Снять отметку «ложное срабатывание» со всех уязвимостей ПО."""
+    return _software_fp(run_id, body, user, session, audit, mark=False)

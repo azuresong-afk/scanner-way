@@ -270,6 +270,8 @@ export interface SoftwareRow {
   total: number;
   maxSeverity: Severity;
   maxCvss: number | null;
+  /** Уязвимостей (без info), отмеченных как ложные срабатывания. */
+  falsePositives: number;
   findings: FindingOut[];
 }
 
@@ -309,6 +311,7 @@ export function bySoftware(findings: FindingOut[], services: ServiceOut[] = []):
         total: 0,
         maxSeverity: "info",
         maxCvss: null,
+        falsePositives: 0,
         findings: [],
       };
       map.set(key, row);
@@ -319,7 +322,10 @@ export function bySoftware(findings: FindingOut[], services: ServiceOut[] = []):
       const p = `${f.port}/${svc?.protocol ?? "tcp"}`;
       if (!row.ports.includes(p)) row.ports.push(p);
     } else if (f.software_source === "package") row.fromPackage = true;
-    if (isFalsePositive(f)) continue;
+    if (isFalsePositive(f)) {
+      if (f.severity !== "info") row.falsePositives += 1;
+      continue;
+    }
     row.counts[f.severity] += 1;
     if (f.severity !== "info") row.total += 1;
     if (SEVERITY_RANK[f.severity] > SEVERITY_RANK[row.maxSeverity]) row.maxSeverity = f.severity;
@@ -336,6 +342,22 @@ export function bySoftware(findings: FindingOut[], services: ServiceOut[] = []):
       Number(b.known) - Number(a.known) ||
       a.name.localeCompare(b.name, "ru"),
   );
+}
+
+/** Сортировка строк «По ПО»: risk — по опасности (как по умолчанию), count — по числу уязвимостей. */
+export type SoftwareSortKey = "risk" | "count" | "cvss" | "name";
+
+export function sortSoftware(rows: SoftwareRow[], key: SoftwareSortKey, dir: 1 | -1 = 1): SoftwareRow[] {
+  const byRisk = (a: SoftwareRow, b: SoftwareRow) =>
+    compareRisk(a.counts, b.counts) || b.total - a.total || Number(b.known) - Number(a.known) || a.name.localeCompare(b.name, "ru");
+  const cmp: Record<SoftwareSortKey, (a: SoftwareRow, b: SoftwareRow) => number> = {
+    risk: byRisk,
+    // больше уязвимостей — выше; при равенстве — опаснее выше
+    count: (a, b) => b.total - a.total || byRisk(a, b),
+    cvss: (a, b) => (b.maxCvss ?? -1) - (a.maxCvss ?? -1) || byRisk(a, b),
+    name: (a, b) => a.name.localeCompare(b.name, "ru") || (a.version ?? "").localeCompare(b.version ?? "", "ru", { numeric: true }),
+  };
+  return [...rows].sort((a, b) => cmp[key](a, b) * dir);
 }
 
 export function compareFindings(a: FindingOut, b: FindingOut): number {

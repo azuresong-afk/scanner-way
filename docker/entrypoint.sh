@@ -1,6 +1,7 @@
 #!/bin/sh
 # Самоподготовка окружения при старте контейнера:
-#   миграции схемы -> одноразовая загрузка БДУ (если файл примонтирован) ->
+#   миграции схемы -> комплект данных уязвимостей (если положен) ->
+#   одноразовая загрузка БДУ (если файл примонтирован) ->
 #   обновление шаблонов Nuclei (по возможности) -> запуск API.
 # Админа и роли создаёт само приложение при первом старте
 # (SCANNER_API_BOOTSTRAP_ADMIN / SCANNER_API_BOOTSTRAP_PASSWORD, пока нет ни
@@ -31,6 +32,19 @@ done
 
 : "${BDU_FSTEC_FEED_PATH:=/data/bdu_fstec.xml}"
 MARKER=/data/.bdu_loaded
+
+# Комплект данных уязвимостей (scanner-data-*.tar в ./data/bundle или вшитый в
+# образ, либо SCANNER_DATA_BUNDLE_URL): справочники при первой установке
+# берутся из него, а не качаются с нуля. Источники, уже загруженные свежее
+# комплекта, не трогаются — повторный старт ничего не перезаписывает.
+if [ "${SCANNER_BUNDLE_AUTOLOAD:-1}" = "1" ]; then
+  echo "[entrypoint] комплект данных уязвимостей: проверяю /data/bundle..."
+  if ! scanner --no-migrate --actor system:entrypoint bundle import --auto \
+       --bdu-marker "$MARKER"; then
+    echo "[entrypoint] ВНИМАНИЕ: комплект данных не загружен; справочники загрузятся" \
+         "из источников (раздел «Справочники»)" >&2
+  fi
+fi
 if [ "${SCANNER_BDU_AUTOLOAD:-1}" = "1" ] && [ -f "$BDU_FSTEC_FEED_PATH" ] && [ ! -f "$MARKER" ]; then
   echo "[entrypoint] одноразовая загрузка выгрузки БДУ ФСТЭК из $BDU_FSTEC_FEED_PATH..."
   if scanner --no-migrate feeds sync-bdu --file "$BDU_FSTEC_FEED_PATH"; then

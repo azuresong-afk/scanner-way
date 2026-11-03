@@ -533,6 +533,39 @@ class ReachabilityOut(BaseModel):
     checked_at: datetime
 
 
+# ---- проверка входа по учётным записям активов ----
+class CredentialCheckIn(BaseModel):
+    hosts: list[str] = Field(min_length=1, max_length=16)
+    # пусто — все учётки договора, привязанные к хосту областью действия
+    credential_ids: list[int] | None = Field(default=None, max_length=50)
+
+
+class CredentialLoginOut(BaseModel):
+    credential_id: int
+    credential: str
+    protocol: str                 # ssh | winrm
+    username: str
+    port: int
+    status: str                   # ok | auth_failed | timeout | unreachable | host_key_mismatch | error
+    message: str
+    elapsed_ms: float
+
+
+class CredentialHostCheckOut(BaseModel):
+    host: str
+    # ok | partial | auth_failed | timeout | unreachable | host_key_mismatch |
+    # no_credential | not_in_allowlist | error
+    status: str
+    message: str
+    results: list[CredentialLoginOut]
+    elapsed_ms: float
+
+
+class CredentialCheckOut(BaseModel):
+    hosts: list[CredentialHostCheckOut]
+    checked_at: datetime
+
+
 # ---- активы (R7) ----
 Criticality = Literal["low", "medium", "high", "critical"]
 
@@ -625,3 +658,100 @@ class ComplianceProfileOut(BaseModel):
     added: list[str]
     in_report: bool
     updated_at: datetime | None = None
+
+
+# ---------- План исправлений («Находки» → «Что исправить») ----------
+
+class FixFindingOut(BaseModel):
+    id: int
+    label: str                             # CVE / правило
+    severity: str
+
+
+class FixHostOut(BaseModel):
+    host: str
+    installed: str | None                  # установленная версия пакета / ядра / ПО
+    note: str | None                       # «только перезагрузка» и т. п.
+    ports: list[int]
+    findings: list[FixFindingOut]
+
+
+class FixPriorityOut(BaseModel):
+    score: float
+    label: str
+    label_ru: str
+    rank: int | None
+
+
+class FixTaskOut(BaseModel):
+    """Одно действие исправления: что сделать, на каких хостах, какими командами."""
+    key: str
+    kind: str          # package | package_nofix | package_upgrade | kernel | software | config | cred | vuln | other
+    kind_label: str
+    title: str
+    os: str | None
+    os_family: str | None
+    manager: str | None
+    packages: list[str]
+    fixed_version: str | None
+    software: str | None
+    steps: list[str]
+    commands: list[str]
+    verify: list[str]
+    reboot: bool
+    details: str | None
+    details_source: str | None
+    severity: str
+    priority: FixPriorityOut | None
+    cves: list[str]
+    bdu_ids: list[str]
+    advisories: list[str]
+    references: list[str]
+    hosts: list[FixHostOut]
+    host_count: int
+    finding_count: int
+
+
+class FixPlanOut(BaseModel):
+    total: int                             # действий по фильтру
+    items: list[FixTaskOut]
+    tasks: int                             # всего действий в прогоне
+    hosts: int                             # хостов, которым есть что исправить
+    findings: int                          # находок, покрытых действиями
+    false_positives: int                   # исключено как ложные срабатывания
+    kinds: dict[str, int]                  # вид -> число действий
+    os: dict[str, int]                     # ОС -> число действий
+    severities: dict[str, int]             # уровень -> число действий
+
+
+class SoftwareFalsePositiveIn(BaseModel):
+    """Отметить (снять) «ложное срабатывание» сразу у всех уязвимостей ПО.
+
+    ПО — как в группировке «По ПО» на странице хоста: название (без учёта
+    регистра) и версия. По умолчанию — на одном хосте; ``all_hosts`` — на всех
+    хостах прогона с тем же ПО той же версии. ``dry_run`` только считает."""
+    software: str = Field(min_length=1, max_length=300)
+    version: str | None = Field(default=None, max_length=200)
+    host: str | None = Field(default=None, max_length=64)
+    all_hosts: bool = False
+    reason: str | None = Field(default=None, max_length=2000)
+    dry_run: bool = False
+
+    @field_validator("reason", "version", "host")
+    @classmethod
+    def _strip(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        return v or None
+
+    @model_validator(mode="after")
+    def _scope(self) -> SoftwareFalsePositiveIn:
+        if not self.all_hosts and not self.host:
+            raise ValueError("укажите host или all_hosts=true")
+        return self
+
+
+class SoftwareFalsePositiveOut(BaseModel):
+    matched: int        # уязвимостей этого ПО в охвате
+    changed: int        # отмечено (снято) этим запросом
+    hosts: int          # хостов, где ПО найдено
+    dry_run: bool

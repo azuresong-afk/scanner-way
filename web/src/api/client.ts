@@ -1,6 +1,8 @@
 // Тонкий клиент REST API сканера: Bearer-токен, разбор ошибок FastAPI.
 
 import type {
+  CredentialCheckIn,
+  CredentialCheckOut,
   AllowlistBulkIn,
   AllowlistBulkOut,
   AllowlistIn,
@@ -40,6 +42,8 @@ import type {
   FindingOut,
   FindingQuery,
   FindingsSummary,
+  FixPlanOut,
+  FixQuery,
   InventoryHostOut,
   MeOut,
   PackageOut,
@@ -55,6 +59,8 @@ import type {
   ScheduleIn,
   ScheduleOut,
   ServiceOut,
+  SoftwareFalsePositiveIn,
+  SoftwareFalsePositiveOut,
   TokenOut,
   UserCreate,
   UserOut,
@@ -301,15 +307,25 @@ export const api = {
   deleteSchedule: (id: number) => request(`/schedules/${id}`, { method: "DELETE" }).then(() => undefined),
   checkReachability: (engagementId: number, data: ReachabilityIn) =>
     json<ReachabilityOut>(`/engagements/${engagementId}/reachability`, { method: "POST", ...body(data) }),
+  checkCredentials: (engagementId: number, data: CredentialCheckIn) =>
+    json<CredentialCheckOut>(`/engagements/${engagementId}/credential-check`, { method: "POST", ...body(data) }),
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),
   retryRun: (id: number) => json<RunCreated>(`/runs/${id}/retry`, { method: "POST" }),
   findings: (runId: number, params: FindingQuery = {}) => json<FindingOut[]>(`/runs/${runId}/findings${listQuery(params)}`),
   findingsPage: (runId: number, params: FindingQuery) => page<FindingOut>(`/runs/${runId}/findings${listQuery(params)}`),
   findingsSummary: (runId: number) => json<FindingsSummary>(`/runs/${runId}/findings/summary`),
+  /** План исправлений: находки, собранные в действия с командами по ОС хостов. */
+  fixes: (runId: number, params: FixQuery = {}) => json<FixPlanOut>(`/runs/${runId}/fixes${listQuery(params)}`),
+  finding: (id: number) => json<FindingOut>(`/findings/${id}`),
   /** Отметить находку хоста как ложное срабатывание (действует и в следующих прогонах). */
   markFalsePositive: (findingId: number, reason: string | null) =>
     json<FindingOut>(`/findings/${findingId}/false-positive`, { method: "PUT", ...body({ reason }) }),
   unmarkFalsePositive: (findingId: number) => json<FindingOut>(`/findings/${findingId}/false-positive`, { method: "DELETE" }),
+  /** Все уязвимости ПО на хосте (или на всех хостах прогона) — в ложные срабатывания; dry_run — только посчитать. */
+  markSoftwareFalsePositive: (runId: number, data: SoftwareFalsePositiveIn) =>
+    json<SoftwareFalsePositiveOut>(`/runs/${runId}/false-positives/by-software`, { method: "POST", ...body(data) }),
+  unmarkSoftwareFalsePositive: (runId: number, data: SoftwareFalsePositiveIn) =>
+    json<SoftwareFalsePositiveOut>(`/runs/${runId}/false-positives/by-software/unmark`, { method: "POST", ...body(data) }),
   services: (runId: number) => json<ServiceOut[]>(`/runs/${runId}/services`),
   /** Пакеты, собранные инвентаризацией по учётной записи. */
   packages: (runId: number, host?: string) =>

@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { FindingOut, FindingQuery, FindingStatus, Severity } from "../api/types";
 import { SeverityStack } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
+import { FixPlan } from "../components/FixPlan";
 import { FindingsTable, type SortKey, type SortState } from "../components/FindingsTable";
 import { Pager } from "../components/Pager";
 import { RunPicker } from "../components/RunPicker";
@@ -22,8 +23,16 @@ function toggle<T>(list: T[], v: T): T[] {
   return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
 }
 
+type View = "fix" | "all";
+const VIEWS: { id: View; label: string }[] = [
+  { id: "fix", label: "Что исправить" },
+  { id: "all", label: "Все находки" },
+];
+
 /**
- * Находки прогона. Фильтры, сортировка и страницы выполняются на сервере, а их
+ * Находки прогона в двух видах. «Что исправить» (по умолчанию) — помощь
+ * администраторам: находки собраны в действия с командами для ОС хостов
+ * (FixPlan). «Все находки» — плоский список для разбора. Фильтры, сортировка и страницы выполняются на сервере, а их
  * состояние хранится в адресной строке (?sev=…&module=…&q=…&sort=…&page=…) —
  * его можно переслать ссылкой, и оно сохраняется при переходах «назад».
  */
@@ -32,6 +41,7 @@ export function FindingsPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
 
+  const view: View = params.get("view") === "all" ? "all" : "fix";
   const severities = params.getAll("sev").filter((s): s is Severity => (SEVERITIES as string[]).includes(s));
   const modules = params.getAll("module");
   const statuses = params.getAll("status").filter((s): s is FindingStatus => (STATUSES as string[]).includes(s));
@@ -74,8 +84,8 @@ export function FindingsPage() {
     include_info: includeInfo,
     false_positives: includeFp ? "include" : "exclude",
   };
-  const findings = useFindingsPage(run?.id, filter, { sort, offset, limit: size });
-  const summary = useAsync(() => api.findingsSummary(run!.id), [run?.id], !!run);
+  const findings = useFindingsPage(view === "all" ? run?.id : undefined, filter, { sort, offset, limit: size });
+  const summary = useAsync(() => api.findingsSummary(run!.id), [run?.id], !!run && view === "all");
 
   const items = useMemo(() => findings.data?.items ?? [], [findings.data]);
   const groups = useMemo(() => (grouped ? byHost(items) : []), [grouped, items]);
@@ -102,6 +112,24 @@ export function FindingsPage() {
           <h1>Находки</h1>
         </div>
         <div className="actions">
+          <div className="seg" role="radiogroup" aria-label="Вид находок">
+            {VIEWS.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                role="radio"
+                aria-checked={view === v.id}
+                onClick={() => {
+                  if (v.id === view) return;
+                  setOpen(null);
+                  // фильтры, которых нет в другом виде, не переносятся
+                  update({ view: v.id === "all" ? "all" : null, module: null, status: null, group: null, kind: null, os: null, size: null });
+                }}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
           {runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} />}
         </div>
       </div>
@@ -112,6 +140,8 @@ export function FindingsPage() {
         <div className="card">
           <Empty title="Нет завершённых прогонов" icon={<ShieldAlert size={28} />} />
         </div>
+      ) : view === "fix" ? (
+        <FixPlan key={run.id} runId={run.id} onHost={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${run.id}`)} />
       ) : (
         <>
           <section className="card card-pad stack" style={{ gap: 14 }}>

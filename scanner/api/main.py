@@ -28,6 +28,7 @@ from scanner.api import (
     routes_auth,
     routes_compliance,
     routes_cred_sets,
+    routes_credcheck,
     routes_credentials,
     routes_engagements,
     routes_feeds,
@@ -190,6 +191,10 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.state.resolver_factory = resolver_factory
     app.state.reach_check = reachability or check_host
     app.state.reach_throttle = CheckThrottle(settings.reachability_per_minute, 60.0)
+    app.state.cred_check = routes_credcheck.default_check
+    app.state.credcheck_throttle = CheckThrottle(
+        settings.credential_check_hosts_per_minute, 60.0)
+    app.state.credcheck_workers = settings.credential_check_workers
 
     # Только явно перечисленные origin'ы; токен передаётся в заголовке
     # Authorization, cookie не используются — allow_credentials не нужен.
@@ -228,6 +233,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_feeds.router)
     app.include_router(routes_integrations.router)
     app.include_router(routes_reachability.router)
+    app.include_router(routes_credcheck.router)
     app.include_router(routes_compliance.router)
     app.include_router(routes_audit.router)
     return app

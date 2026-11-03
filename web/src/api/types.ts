@@ -494,6 +494,23 @@ export interface RunCreated extends RunOut {
 }
 
 /** Отметка «ложное срабатывание» (действует во всех прогонах договора). */
+/** Массовая отметка «ложное срабатывание» всех уязвимостей ПО. */
+export interface SoftwareFalsePositiveIn {
+  software: string;
+  version: string | null;
+  host?: string | null;
+  all_hosts?: boolean;
+  reason?: string | null;
+  dry_run?: boolean;
+}
+
+export interface SoftwareFalsePositiveOut {
+  matched: number;
+  changed: number;
+  hosts: number;
+  dry_run: boolean;
+}
+
 export interface FalsePositiveMark {
   reason: string | null;
   marked_by: string | null;
@@ -616,6 +633,39 @@ export interface ReachabilityOut {
   icmp_rtt_ms: number | null;
   ports: { port: number; state: PortState; rtt_ms: number | null }[];
   elapsed_ms: number;
+  checked_at: string;
+}
+
+// ---- проверка входа по учётным записям активов ----
+export type CredLoginStatus = "ok" | "auth_failed" | "timeout" | "unreachable" | "host_key_mismatch" | "error";
+export type CredHostStatus = CredLoginStatus | "partial" | "no_credential" | "not_in_allowlist";
+
+export interface CredentialCheckIn {
+  hosts: string[];
+  credential_ids?: number[];
+}
+
+export interface CredentialLoginOut {
+  credential_id: number;
+  credential: string;
+  protocol: "ssh" | "winrm";
+  username: string;
+  port: number;
+  status: CredLoginStatus;
+  message: string;
+  elapsed_ms: number;
+}
+
+export interface CredentialHostCheckOut {
+  host: string;
+  status: CredHostStatus;
+  message: string;
+  results: CredentialLoginOut[];
+  elapsed_ms: number;
+}
+
+export interface CredentialCheckOut {
+  hosts: CredentialHostCheckOut[];
   checked_at: string;
 }
 
@@ -835,4 +885,76 @@ export interface ComplianceSummary {
   controls: ComplianceControl[];
   failures: ComplianceControl[];
   manual: { id: string; title: string; group: string; group_title: string }[];
+}
+
+// ---------- План исправлений («Находки» → «Что исправить») ----------
+
+export type FixKind =
+  | "package"
+  | "package_nofix"
+  | "package_upgrade"
+  | "kernel"
+  | "software"
+  | "config"
+  | "cred"
+  | "vuln"
+  | "other";
+
+export interface FixHostOut {
+  host: string;
+  /** Установленная версия пакета / работающее ядро / версия ПО. */
+  installed: string | null;
+  note: string | null;
+  ports: number[];
+  findings: { id: number; label: string; severity: Severity }[];
+}
+
+export interface FixTaskOut {
+  key: string;
+  kind: FixKind;
+  kind_label: string;
+  title: string;
+  os: string | null;
+  os_family: string | null;
+  manager: string | null;
+  packages: string[];
+  fixed_version: string | null;
+  software: string | null;
+  steps: string[];
+  commands: string[];
+  verify: string[];
+  reboot: boolean;
+  details: string | null;
+  details_source: string | null;
+  severity: Severity;
+  priority: { score: number; label: PriorityOut["label"]; label_ru: string; rank: number | null } | null;
+  cves: string[];
+  bdu_ids: string[];
+  advisories: string[];
+  references: string[];
+  hosts: FixHostOut[];
+  host_count: number;
+  finding_count: number;
+}
+
+export interface FixPlanOut {
+  total: number;
+  items: FixTaskOut[];
+  tasks: number;
+  hosts: number;
+  findings: number;
+  false_positives: number;
+  kinds: Partial<Record<FixKind, number>>;
+  os: Record<string, number>;
+  severities: Partial<Record<Severity, number>>;
+}
+
+export interface FixQuery {
+  severity?: Severity[];
+  kind?: string[];
+  os?: string[];
+  host?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
 }

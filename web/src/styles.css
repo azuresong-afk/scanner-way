@@ -532,3 +532,41 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2); padding: var(--s2) var(--s3); border-top: 1px solid var(--border); font-size: 13px; }
 .pager-controls { display: inline-flex; align-items: center; gap: var(--s1); }
 .pager select { height: 28px; padding: 0 6px; width: auto; }
+
+/* ---------- План исправлений («Находки» → «Что исправить») ---------- */
+.fix-lead { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-2); }
+.fix-lead b { color: var(--text); }
+.fix-list { border-top: 1px solid var(--border); }
+.fix-card + .fix-card { border-top: 1px solid var(--border); }
+.fix-card > summary {
+  display: flex; align-items: center; gap: 10px; padding: 13px 20px; cursor: pointer;
+  list-style: none; flex-wrap: wrap;
+}
+.fix-card > summary::-webkit-details-marker { display: none; }
+.fix-card > summary::before {
+  content: "▸"; color: var(--text-3); width: 10px; transition: transform 0.15s ease;
+}
+.fix-card[open] > summary::before { transform: rotate(90deg); }
+.fix-card > summary:hover { background: var(--surface-2); }
+.fix-card > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fix-title { flex: 1 1 320px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.fix-meta { font-size: 12.5px; white-space: nowrap; }
+.fix-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s4);
+  padding: 4px 20px 21px 40px;
+}
+@media (max-width: 1100px) { .fix-body { grid-template-columns: minmax(0, 1fr); padding-left: 20px; } }
+.fix-body h3 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--text-2); }
+.fix-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
+.fix-cmd { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); overflow: hidden; }
+.fix-cmd-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 12px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.fix-cmd pre { margin: 0; padding: 10px 12px; overflow-x: auto; white-space: pre; line-height: 1.6; color: var(--text); }
+.fix-details > summary { cursor: pointer; color: var(--text-2); font-size: 13px; }
+.fix-refs { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.fix-finding { font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-left-width: 3px; }
+.fix-finding:hover { color: var(--text); border-color: var(--accent); }
+.sev-edge-critical { border-left-color: var(--sev-critical); }
+.sev-edge-high { border-left-color: var(--sev-high); }
+.sev-edge-medium { border-left-color: var(--sev-medium); }
+.sev-edge-low { border-left-color: var(--sev-low); }
+.sev-edge-info { border-left-color: var(--sev-info); }
