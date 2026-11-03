@@ -132,13 +132,14 @@ class CheckThrottle:
         self._hits: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
-    def allow(self, key: str) -> bool:
+    def allow(self, key: str, n: int = 1) -> bool:
+        """Учесть `n` проверок разом (массовая проверка): все или ни одной."""
         now = self._clock()
         with self._lock:
             q = self._hits.setdefault(key, deque())
             while q and now - q[0] >= self.window:
                 q.popleft()
-            if len(q) >= self.limit:
+            if len(q) + n > self.limit:
                 return False
-            q.append(now)
+            q.extend([now] * n)
             return True

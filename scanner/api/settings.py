@@ -62,6 +62,12 @@ class ApiSettings(BaseSettings):
     # Проверок доступности хоста (без прогона) на пользователя в минуту.
     reachability_per_minute: int = 10
 
+    # Проверка входа по учётным записям из «Активов»: хостов на пользователя в
+    # минуту (массовая проверка тратит лимит по числу хостов) и сколько хостов
+    # проверяется одновременно.
+    credential_check_hosts_per_minute: int = 120
+    credential_check_workers: int = 4
+
     # Origin'ы веб-интерфейса через запятую (https://scanner.example.local).
     # Пусто — CORS выключен: штатно интерфейс отдаётся с того же origin, что и
     # API (nginx из web/Dockerfile проксирует /api), и CORS не нужен.

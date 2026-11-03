@@ -483,6 +483,39 @@ export interface ReachabilityOut {
   checked_at: string;
 }
 
+// ---- проверка входа по учётным записям активов ----
+export type CredLoginStatus = "ok" | "auth_failed" | "timeout" | "unreachable" | "host_key_mismatch" | "error";
+export type CredHostStatus = CredLoginStatus | "partial" | "no_credential" | "not_in_allowlist";
+
+export interface CredentialCheckIn {
+  hosts: string[];
+  credential_ids?: number[];
+}
+
+export interface CredentialLoginOut {
+  credential_id: number;
+  credential: string;
+  protocol: "ssh" | "winrm";
+  username: string;
+  port: number;
+  status: CredLoginStatus;
+  message: string;
+  elapsed_ms: number;
+}
+
+export interface CredentialHostCheckOut {
+  host: string;
+  status: CredHostStatus;
+  message: string;
+  results: CredentialLoginOut[];
+  elapsed_ms: number;
+}
+
+export interface CredentialCheckOut {
+  hosts: CredentialHostCheckOut[];
+  checked_at: string;
+}
+
 // ---- активы (R7) ----
 export type Criticality = "low" | "medium" | "high" | "critical";
 
