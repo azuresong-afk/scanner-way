@@ -63,7 +63,8 @@ await step("runs", async () => {
 await step("run-detail", async () => {
   await page.getByText(RUN_NAME).first().click();
   await page.waitForURL(/\/runs\/\d+$/, { timeout });
-  await page.getByText("Завершён").first().waitFor({ timeout });
+  // «Частично» — если Nuclei без шаблонов не отработал (см. test_04)
+  await page.getByText(/Завершён|Частично/).first().waitFor({ timeout });
   // находки прогона подгружаются отдельно — дождаться их, а не «Загрузка…»
   await page.getByText("Загрузка…").first().waitFor({ state: "detached", timeout });
   await page.getByText(TARGET).first().waitFor({ timeout });
@@ -71,7 +72,7 @@ await step("run-detail", async () => {
 
 await step("findings", async () => {
   await page.goto(`${URL}/findings`);
-  await page.getByText(/Показано \d|Нет записей|В прогоне нет находок|Ничего не найдено/).first().waitFor({ timeout });
+  await page.getByText(/Показано \d|Нет записей|В прогоне нет находок|Ничего не найдено|Исправлять нечего/).first().waitFor({ timeout });
 });
 
 await step("reports", async () => {

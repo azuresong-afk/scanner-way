@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Play, Radar, RotateCcw, Check, Server } from "lucide-react";
+import { Plus, Radar, RotateCcw, Check, Server } from "lucide-react";
 import { api } from "../api/client";
 import type { FindingOut, FindingsSummary, RunOut, ServiceOut, Severity } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -8,8 +8,6 @@ import { useEngagement } from "../auth/EngagementContext";
 import { SeverityStack } from "../components/charts/SeverityBars";
 import { TrendChart, type TrendPoint } from "../components/charts/TrendChart";
 import { FindingDrawer } from "../components/FindingDrawer";
-import { ReportMenu } from "../components/ReportMenu";
-import { StartRunModal } from "../components/StartRunModal";
 import { Empty, ErrorAlert, Loading, RefTags, RunName, RunStatusPill, SeverityBadge } from "../components/ui";
 import { fmtDate, fmtDelta, fmtNumber, plural } from "../lib/format";
 import { isFinished, SEVERITY_LABEL, runName } from "../lib/labels";
@@ -312,7 +310,6 @@ export function DashboardPage() {
   const { current, loading: engLoading, error: engError } = useEngagement();
   const navigate = useNavigate();
   const data = useAsync(() => loadDashboard(current!.id), [current?.id], !!current);
-  const [starting, setStarting] = useState(false);
   const [open, setOpen] = useState<FindingOut | null>(null);
 
   const d = data.data;
@@ -345,14 +342,6 @@ export function DashboardPage() {
           </span>
           <h1>Сводка по договору</h1>
         </div>
-        <div className="actions">
-          {latest && has("view_report") && <ReportMenu runId={latest.id} runs={d?.runs} compact />}
-          {has("run_scan") && (
-            <button type="button" className="btn btn-primary" onClick={() => setStarting(true)}>
-              <Play size={16} /> Новый прогон
-            </button>
-          )}
-        </div>
       </div>
 
       {active.map((r) => (
@@ -371,7 +360,13 @@ export function DashboardPage() {
       {d && !latest && (
         <div className="card">
           <Empty title="Завершённых прогонов пока нет">
-            {has("run_scan") ? "Запустите первый прогон по целям из allowlist договора." : "Данные появятся после первого прогона."}
+            {has("run_scan") ? (
+              <>
+                Запустите первый прогон в разделе <Link to="/runs">«Прогоны»</Link>.
+              </>
+            ) : (
+              "Данные появятся после первого прогона."
+            )}
           </Empty>
         </div>
       )}
@@ -391,9 +386,6 @@ export function DashboardPage() {
         </>
       )}
 
-      {starting && (
-        <StartRunModal engagement={current} onClose={() => setStarting(false)} onStarted={(run) => navigate(`/runs/${run.id}`, { state: { created: run } })} onScheduled={() => navigate("/schedules")} />
-      )}
       {open && (
         <FindingDrawer
           finding={open}

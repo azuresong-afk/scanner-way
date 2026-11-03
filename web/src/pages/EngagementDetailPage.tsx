@@ -1,16 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ListChecks, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 import { ApiError, api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { CredentialsCard } from "../components/CredentialsCard";
 import { CredSetsCard } from "../components/CredSetsCard";
 import { ReachabilityCheck } from "../components/ReachabilityCheck";
-import { StartRunModal } from "../components/StartRunModal";
-import { Empty, ErrorAlert, Loading, Modal, RunName, RunStatusPill } from "../components/ui";
-import { fmtDate, fmtDuration } from "../lib/format";
-import { RATE_PROFILES } from "../lib/labels";
+import { Empty, ErrorAlert, Loading, Modal } from "../components/ui";
+import { fmtDate } from "../lib/format";
 import { compactAddresses, isIpOrCidr, parseTargets, specSize } from "../lib/targets";
 import type { AllowlistBulkOut, AllowlistOut } from "../api/types";
 import { useAsync } from "../lib/useAsync";
@@ -24,10 +22,8 @@ export function EngagementDetailPage() {
   const navigate = useNavigate();
   const eng = useAsync(() => api.engagement(id), [id]);
   const allow = useAsync(() => api.allowlist(id), [id]);
-  const runs = useAsync(() => api.runs(id), [id], has("view_report"));
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [starting, setStarting] = useState(false);
   const [cidr, setCidr] = useState("");
   const [note, setNote] = useState("");
   const [allowError, setAllowError] = useState<string | null>(null);
@@ -41,7 +37,6 @@ export function EngagementDetailPage() {
   if (eng.error) return <ErrorAlert error={eng.error} onRetry={eng.reload} />;
   const e = eng.data!;
   const canAllow = has("manage_allowlist");
-  const runList = [...(runs.data ?? [])].sort((a, b) => b.id - a.id);
 
   /** Итог массового добавления — одной строкой; дубль подсвечивает покрывающую запись. */
   const applyBulk = (res: AllowlistBulkOut) => {
@@ -148,173 +143,114 @@ export function EngagementDetailPage() {
               </button>
             </>
           )}
-          {has("run_scan") && (
-            <button type="button" className="btn btn-primary" onClick={() => setStarting(true)}>
-              <Play size={16} /> Новый прогон
-            </button>
-          )}
         </div>
       </div>
 
-      <div className="row">
-        <section className="card grow-2" style={{ overflow: "hidden", alignSelf: "flex-start" }}>
-          <div className="card-head">
-            <h2>Allowlist — разрешённые цели</h2>
-            <span className="faint" style={{ fontSize: 12 }}>
-              Сканер не выходит за эти диапазоны
-            </span>
-          </div>
-          {canAllow && (
-            <form onSubmit={add} className="inline" style={{ padding: "0 20px 14px", alignItems: "flex-end" }}>
-              <label className="field" style={{ flex: "1 1 240px" }}>
-                <span>IP, подсеть или диапазон</span>
-                <input
-                  className="input mono"
-                  value={cidr}
-                  onChange={(ev) => {
-                    setCidr(ev.target.value);
-                    setDupId(null);
-                  }}
-                  placeholder="10.0.0.0/24"
-                />
-              </label>
-              <label className="field" style={{ flex: "2 1 220px" }}>
-                <span>Комментарий</span>
-                <input className="input" value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="ДМЗ, приложение 1 к договору" maxLength={512} />
-              </label>
-              <button type="submit" className="btn btn-primary" disabled={busy || !cidr.trim()}>
-                <Plus size={16} /> Добавить
+      <section className="card" style={{ overflow: "hidden" }}>
+        <div className="card-head">
+          <h2>Allowlist — разрешённые цели</h2>
+          <span className="faint" style={{ fontSize: 12 }}>
+            Сканер не выходит за эти диапазоны
+          </span>
+        </div>
+        {canAllow && (
+          <form onSubmit={add} className="inline" style={{ padding: "0 20px 14px", alignItems: "flex-end" }}>
+            <label className="field" style={{ flex: "1 1 240px" }}>
+              <span>IP, подсеть или диапазон</span>
+              <input
+                className="input mono"
+                value={cidr}
+                onChange={(ev) => {
+                  setCidr(ev.target.value);
+                  setDupId(null);
+                }}
+                placeholder="10.0.0.0/24"
+              />
+            </label>
+            <label className="field" style={{ flex: "2 1 220px" }}>
+              <span>Комментарий</span>
+              <input className="input" value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="ДМЗ, приложение 1 к договору" maxLength={512} />
+            </label>
+            <button type="submit" className="btn btn-primary" disabled={busy || !cidr.trim()}>
+              <Plus size={16} /> Добавить
+            </button>
+            {has("view_report") && (
+              <button type="button" className="btn" onClick={() => (setPickError(null), setPicking(true))}>
+                <ListChecks size={16} /> Из активов…
               </button>
-              {has("view_report") && (
-                <button type="button" className="btn" onClick={() => (setPickError(null), setPicking(true))}>
-                  <ListChecks size={16} /> Из активов…
-                </button>
-              )}
-              <small className="muted" style={{ flexBasis: "100%" }}>
-                Можно несколько через запятую или с новой строки. Диапазон: 10.0.0.1-10.0.0.50 или коротко 10.0.0.1-50.
-              </small>
-            </form>
-          )}
-          {allowInfo && (
-            <div style={{ padding: "0 20px 14px" }}>
-              <div className="alert alert-info" role="status">
-                {allowInfo}
-              </div>
-            </div>
-          )}
-          {allowError && (
-            <div style={{ padding: "0 20px 14px" }}>
-              <ErrorAlert error={allowError} />
-            </div>
-          )}
-          {allow.loading && !allow.data ? (
-            <Loading />
-          ) : allow.error ? (
-            <div style={{ padding: "0 20px 16px" }}>
-              <ErrorAlert error={allow.error} onRetry={allow.reload} />
-            </div>
-          ) : allow.data!.length === 0 ? (
-            <Empty title="Allowlist пуст">Пока здесь нет ни одной цели, запуск прогонов невозможен.</Empty>
-          ) : (
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Диапазон</th>
-                    <th>Комментарий</th>
-                    <th>Добавлен</th>
-                    {canAllow && <th />}
-                  </tr>
-                </thead>
-                <tbody>
-                  {allowRows(allow.data!).map(({ entry: a, label, parts }) => {
-                    const hit = parts.some((p) => p.id === dupId);
-                    const isRange = parts.length > 1 || !!a.range_spec;
-                    return (
-                      <tr key={a.id} className={hit ? "selected" : undefined} aria-current={hit || undefined}>
-                        <td className="mono">
-                          {label}
-                          {isRange && (
-                            <small className="faint os-name" title={parts.map((p) => p.cidr).join(", ")}>
-                              диапазон · {parts.reduce((n, p) => n + specSize(p.cidr), 0).toLocaleString("ru-RU")} адресов
-                            </small>
-                          )}
-                        </td>
-                        <td className="muted">{a.note ?? "—"}</td>
-                        <td className="muted nowrap">{fmtDate(a.added_at)}</td>
-                        {canAllow && (
-                          <td className="right">
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-ghost"
-                              aria-label={`Удалить ${label}`}
-                              onClick={() => remove(a.id, isRange)}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        {has("view_report") && (
-          <section className="card grow-3" style={{ overflow: "hidden", alignSelf: "flex-start" }}>
-            <div className="card-head">
-              <h2>Прогоны по договору</h2>
-            </div>
-            {runs.loading && !runs.data ? (
-              <Loading />
-            ) : runs.error ? (
-              <div style={{ padding: "0 20px 16px" }}>
-                <ErrorAlert error={runs.error} onRetry={runs.reload} />
-              </div>
-            ) : runList.length === 0 ? (
-              <Empty title="Прогонов ещё не было" />
-            ) : (
-              <div className="table-wrap">
-                <table className="table" style={{ minWidth: 560 }}>
-                  <thead>
-                    <tr>
-                      <th>№</th>
-                      <th>Название</th>
-                      <th>Профиль</th>
-                      <th>Статус</th>
-                      <th>Начат</th>
-                      <th>Длительность</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {runList.map((r) => (
-                      <tr key={r.id} className="clickable" onClick={() => navigate(`/runs/${r.id}`)}>
-                        <td className="mono">
-                          <Link to={`/runs/${r.id}`} onClick={(ev) => ev.stopPropagation()}>
-                            #{r.id}
-                          </Link>
-                        </td>
-                        <td>
-                      <RunName run={r} />
-                    </td>
-                        <td className="muted">{RATE_PROFILES.find((p) => p.id === r.rate_profile)?.label ?? r.rate_profile}</td>
-                        <td>
-                          <RunStatusPill status={r.status} />
-                        </td>
-                        <td className="muted nowrap">{fmtDate(r.started_at ?? r.created_at)}</td>
-                        <td className="muted nowrap">{fmtDuration(r.started_at, r.finished_at)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
             )}
-          </section>
+            <small className="muted" style={{ flexBasis: "100%" }}>
+              Можно несколько через запятую или с новой строки. Диапазон: 10.0.0.1-10.0.0.50 или коротко 10.0.0.1-50.
+            </small>
+          </form>
         )}
-      </div>
+        {allowInfo && (
+          <div style={{ padding: "0 20px 14px" }}>
+            <div className="alert alert-info" role="status">
+              {allowInfo}
+            </div>
+          </div>
+        )}
+        {allowError && (
+          <div style={{ padding: "0 20px 14px" }}>
+            <ErrorAlert error={allowError} />
+          </div>
+        )}
+        {allow.loading && !allow.data ? (
+          <Loading />
+        ) : allow.error ? (
+          <div style={{ padding: "0 20px 16px" }}>
+            <ErrorAlert error={allow.error} onRetry={allow.reload} />
+          </div>
+        ) : allow.data!.length === 0 ? (
+          <Empty title="Allowlist пуст">Пока здесь нет ни одной цели, запуск прогонов невозможен.</Empty>
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Диапазон</th>
+                  <th>Комментарий</th>
+                  <th>Добавлен</th>
+                  {canAllow && <th />}
+                </tr>
+              </thead>
+              <tbody>
+                {allowRows(allow.data!).map(({ entry: a, label, parts }) => {
+                  const hit = parts.some((p) => p.id === dupId);
+                  const isRange = parts.length > 1 || !!a.range_spec;
+                  return (
+                    <tr key={a.id} className={hit ? "selected" : undefined} aria-current={hit || undefined}>
+                      <td className="mono">
+                        {label}
+                        {isRange && (
+                          <small className="faint os-name" title={parts.map((p) => p.cidr).join(", ")}>
+                            диапазон · {parts.reduce((n, p) => n + specSize(p.cidr), 0).toLocaleString("ru-RU")} адресов
+                          </small>
+                        )}
+                      </td>
+                      <td className="muted">{a.note ?? "—"}</td>
+                      <td className="muted nowrap">{fmtDate(a.added_at)}</td>
+                      {canAllow && (
+                        <td className="right">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            aria-label={`Удалить ${label}`}
+                            onClick={() => remove(a.id, isRange)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {has("host_credentials") && <CredentialsCard engagementId={e.id} />}
 
@@ -348,13 +284,6 @@ export function EngagementDetailPage() {
         await reloadList();
         navigate("/engagements");
       }} />}
-      {starting && (
-        <StartRunModal engagement={e} onClose={() => setStarting(false)} onStarted={(run) => navigate(`/runs/${run.id}`)} onScheduled={() => {
-            select(e.id);
-            navigate("/schedules");
-          }}
-        />
-      )}
       {picking && (
         <HostPicker
           engagementId={id}
