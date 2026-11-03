@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import ipaddress
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
@@ -18,7 +19,6 @@ from scanner.core import repository as repo
 from scanner.core.db import (
     AssetGroupRow,
     AssetRow,
-    FindingRow,
     asset_group_members,
     asset_tags,
 )
@@ -28,6 +28,14 @@ CRITICALITY: tuple[str, ...] = ("low", "medium", "high", "critical")
 CRITICALITY_LABEL = {"low": "Низкая", "medium": "Средняя", "high": "Высокая",
                      "critical": "Критическая"}
 DEFAULT_CRITICALITY = "medium"
+# Откуда актив (миграция 0022): заведён вручную, найден прогоном или
+# сканированием портов на вкладке проверки доступности.
+SOURCE_MANUAL = "manual"
+SOURCE_DISCOVERY = "discovery"
+SOURCE_NETSCAN = "netscan"
+SOURCES: tuple[str, ...] = (SOURCE_MANUAL, SOURCE_DISCOVERY, SOURCE_NETSCAN)
+SOURCE_LABEL = {SOURCE_MANUAL: "заведён вручную", SOURCE_DISCOVERY: "найден прогоном",
+                SOURCE_NETSCAN: "найден сканированием портов"}
 MAX_TAGS = 20
 MAX_TAG_LEN = 40
 
@@ -107,39 +115,20 @@ def _groups_map(session: Session, asset_ids: Sequence[int]) -> dict[int, list[di
     return out
 
 
-def _finding_counts(session: Session, engagement_id: int,
-                    hosts: dict[str, dict]) -> dict[str, dict[str, int]]:
-    """Открытые находки хоста в последнем прогоне, где он встречался
-    (без отмеченных ложными срабатываниями)."""
-    wanted: dict[int, set[str]] = defaultdict(set)
-    for key, info in hosts.items():
-        if info["run_ids"]:
-            wanted[max(info["run_ids"])].add(key)
-    marks = set(repo.false_positive_marks(session, engagement_id))
-    counts: dict[str, dict[str, int]] = {}
-    for run_id, keys in wanted.items():
-        for host, severity, dedup in session.execute(
-                select(FindingRow.host, FindingRow.severity, FindingRow.dedup_key)
-                .where(FindingRow.scan_run_id == run_id)):
-            h = host_key(host)
-            if h in keys and dedup not in marks:
-                c = counts.setdefault(h, {})
-                c[severity] = c.get(severity, 0) + 1
-    return counts
-
-
 def asset_views(session: Session, engagement_id: int, rows: Sequence[AssetRow]
                 ) -> list[dict]:
     """Активы с тегами, группами и данными последних прогонов (ОС, находки)."""
     ids = [r.id for r in rows]
     tags, groups = _tags_map(session, ids), _groups_map(session, ids)
     inv = {h["host"]: h for h in repo.engagement_hosts(session, engagement_id)}
-    counts = _finding_counts(session, engagement_id, inv)
+    from scanner.core.host_latest import latest_counts
+    latest = latest_counts(session, engagement_id)
     out = []
     for r in rows:
         addr = host_key(r.address)
         h = inv.get(addr)
-        c = counts.get(addr, {})
+        lt = latest.get(addr)
+        c = lt.counts if lt else {}
         out.append({
             "id": r.id, "engagement_id": r.engagement_id, "address": addr,
             "hostname": r.hostname, "owner": r.owner, "criticality": r.criticality,
@@ -149,7 +138,10 @@ def asset_views(session: Session, engagement_id: int, rows: Sequence[AssetRow]
             "os_family": h["os_family"] if h else None,
             "os_family_label": h["os_family_label"] if h else None,
             "last_run_id": max(h["run_ids"]) if h and h["run_ids"] else None,
-            "finding_counts": c, "findings_total": sum(c.values()),
+            "finding_counts": c, "findings_total": lt.total if lt else 0,
+            "checked_run_id": lt.checked_run_id if lt else None,
+            "source": r.source or SOURCE_MANUAL,
+            "first_seen_at": r.first_seen_at, "last_seen_at": r.last_seen_at,
         })
     return out
 
@@ -296,6 +288,63 @@ def bulk_update(session: Session, engagement_id: int, rows: Sequence[AssetRow], 
 def delete_asset(session: Session, row: AssetRow) -> None:
     session.delete(row)
     session.flush()
+
+
+def record_seen(session: Session, engagement_id: int, hosts: Iterable[str], *,
+                source: str, hostnames: Mapping[str, str] | None = None,
+                seen_at: datetime | None = None) -> int:
+    """Завести или обновить активы по обнаруженным хостам.
+
+    Новый адрес — актив с критичностью по умолчанию, `source` и отметками
+    first_seen_at = last_seen_at = `seen_at` (по умолчанию — сейчас). У уже
+    известного актива обновляется только last_seen_at (и имя, если его не было):
+    критичность, владелец, теги, группы и источник не меняются. Невалидные
+    адреса пропускаются. Возвращает число новых активов; не коммитит.
+    """
+    if source not in SOURCES:
+        raise AssetError(f"источник актива: одно из {', '.join(SOURCES)}")
+    seen_at = seen_at or datetime.now(UTC)
+    names = {}
+    for k, v in (hostnames or {}).items():
+        try:
+            names[normalize_address(k)] = _clean(v)
+        except AssetError:
+            continue
+    wanted: list[str] = []
+    for h in hosts:
+        try:
+            a = normalize_address(str(h))
+        except AssetError:
+            continue
+        if a not in wanted:
+            wanted.append(a)
+    if not wanted:
+        return 0
+    known = {host_key(r.address): r for r in session.scalars(
+        select(AssetRow).where(AssetRow.engagement_id == engagement_id))}
+    created = 0
+    for a in wanted:
+        row = known.get(a)
+        if row is None:
+            session.add(AssetRow(engagement_id=engagement_id, address=a,
+                                 hostname=names.get(a), criticality=DEFAULT_CRITICALITY,
+                                 source=source, first_seen_at=seen_at,
+                                 last_seen_at=seen_at))
+            created += 1
+            continue
+        if row.first_seen_at is None:
+            row.first_seen_at = seen_at
+        if row.last_seen_at is None or _aware(row.last_seen_at) < _aware(seen_at):
+            row.last_seen_at = seen_at
+        if not row.hostname and names.get(a):
+            row.hostname = names[a]
+    session.flush()
+    return created
+
+
+def _aware(t: datetime) -> datetime:
+    """SQLite отдаёт время без пояса — считаем его UTC, чтобы сравнивать."""
+    return t if t.tzinfo else t.replace(tzinfo=UTC)
 
 
 def import_discovered(session: Session, engagement_id: int,

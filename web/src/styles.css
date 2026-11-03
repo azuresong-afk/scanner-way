@@ -570,3 +570,16 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .sev-edge-medium { border-left-color: var(--sev-medium); }
 .sev-edge-low { border-left-color: var(--sev-low); }
 .sev-edge-info { border-left-color: var(--sev-info); }
+
+/* Кнопка, выглядящая как ссылка (переход к прогону из текста). */
+.link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-text);
+  cursor: pointer;
+}
+.link-btn:hover {
+  text-decoration: underline;
+}

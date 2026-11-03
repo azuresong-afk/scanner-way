@@ -595,7 +595,31 @@ export interface InventoryHostOut {
   /** Последний прогон с инвентаризацией по учётной записи и число пакетов хоста. */
   packages_run_id: number | null;
   package_count: number;
+  /**
+   * Последние известные уязвимости хоста по всем прогонам (без выбора прогона):
+   * по каждому модулю — из последнего прогона, где модуль хост действительно
+   * проверил. По уровням с info, без ложных срабатываний; всего — без info.
+   */
+  latest_counts?: Partial<Record<Severity, number>>;
+  latest_total?: number;
+  /** Прогоны, из которых собраны последние данные, по возрастанию. */
+  latest_run_ids?: number[];
+  /** Последний прогон, в котором хост проверялся хоть одним модулем. */
+  checked_run_id?: number | null;
 }
+
+/** Последние известные данные хоста (GET /engagements/{id}/hosts/{host}/latest). */
+export interface HostLatestOut {
+  host: string;
+  run_ids: number[];
+  checked_run_id: number | null;
+  /** Модуль → прогон, из которого взяты его находки. */
+  module_runs: Record<string, number>;
+  findings: FindingOut[];
+}
+
+/** Откуда актив: заведён вручную, найден прогоном, найден сканированием портов. */
+export type AssetSource = "manual" | "discovery" | "netscan";
 
 export type AuditExportFormat = "csv" | "json";
 
@@ -695,6 +719,12 @@ export interface AssetOut {
   last_run_id: number | null;
   finding_counts: Partial<Record<Severity, number>>;
   findings_total: number;
+  /** Последний прогон, где хост проверялся (источник последних данных). */
+  checked_run_id?: number | null;
+  source?: AssetSource;
+  /** Когда хост впервые / в последний раз обнаружен; null — ни разу. */
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
 }
 
 export interface AssetIn {

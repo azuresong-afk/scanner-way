@@ -488,6 +488,22 @@ class InventoryHostOut(BaseModel):
     # Последний прогон, где хост инвентаризирован по учётной записи, и число пакетов
     packages_run_id: int | None = None
     package_count: int = 0
+    # Последние известные уязвимости хоста — без выбора прогона
+    # (scanner.core.host_latest): по уровням (с info, без ложных срабатываний),
+    # всего без info, прогоны-источники и последний прогон, где хост проверялся.
+    latest_counts: dict[str, int] = Field(default_factory=dict)
+    latest_total: int = 0
+    latest_run_ids: list[int] = Field(default_factory=list)
+    checked_run_id: int | None = None
+
+
+class HostLatestOut(BaseModel):
+    """Последние известные данные хоста по всем прогонам договора."""
+    host: str
+    run_ids: list[int]
+    checked_run_id: int | None
+    module_runs: dict[str, int]
+    findings: list[FindingOut]
 
 
 class PackageOut(BaseModel):
@@ -612,8 +628,15 @@ class AssetOut(BaseModel):
     os_family: str | None = None
     os_family_label: str | None = None
     last_run_id: int | None = None
+    # последние известные находки (по модулям — из последнего прогона, где модуль
+    # хост проверил; scanner.core.host_latest), без ложных срабатываний
     finding_counts: dict[str, int] = Field(default_factory=dict)
     findings_total: int = 0
+    checked_run_id: int | None = None
+    # миграция 0022: откуда актив и когда хост обнаружен
+    source: str = "manual"
+    first_seen_at: datetime | None = None
+    last_seen_at: datetime | None = None
 
 
 class AssetBulkIn(BaseModel):

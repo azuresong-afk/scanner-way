@@ -42,6 +42,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from scanner.core import assets
 from scanner.core import coverage as cv
 from scanner.core import repository as repo
 from scanner.core.allowlist import AllowlistGate
@@ -500,6 +501,17 @@ def owner_is_dead(worker_id: str | None, me: str) -> bool:
     return False
 
 
+def seen_hosts(out: RunOutcome) -> list[str]:
+    """Хосты, которые прогон действительно обнаружил: хоть один модуль на них
+    отработал (покрытие completed), найден открытый порт или выполнена
+    инвентаризация. Адрес, который nmap с -Pn «видит» без единого открытого
+    порта, и недоступные цели активами не становятся."""
+    found = {e.host for e in out.coverage.entries() if e.status == cv.COMPLETED}
+    found |= {s.host for s in out.services}
+    found |= {i.host for i in out.inventory}
+    return sorted(found)
+
+
 # Опции прогона, которые понимает сканер (остальное отбрасывается).
 RUN_OPTION_KEYS = {"no_ping": bool, "profile": str}
 
@@ -938,6 +950,12 @@ class RunService:
                 repo.save_inventory(s, scan_run_id=scan_run_id, inventories=out.inventory)
             repo.save_coverage(s, scan_run_id, out.coverage)
             repo.set_run_warnings(s, scan_run_id, out.warnings)
+            # «Активы» независимо от прогонов: каждый обнаруженный хост остаётся
+            # в реестре договора, даже без учётки для глубокой проверки
+            assets.record_seen(s, engagement_id, seen_hosts(out),
+                               source=assets.SOURCE_DISCOVERY,
+                               hostnames={i.host: i.hostname for i in out.inventory
+                                          if i.hostname})
             prev_id = repo.previous_scan_run_id(s, scan_run_id, coverage=out.coverage)
             statuses = {}
             if prev_id is not None:

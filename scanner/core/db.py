@@ -436,6 +436,11 @@ class AssetRow(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    # Миграция 0022: откуда актив (manual | discovery | netscan) и когда хост
+    # впервые / в последний раз обнаружен (NULL — ни разу не найден).
+    source: Mapped[str] = mapped_column(Text, default="manual", server_default="manual")
+    first_seen_at: Mapped[datetime | None] = mapped_column(TsTz)
+    last_seen_at: Mapped[datetime | None] = mapped_column(TsTz)
 
 
 class AssetGroupRow(Base):

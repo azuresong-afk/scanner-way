@@ -70,6 +70,18 @@ describe("inventoryRows", () => {
     expect(rows.every((r) => r.inRun)).toBe(true);
   });
 
+  it("без прогона берёт последние известные счётчики хоста", () => {
+    const latest = [
+      { ...inv[0], latest_counts: { high: 2, info: 3 }, latest_total: 2, latest_run_ids: [1], checked_run_id: 1 },
+      { ...inv[1], latest_counts: {}, latest_total: 0, latest_run_ids: [], checked_run_id: null },
+    ];
+    const rows = inventoryRows(latest, [finding({ host: "10.0.0.10", severity: "critical" })], null);
+    const r10 = rows.find((r) => r.host === "10.0.0.10")!;
+    expect(r10).toMatchObject({ inRun: true, total: 2, maxSeverity: "high", checkedRunId: 1, latestRunIds: [1] });
+    expect(r10.counts.critical).toBe(0); // находки прогона без выбора прогона не используются
+    expect(rows.find((r) => r.host === "10.0.0.9")).toMatchObject({ inRun: false, total: 0 });
+  });
+
   it("отмечает хосты, которых не было в прогоне", () => {
     const rows = inventoryRows(inv, [], 2);
     expect(rows.find((r) => r.host === "10.0.0.10")).toMatchObject({ inRun: false, lastRunId: 1 });

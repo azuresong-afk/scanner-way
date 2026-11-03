@@ -69,7 +69,11 @@ const asset = (p: Partial<AssetOut> = {}): AssetOut => ({
 
 const routes = (assets: AssetOut[], extra: Record<string, unknown> = {}) => ({
   "GET /engagements/5/runs": [run],
-  "GET /engagements/5/hosts": [inv("10.0.0.1"), inv("10.0.0.2")],
+  // без выбора прогона — последние известные уязвимости каждого хоста
+  "GET /engagements/5/hosts": [
+    inv("10.0.0.1", { latest_counts: { critical: 1 }, latest_total: 1, latest_run_ids: [2], checked_run_id: 2 }),
+    inv("10.0.0.2", { latest_counts: {}, latest_total: 0, latest_run_ids: [2], checked_run_id: 2 }),
+  ],
   "GET /runs/2/findings": [finding({ host: "10.0.0.1", severity: "critical" })],
   "GET /engagements/5/assets": assets,
   "GET /engagements/5/asset-groups": [{ id: 3, engagement_id: 5, name: "ДМЗ", asset_count: 1, created_at: null }],
@@ -105,6 +109,21 @@ it("в одной строке — инвентарь, уязвимости пр
   // заведённый вручную и не сканированный хост тоже в списке
   expect(within(await rowOf("10.0.0.50")).getByText("не сканировался")).toBeInTheDocument();
   expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("3 актива");
+});
+
+it("хост, найденный сканированием портов без учётки, — актив, ещё не проверенный", async () => {
+  setToken("t");
+  mockApi(
+    routes([
+      asset(),
+      asset({ id: 11, address: "10.0.0.77", hostname: null, owner: null, last_run_id: null, groups: [], tags: [], source: "netscan", criticality: "medium" }),
+    ]),
+  );
+  renderPage([...ADMIN]);
+  const row = await rowOf("10.0.0.77");
+  expect(within(row).getByText("найден, не проверялся")).toBeInTheDocument();
+  expect(within(row).getByTitle(/сканированием портов/)).toBeInTheDocument();
+  expect(within(await rowOf("10.0.0.1")).getByText("по прогону №2")).toBeInTheDocument();
 });
 
 it("фильтр по группе оставляет только её хосты", async () => {

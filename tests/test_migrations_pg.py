@@ -176,3 +176,49 @@ def test_pg_allowlist_ranges(pg_factory):
         assert len(removed) == 8
     with session_scope(pg_factory) as s:
         assert not repo.load_allowlist_gate(s, eid).is_allowed("10.3.0.7")
+
+
+def test_pg_0022_backfills_assets_from_runs():
+    """0022: хосты прежних прогонов становятся активами (source=discovery),
+    у существующих активов заполняются first/last_seen, учёт не меняется."""
+    from alembic import command
+    cfg = _alembic_cfg()
+    command.upgrade(cfg, "0020")
+    engine = create_engine(PG_URL)
+    try:
+        with engine.begin() as c:
+            eid = c.execute(text("INSERT INTO engagements (name) VALUES ('Д') RETURNING id")
+                            ).scalar_one()
+            r1 = c.execute(text(
+                "INSERT INTO scan_runs (engagement_id, modules, status, finished_at) "
+                "VALUES (:e, '{discovery}', 'done', '2026-11-01T10:00:00Z') RETURNING id"),
+                {"e": eid}).scalar_one()
+            r2 = c.execute(text(
+                "INSERT INTO scan_runs (engagement_id, modules, status, finished_at) "
+                "VALUES (:e, '{discovery}', 'done', '2026-11-02T10:00:00Z') RETURNING id"),
+                {"e": eid}).scalar_one()
+            for rid, host in ((r1, "10.0.0.1"), (r2, "10.0.0.1"), (r1, "10.0.0.2")):
+                c.execute(text("INSERT INTO host_results (scan_run_id, host, state) "
+                               "VALUES (:r, :h, 'up')"), {"r": rid, "h": host})
+            c.execute(text(
+                "INSERT INTO findings (engagement_id, scan_run_id, module, host, finding_type, "
+                "title, severity, dedup_key) VALUES (:e, :r, 'vuln', '10.0.0.3', 'vuln', 't', "
+                "'high', 'k')"), {"e": eid, "r": r2})
+            c.execute(text("INSERT INTO assets (engagement_id, address, criticality, owner) "
+                           "VALUES (:e, '10.0.0.2', 'critical', 'Петров')"), {"e": eid})
+        command.upgrade(cfg, "head")
+        with engine.begin() as c:
+            rows = {str(r.address).split("/")[0]: r for r in c.execute(text(
+                "SELECT address, source, criticality, owner, first_seen_at, last_seen_at "
+                "FROM assets WHERE engagement_id = :e"), {"e": eid})}
+        assert set(rows) == {"10.0.0.1", "10.0.0.2", "10.0.0.3"}
+        a1 = rows["10.0.0.1"]
+        assert a1.source == "discovery" and a1.criticality == "medium"
+        assert a1.first_seen_at.day == 1 and a1.last_seen_at.day == 2
+        a2 = rows["10.0.0.2"]
+        assert (a2.source, a2.criticality, a2.owner) == ("manual", "critical", "Петров")
+        assert a2.first_seen_at is not None
+        assert rows["10.0.0.3"].source == "discovery"
+    finally:
+        engine.dispose()
+        command.downgrade(cfg, "base")
