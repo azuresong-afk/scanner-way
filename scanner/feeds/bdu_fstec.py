@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -155,12 +155,17 @@ class BduFstecFeed:
         """Потоково читает XLSX-выгрузку и отдаёт записи БДУ."""
         import openpyxl  # локальный импорт: тяжёлая зависимость только для фида
 
-        wb = openpyxl.load_workbook(self.feed_path, read_only=True, data_only=True)
-        ws = wb[SHEET_NAME] if SHEET_NAME in wb.sheetnames else wb[wb.sheetnames[0]]
-        rows = list(ws.iter_rows(values_only=True))
+        # файловый объект: openpyxl не проверяет расширение (файл, загруженный
+        # из мастера справочников, лежит по BDU_FSTEC_FEED_PATH с любым именем)
+        with open(self.feed_path, "rb") as fh:
+            wb = openpyxl.load_workbook(fh, read_only=True, data_only=True)
+            ws = wb[SHEET_NAME] if SHEET_NAME in wb.sheetnames else wb[wb.sheetnames[0]]
+            rows = list(ws.iter_rows(values_only=True))
+            wb.close()
         yield from parse_rows(rows)
 
-    def sync(self, store: ReferenceStore, *, batch_size: int = 1000) -> int:
+    def sync(self, store: ReferenceStore, *, batch_size: int = 1000,
+             progress: Callable[[int], None] | None = None) -> int:
         """Upsert всех записей выгрузки в reference_bdu_entry (вместе с cve_ids[]).
 
         Повторная загрузка новой выгрузки обновляет записи по bdu_id.
@@ -172,6 +177,8 @@ class BduFstecFeed:
             if len(batch) >= batch_size:
                 total += store.upsert_bdu(batch)
                 batch = []
+                if progress is not None:
+                    progress(total)
         if batch:
             total += store.upsert_bdu(batch)
         return total

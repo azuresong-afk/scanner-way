@@ -97,8 +97,12 @@ def build_run_event(session: Session, scan_run_id: int, public_url: str = "") ->
             if i.status == "open":
                 i.status = "new"
     else:
-        prev_keys = set(repo.get_finding_statuses(session, prev)) - set(marks)
-        fixed = len(prev_keys - {r.dedup_key for r in rows})
+        # исправлено — только то, что в этом прогоне действительно проверено
+        cur_cov = repo.run_coverage(session, run)
+        now = {r.dedup_key for r in rows}
+        fixed = sum(1 for f in repo.get_finding_rows(session, prev)
+                    if f.dedup_key not in marks and f.dedup_key not in now
+                    and cur_cov.covered(str(f.host), f.module))
     return Event(
         kind=RUN_FINISHED, title=run.name or f"Прогон №{run.id}",
         engagement_id=run.engagement_id, engagement_name=eng.name if eng else None,

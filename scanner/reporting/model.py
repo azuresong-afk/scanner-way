@@ -24,6 +24,7 @@ import ipaddress
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from scanner.core.models import (
     FalsePositiveMark,
@@ -33,6 +34,9 @@ from scanner.core.models import (
     Severity,
 )
 from scanner.reporting.diff import RunDiff, diff_by_module, diff_runs, severity_counts
+
+if TYPE_CHECKING:
+    from scanner.core.coverage import Coverage
 from scanner.reporting.remediation import Remediation, RemediationResolver
 from scanner.reporting.risk import (
     FORMULA_TEXT,
@@ -137,6 +141,22 @@ class FindingView:
         f = self.finding
         return f"{f.host}:{f.port}" if f.port is not None else f.host
 
+    @property
+    def source(self) -> str:
+        from scanner.core.confidence import infer
+        return infer(self.finding)[0]
+
+    @property
+    def confidence(self) -> str:
+        from scanner.core.confidence import infer
+        return infer(self.finding)[1]
+
+    @property
+    def confidence_label(self) -> str:
+        from scanner.core.confidence import CONFIDENCE_LABELS, SOURCE_LABELS
+        return (f"{CONFIDENCE_LABELS.get(self.confidence, self.confidence)} · "
+                f"{SOURCE_LABELS.get(self.source, self.source)}")
+
     def to_dict(self) -> dict:
         f = self.finding
         return {
@@ -159,6 +179,8 @@ class FindingView:
             "detected_at": f.detected_at.isoformat(),
             "remediation": self.remediation.to_dict(),
             "priority": self.risk.to_dict() if self.risk else None,
+            "confidence": self.confidence,
+            "source": self.source,
         }
 
 
@@ -186,6 +208,8 @@ class Trend:
     counts: dict[FindingStatus, int]
     severity: list[SeverityDelta]
     fixed: list[FindingView]
+    # находки базы на хостах/модулях, не проверенных в этом прогоне
+    unverified: list[FindingView] = field(default_factory=list)
 
     @property
     def verdict(self) -> str:
@@ -204,6 +228,7 @@ class Trend:
             "verdict": self.verdict,
             "severity_dynamics": [d.to_dict() for d in self.severity],
             "fixed": [v.to_dict() for v in self.fixed],
+            "unverified": [v.to_dict() for v in self.unverified],
         }
 
 
@@ -371,10 +396,15 @@ class Summary:
     risk_level: Severity | None
     top_hosts: list[HostRisk]
     key_points: list[str]
+    # False — ни один хост фактически не проверен (недоступен): «риск не выявлен»
+    # было бы неправдой, уровень риска «не оценён».
+    assessed: bool = True
 
     @property
     def risk_label(self) -> str:
-        return SEVERITY_LABELS[self.risk_level] if self.risk_level else "Не выявлен"
+        if self.risk_level:
+            return SEVERITY_LABELS[self.risk_level]
+        return "Не выявлен" if self.assessed else "Не оценён"
 
     def to_dict(self) -> dict:
         return {
@@ -384,6 +414,7 @@ class Summary:
             "risk_label": self.risk_label,
             "top_hosts": [h.to_dict() for h in self.top_hosts],
             "key_points": list(self.key_points),
+            "assessed": self.assessed,
         }
 
 
@@ -404,6 +435,17 @@ class Report:
     # Соответствие профилям ФСТЭК/CIS (R5): сводки scanner.compliance.engine.summarize
     # по профилям договора с признаком «в отчёт»; пусто — раздела нет.
     compliance: list[dict] = field(default_factory=list)
+    # Полнота проверки: статус прогона, покрытие (что реально проверено),
+    # ограничения достоверности и сопоставимость с базой сравнения.
+    run_status: str | None = None
+    coverage: dict | None = None
+    warnings: list[dict] = field(default_factory=list)
+    comparability: dict | None = None
+
+    @property
+    def coverage_gaps(self) -> list[dict]:
+        return [e for e in (self.coverage or {}).get("entries", [])
+                if e["status"] in ("unreachable", "no_credentials", "timeout", "error")]
 
     @property
     def priority_formula(self) -> str:
@@ -446,6 +488,10 @@ class Report:
                                "hosts": [h.to_dict() for h in self.priority_hosts]}
         if self.compliance:
             out["compliance"] = [_compliance_dict(c, self.brief) for c in self.compliance]
+        out["run_status"] = self.run_status
+        out["coverage"] = self.coverage
+        out["warnings"] = list(self.warnings)
+        out["comparability"] = self.comparability
         if not self.show_plan:
             del out["remediation_plan"]
         if self.brief:
@@ -503,6 +549,8 @@ def _trend(d: RunDiff, previous: list[Finding], current: list[Finding],
         severity=[SeverityDelta(s, prev_c[s], cur_c[s]) for s in SEVERITY_ORDER],
         fixed=[FindingView(f, resolver.resolve(f), FindingStatus.FIXED)
                for f in sorted(d.fixed, key=_sort_key)],
+        unverified=[FindingView(f, resolver.resolve(f), None)
+                    for f in sorted(d.unverified, key=_sort_key)],
     )
 
 
@@ -530,10 +578,50 @@ def _plan(views: list[FindingView]) -> list[PlanItem]:
     return items
 
 
+def _coverage_points(cov: Coverage | None, warnings: list[dict]) -> tuple[list[str], bool]:
+    """Ключевые выводы о полноте проверки (первыми в резюме) и признак «хоть
+    что-то проверено»."""
+    from scanner.core.coverage import AUTH_MODULES, MSG_HOST_DOWN, STATUS_LABELS
+    from scanner.core.naming import MODULE_TITLES
+    points: list[str] = []
+    assessed = True
+    if cov is not None and cov:
+        sm = cov.summary()
+        if not cov.completed_hosts():
+            assessed = False
+            down = [h for h in cov.hosts() if cov.host_status(h) == "unreachable"]
+            if down and len(down) == len(cov.hosts()):
+                points.append(f"{MSG_HOST_DOWN}: " + ", ".join(down[:10])
+                              + ". Отсутствие находок НЕ означает отсутствие уязвимостей.")
+            else:
+                points.append("Проверка не выполнена ни на одном хосте — отсутствие "
+                              "находок НЕ означает отсутствие уязвимостей.")
+        elif sm["gaps"]:
+            points.append(
+                f"Проверка выполнена не полностью: проверено хостов полностью — "
+                f"{sm['hosts_checked']}, частично — {sm['hosts_partial']}, недоступно — "
+                f"{sm['hosts_unreachable']} (из {sm['hosts']}). Подробности — в разделе "
+                "«Полнота проверки».")
+            auth = [e for e in cov.gaps() if e.module in AUTH_MODULES]
+            if auth:
+                hosts = sorted({e.host for e in auth})
+                what = sorted({f"{MODULE_TITLES.get(e.module, e.module)} — "
+                               f"{STATUS_LABELS[e.status]}" for e in auth})
+                points.append("Проверка по учётной записи не выполнена на хостах "
+                              f"{', '.join(hosts[:8])}: {'; '.join(what[:4])}. Пакеты, "
+                              "конфигурация и ядро на них не проверены.")
+    for w in warnings:
+        if w.get("message"):
+            points.append(w["message"])
+    return points, assessed
+
+
 def _summary(views: list[FindingView], trend: Trend | None,
-             false_positives: int = 0) -> Summary:
+             false_positives: int = 0, *, coverage: Coverage | None = None,
+             warnings: list[dict] | None = None) -> Summary:
     findings = [v.finding for v in views]
     counts = severity_counts(findings)
+    cov_points, assessed = _coverage_points(coverage, warnings or [])
     risk = next((s for s in SEVERITY_ORDER[:-1] if counts[s]), None)
     per_host: dict[str, list[Finding]] = {}
     for f in findings:
@@ -541,9 +629,11 @@ def _summary(views: list[FindingView], trend: Trend | None,
     hosts = [HostRisk(h, severity_counts(fs)) for h, fs in per_host.items()]
     hosts.sort(key=lambda h: tuple(-h.counts[s] for s in SEVERITY_ORDER) + (h.host,))
 
-    points: list[str] = []
+    points: list[str] = list(cov_points)
     urgent = counts[Severity.CRITICAL] + counts[Severity.HIGH]
-    if urgent:
+    if not assessed:
+        pass                      # «не выявлено» при непроведённой проверке — неправда
+    elif urgent:
         urgent_hosts = len({f.host for f in findings
                             if f.severity in (Severity.CRITICAL, Severity.HIGH)})
         points.append(
@@ -560,7 +650,9 @@ def _summary(views: list[FindingView], trend: Trend | None,
         points.append(
             f"По сравнению с предыдущим прогоном: устранено {c[FindingStatus.FIXED]}, "
             f"новых {c[FindingStatus.NEW]}, повторно выявлено {c[FindingStatus.REGRESSION]}, "
-            f"не устранено {c[FindingStatus.OPEN]}.")
+            f"не устранено {c[FindingStatus.OPEN]}"
+            + (f", не проверено в этом прогоне {len(trend.unverified)} (не считаются "
+               "устранёнными)" if trend.unverified else "") + ".")
         if c[FindingStatus.REGRESSION]:
             points.append("Повторное появление ранее устранённых уязвимостей указывает на "
                           "проблемы в процессе управления изменениями или обновлениями.")
@@ -568,7 +660,8 @@ def _summary(views: list[FindingView], trend: Trend | None,
         points.append(f"Исключено как ложные срабатывания: {false_positives} "
                       "(перечень — в разделе «Ложные срабатывания»).")
     return Summary(total=len(findings), hosts=len(per_host), severity_counts=counts,
-                   risk_level=risk, top_hosts=hosts[:5], key_points=points)
+                   risk_level=risk, top_hosts=hosts[:5], key_points=points,
+                   assessed=assessed)
 
 
 def build_report(
@@ -583,6 +676,10 @@ def build_report(
     risk: RiskContext | None = None,
     compliance: list[dict] | None = None,
     with_plan: bool = True,
+    coverage: Coverage | None = None,
+    previous_coverage: Coverage | None = None,
+    run_status: str | None = None,
+    warnings: list[dict] | None = None,
 ) -> Report:
     """Строит модель отчёта.
 
@@ -598,6 +695,9 @@ def build_report(
     hosts — адреса хостов (например, активов группы): в отчёт попадают только
     находки этих хостов; None — без фильтра (поведение по умолчанию).
     with_plan=False — без раздела «План устранения» (опция отчёта).
+    coverage/previous_coverage — покрытие прогона и базы сравнения: раздел
+    «Полнота проверки», честное сравнение (не проверенное — не «устранено»).
+    run_status/warnings — статус прогона и ограничения достоверности.
     """
     resolver = resolver or RemediationResolver()
     context = context or ReportContext()
@@ -617,11 +717,16 @@ def build_report(
     statuses: dict[str, FindingStatus] = {}
     combined_trend = None
     module_diffs: dict[str, RunDiff] = {}
+    comparability = None
     if prev is not None:
-        d = diff_runs(prev, cur, historically_fixed)
+        kw = {"previous_coverage": previous_coverage, "current_coverage": coverage}
+        d = diff_runs(prev, cur, historically_fixed, **kw)
         statuses = _status_map(d)
         combined_trend = _trend(d, prev, cur, resolver)
-        module_diffs = diff_by_module(prev, cur, historically_fixed)
+        module_diffs = diff_by_module(prev, cur, historically_fixed, **kw)
+        if coverage is not None and previous_coverage is not None:
+            from scanner.core.coverage import comparability as _cmp
+            comparability = _cmp(previous_coverage, coverage).to_dict()
 
     ranks = rank_findings(cur, risk) if risk is not None else {}
     views = [FindingView(f, resolver.resolve(f), statuses.get(f.dedup_key()),
@@ -639,9 +744,18 @@ def build_report(
         modules.append(Section(m, module_label(m),
                                [v for v in views if v.finding.module == m], trend))
 
+    cov_dict = None
+    if coverage is not None and coverage:
+        if hosts is not None:
+            from scanner.core.coverage import Coverage as _Cov
+            coverage = _Cov(e for e in coverage.entries() if _host_key(e.host) in allowed)
+        cov_dict = {"summary": coverage.summary(), "entries": coverage.to_dicts(),
+                    "hosts": [{"host": h, "status": coverage.host_status(h)}
+                              for h in coverage.hosts()]}
     report = Report(
         context=context,
-        summary=_summary(views, combined_trend, len(fp_views)),
+        summary=_summary(views, combined_trend, len(fp_views), coverage=coverage,
+                         warnings=warnings or []),
         plan=_plan(views),
         combined=Section("combined", "Сводно по всем модулям", views, combined_trend),
         modules=modules,
@@ -652,5 +766,9 @@ def build_report(
         priority_hosts=_priority_hosts(views),
         has_priority=risk is not None,
         compliance=list(compliance or []),
+        run_status=run_status,
+        coverage=cov_dict,
+        warnings=list(warnings or []),
+        comparability=comparability,
     )
     return report if with_plan else without_plan(report)

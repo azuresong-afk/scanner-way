@@ -47,6 +47,9 @@ class FeedContext:
     last_success_at: datetime | None = None
     fingerprint: str | None = None          # отпечаток последней загруженной выгрузки
     actor: str = "feeds:scheduler"
+    # Прогресс: (этап, записей загружено, всего) — для процента, скорости и ETA
+    # в интерфейсе (scheduler.ProgressWriter); по умолчанию никуда не пишется.
+    progress: Callable[..., None] = lambda stage, done=None, total=None: None
 
 
 @dataclass(slots=True)
@@ -101,6 +104,7 @@ def load_bdu(ctx: FeedContext) -> FeedResult:
     tmpdir: str | None = None
     try:
         if url:
+            ctx.progress("Скачивание выгрузки БДУ")
             tmpdir = tempfile.mkdtemp(prefix="bdu-")
             path = Path(tmpdir) / "vullist.xlsx"
             _download(url, path)
@@ -114,7 +118,10 @@ def load_bdu(ctx: FeedContext) -> FeedResult:
         if fingerprint == ctx.fingerprint:
             return FeedResult(message="Выгрузка не изменилась с прошлой загрузки",
                               unchanged=True, fingerprint=fingerprint)
-        n = BduFstecFeed(str(path)).sync(SqlReferenceStore(ctx.engine))
+        ctx.progress("Разбор выгрузки БДУ (vullist.xlsx)")
+        n = BduFstecFeed(str(path)).sync(
+            SqlReferenceStore(ctx.engine),
+            progress=lambda done: ctx.progress("Запись записей БДУ в справочник", done))
         return FeedResult(count=n, message=f"Загружено записей БДУ: {n}",
                           fingerprint=fingerprint)
     finally:
@@ -144,11 +151,19 @@ def load_nvd(ctx: FeedContext) -> FeedResult:
     store = SqlReferenceStore(ctx.engine)
     try:
         if ctx.last_success_at is None:
+            stage = ("Полная загрузка NVD через API" + ("" if settings.nvd_api_key else
+                     " (без NVD_API_KEY — 5 запросов за 30 с, несколько часов)"))
+            feed.progress = lambda done, total: ctx.progress(stage, done, total)
+            ctx.progress(stage, 0, None)
             n = feed.sync(store, records=feed.iter_api())
             return FeedResult(count=n, message=f"Полная загрузка NVD: {n} CVE")
         since = ctx.last_success_at.astimezone(UTC) - NVD_OVERLAP
         n = 0
-        for start, end in nvd_windows(since, ctx.now):
+        windows = nvd_windows(since, ctx.now)
+        for i, (start, end) in enumerate(windows, 1):
+            stage = f"Изменения CVE с {start:%Y-%m-%d} (период {i} из {len(windows)})"
+            feed.progress = lambda done, total, stage=stage: ctx.progress(stage, done,
+                                                                         total)
             n += feed.sync(store, records=feed.iter_api(last_mod_start=start,
                                                         last_mod_end=end))
     except Exception as e:
@@ -293,6 +308,8 @@ def load_advisories(ctx: FeedContext) -> FeedResult:
     if not targets:
         raise FeedError("не заданы выпуски для загрузки (ADVISORY_RELEASES), и прогоны "
                         "ещё не встречали хостов с поддерживаемыми ОС")
+    ctx.progress("Бюллетени: " + ", ".join(f"{f}:{r}" for f, r in targets)[:180],
+                 0, len(targets))
     results, fingerprint = sync_releases(store, targets,
                                          directory=directory, urls=settings.advisory_urls())
     ok = [r for r in results if r.error is None]

@@ -107,6 +107,10 @@
   .sev-info { background: #f2f4f7; color: #475467; }
   .status { font-size: 7.5pt; color: var(--muted); white-space: nowrap; font-weight: 500; }
   .status-new, .status-regression { color: #c4320a; }
+  .warnbox { border-left: 3px solid #f79009; background: #fffaeb; padding: 6pt 9pt; margin: 6pt 0; font-size: 8.5pt; }
+  .warnbox.bad { border-left-color: #d92d20; background: #fef3f2; }
+  .conf-low { color: #b54708; font-size: 7.5pt; font-weight: 500; }
+  .cov-gap { color: #b42318; } .cov-ok { color: #067647; } .cov-na { color: var(--muted); }
   .status-fixed { color: var(--good); }
 
   /* --- таблицы -------------------------------------------------------------- */
@@ -246,6 +250,22 @@
 <ul class="points">
   {% for p in r.summary.key_points %}<li>{{ p }}</li>{% endfor %}
 </ul>
+
+{% if r.coverage %}{% set cs = r.coverage.summary %}
+<h3>Полнота проверки</h3>
+{% if r.run_status == "partial" %}<div class="warnbox">Прогон выполнен частично: часть проверок не выполнена (см. таблицу). Отсутствие находок по этим хостам и модулям не означает отсутствие уязвимостей.</div>
+{% elif r.run_status == "failed" %}<div class="warnbox bad">Проверка не выполнена. Отсутствие находок не означает отсутствие уязвимостей.</div>{% endif %}
+<p class="lead">Хостов в прогоне: {{ cs.hosts }} · проверено полностью: {{ cs.hosts_checked }} · частично: {{ cs.hosts_partial }} · недоступно: {{ cs.hosts_unreachable }}{% if cs.hosts_not_checked %} · не проверено: {{ cs.hosts_not_checked }}{% endif %}.</p>
+{% if r.coverage_gaps %}
+<table>
+  <tr><th>Хост</th><th>Проверка</th><th>Состояние</th><th>Причина и рекомендация</th></tr>
+  {% for e in r.coverage_gaps %}
+  <tr><td class="mono">{{ e.host }}</td><td>{{ MODULE_TITLES.get(e.module, e.module) }}</td><td class="cov-gap">{{ e.label }}</td><td>{{ e.reason or "" }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endif %}
+{% for w in r.warnings %}<div class="warnbox">{{ w.message }}</div>{% endfor %}
 
 <h3>Находки по модулям</h3>
 {% if charts.modules %}<div class="card">{{ charts.modules }}</div>{% endif %}
@@ -390,6 +410,17 @@
   <tr><td>{{ m.label }}</td>{% for st in STATUS_ORDER %}{{ n(m.trend.counts[st]) }}{% endfor %}</tr>
   {% endfor %}
 </table></div>
+{% if r.comparability %}{% for w in r.comparability.warnings %}<div class="warnbox{% if r.comparability.level == 'none' %} bad{% endif %}">{{ w }}</div>{% endfor %}{% endif %}
+{% if t.unverified %}
+<h3>Не проверено в этом прогоне</h3>
+<p class="muted">Находки базового прогона на хостах и модулях, которые в этом прогоне не проверялись (хост недоступен, таймаут, модуль не выполнялся). Они не считаются устранёнными.</p>
+<table>
+  <tr><th>Опасность</th><th>Находка</th><th>Хост</th></tr>
+  {% for v in t.unverified %}
+  <tr><td>{{ sev(v.finding.severity) }}</td><td>{{ v.finding.title }}</td><td class="mono">{{ v.target }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
 {% if t.fixed %}
 <h3>Устранено с предыдущего прогона</h3>
 <table>
@@ -446,13 +477,15 @@
   {% set f = v.finding %}
   <div class="finding">
     <h4>{{ sev(f.severity) }} {{ f.title }}
-      {% if v.status %}<span class="status status-{{ v.status }}">· {{ v.status_label }}</span>{% endif %}</h4>
+      {% if v.status %}<span class="status status-{{ v.status }}">· {{ v.status_label }}</span>{% endif %}
+      {% if v.confidence == "low" %}<span class="conf-low">· не подтверждено (только баннер)</span>{% endif %}</h4>
     <div class="kv">
       <span>Хост <b class="mono">{{ v.target }}</b></span>
       {% if f.vuln_id %}<span>ID <b>{{ f.vuln_id }}</b></span>{% endif %}
       {% if f.cvss is not none %}<span>CVSS <b>{{ "%.1f"|format(f.cvss) }}</b></span>{% endif %}
       {% if f.cve_ids %}<span>CVE <b>{{ f.cve_ids|join(", ") }}</b></span>{% endif %}
       {% if f.bdu_ids %}<span>БДУ <b>{{ f.bdu_ids|join(", ") }}</b></span>{% endif %}
+      {% if f.finding_type != "info" %}<span>Уверенность <b>{{ v.confidence_label }}</b></span>{% endif %}
     </div>
     {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
     {% if r.brief %}

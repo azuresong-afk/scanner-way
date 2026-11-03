@@ -25,6 +25,7 @@ EVENT_TITLES = {RUN_FINISHED: "Прогон завершён",
 SEVERITIES = tuple(str(s) for s in Severity)                  # info … critical
 PRIORITIES = ("low", "medium", "high", "critical")            # ярлыки R6
 STATUS_TITLES = {"done": "завершён", "failed": "завершён с ошибкой",
+                 "partial": "выполнен частично (часть хостов/проверок не выполнена)",
                  "stopped": "остановлен",
                  "interrupted": "прерван (служба сканера перезапускалась)"}
 

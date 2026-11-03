@@ -34,6 +34,38 @@ STALE_AFTER = timedelta(hours=12)
 MESSAGE_LIMIT = 1000
 
 
+def _progress_reset(now: datetime) -> dict:
+    return {"progress_stage": "Подготовка", "progress_done": 0, "progress_total": None,
+            "progress_at": now}
+
+
+class ProgressWriter:
+    """Прогресс загрузки в feed_sync: этап, записей загружено/всего. Пишет не
+    чаще раза в `every` секунд (смена этапа — сразу); сбой записи прогресса
+    загрузку не прерывает."""
+
+    def __init__(self, sessions: sessionmaker[Session], source: str, every: float = 2.0):
+        self.sessions, self.source, self.every = sessions, source, every
+        self._last = 0.0
+        self._stage: str | None = None
+
+    def __call__(self, stage: str, done: int | None = None,
+                 total: int | None = None) -> None:
+        import time
+        now = time.monotonic()
+        if stage == self._stage and now - self._last < self.every:
+            return
+        self._stage, self._last = stage, now
+        try:
+            with session_scope(self.sessions) as s:
+                s.execute(update(FeedSync).where(FeedSync.source == self.source)
+                          .values(progress_stage=stage[:200], progress_done=done,
+                                  progress_total=total, progress_at=datetime.now(UTC))
+                          .execution_options(synchronize_session=False))
+        except Exception:  # noqa: BLE001 — прогресс вторичен
+            log.exception("feed %s: progress update failed", self.source)
+
+
 def spec_of(row: FeedSync) -> ScheduleSpec:
     return ScheduleSpec(kind=row.kind, timezone=row.timezone, time_of_day=row.time_of_day,
                         weekdays=list(row.weekdays or []), month_day=row.month_day)
@@ -122,33 +154,37 @@ class FeedScheduler:
                 update(FeedSync)
                 .where(FeedSync.source == source,
                        FeedSync.next_run_at == row.next_run_at, self._not_running(now))
-                .values(next_run_at=nxt, running_since=now)
+                .values(next_run_at=nxt, running_since=now, **_progress_reset(now))
                 .execution_options(synchronize_session=False)).rowcount == 1
 
-    def submit_manual(self, source: str, actor: str) -> bool:
-        """«Обновить сейчас»: False — этот источник уже обновляется."""
+    def submit_manual(self, source: str, actor: str, loader=None) -> bool:
+        """«Обновить сейчас»: False — этот источник уже обновляется.
+        loader — свой загрузчик вместо загрузчика источника (загрузка одного
+        выпуска бюллетеней из мастера справочников)."""
         now = datetime.now(UTC)
         if source not in self.sources:
             raise KeyError(source)
         with session_scope(self.sessions) as s:
             claimed = s.execute(
                 update(FeedSync).where(FeedSync.source == source, self._not_running(now))
-                .values(running_since=now)
+                .values(running_since=now, **_progress_reset(now))
                 .execution_options(synchronize_session=False)).rowcount == 1
         if claimed:
-            self.executor.submit(self.execute, source, now, actor, True)
+            self.executor.submit(self.execute, source, now, actor, True, loader)
         return claimed
 
     # --- исполнение --------------------------------------------------------
-    def execute(self, source: str, now: datetime, actor: str, manual: bool = False) -> str:
+    def execute(self, source: str, now: datetime, actor: str, manual: bool = False,
+                loader=None) -> str:
         """Загружает один источник (захват уже сделан) и пишет итог. Возвращает
         ok | unchanged | error."""
-        loader = self.sources[source].loader
+        loader = loader or self.sources[source].loader
         with session_scope(self.sessions) as s:
             row = s.get(FeedSync, source)
             ctx = FeedContext(engine=self.sessions.kw["bind"], audit=self.audit, now=now,
                               last_success_at=row.last_success_at,
-                              fingerprint=row.fingerprint, actor=actor)
+                              fingerprint=row.fingerprint, actor=actor,
+                              progress=ProgressWriter(self.sessions, source))
         error = None
         try:
             result = loader(ctx)
@@ -163,7 +199,10 @@ class FeedScheduler:
 
         values: dict[str, object] = {"last_run_at": now, "last_result": outcome,
                                      "message": message[:MESSAGE_LIMIT],
-                                     "running_since": None}
+                                     "running_since": None, "progress_stage": None,
+                                     "progress_at": datetime.now(UTC)}
+        if outcome == "error":
+            values["last_error_at"] = datetime.now(UTC)
         if result is not None:
             values["last_success_at"] = now
             if result.count is not None:

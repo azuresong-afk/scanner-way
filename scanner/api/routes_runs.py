@@ -461,7 +461,10 @@ def get_report(run_id: int, request: Request,
         false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts,
         risk=build_risk_context(session, current, eng.id),
         compliance=_compliance_sections(session, run_id, eng.id, hosts, profiles),
-        with_plan=plan)
+        with_plan=plan, coverage=repo.run_coverage(session, run),
+        previous_coverage=(repo.run_coverage(session, prev_id)
+                           if prev_id is not None else None),
+        run_status=run.status, warnings=list(run.warnings or []))
     fmt, var = ReportFormat(format), ReportVariant(variant)
     body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",
