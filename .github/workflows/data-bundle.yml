@@ -1,0 +1,128 @@
+name: data-bundle
+
+# Комплект данных уязвимостей для поставки (scanner bundle export): раз в неделю
+# и вручную (Actions → data-bundle → Run workflow). Результат — релиз
+# data-<дата> с файлом scanner-data-<дата>.tar (его кладут в ./data/bundle или
+# указывают в SCANNER_DATA_BUNDLE_URL) и артефакт сборки.
+#
+# Сборка сама инкрементальная: прошлый комплект импортируется, и NVD докачивает
+# только изменения с его даты — полная выгрузка NVD идёт только в первый раз.
+#
+# Ограничения раннеров GitHub (за рубежом): bdu.fstec.ru, dl.astralinux.ru и
+# redos.red-soft.ru оттуда обычно недоступны. БДУ попадёт в комплект, только если
+# задан секрет BDU_FSTEC_FEED_URL (своё зеркало vullist.xlsx); Astra и РЕД ОС —
+# если доступны (ошибка выпуска не валит сборку). Полный комплект с БДУ проще
+# собирать на эталонном стенде: docker compose exec app scanner bundle export.
+on:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Собрать с нуля (не брать прошлый комплект)"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 2 * * 0"      # воскресенье, 02:00 UTC
+
+permissions:
+  contents: write            # релиз data-<дата>
+
+concurrency:
+  group: data-bundle
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: scanner
+          POSTGRES_USER: scanner
+          POSTGRES_PASSWORD: scanner
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U scanner" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      SCANNER_DATABASE_URL: postgresql+psycopg://scanner:scanner@localhost:5432/scanner
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      BDU_FSTEC_FEED_URL: ${{ secrets.BDU_FSTEC_FEED_URL }}
+      ADVISORY_DIR: ${{ github.workspace }}/advisories
+      ADVISORY_RELEASES: >-
+        debian:bullseye,debian:bookworm,debian:trixie,ubuntu:focal,ubuntu:jammy,ubuntu:noble,rhel:8,rhel:9,alt:p10,alpine:3.20,alpine:3.21,astra:1.7,astra:1.8,redos:7.3,redos:8
+      NUCLEI_VERSION: "3.11.1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Схема БД (миграции применяет первая команда scanner)
+        run: scanner --actor ci:data-bundle feeds auto-enabled nvd || true
+
+      - name: Прошлый комплект (основа для инкремента)
+        if: ${{ !inputs.full }}
+        continue-on-error: true
+        run: |
+          tag=$(gh release list --limit 50 --json tagName,isDraft \
+                  --jq '[.[] | select(.tagName | startswith("data-")) | select(.isDraft | not)][0].tagName')
+          if [ -n "$tag" ]; then
+            gh release download "$tag" --pattern 'scanner-data-*.tar' --dir prev
+            scanner --no-migrate --actor ci:data-bundle bundle import --dir prev
+          else
+            echo "прошлого комплекта нет — полная загрузка"
+          fi
+
+      - name: NVD (инкремент от прошлого комплекта или полная выгрузка)
+        continue-on-error: true
+        run: scanner --no-migrate --actor ci:data-bundle feeds sync nvd
+      - name: EPSS и CISA KEV
+        continue-on-error: true
+        run: scanner --no-migrate --actor ci:data-bundle feeds sync epss kev
+      - name: Бюллетени дистрибутивов
+        continue-on-error: true
+        run: scanner --no-migrate --actor ci:data-bundle feeds sync advisories
+      - name: Обновления Microsoft (MSRC)
+        continue-on-error: true
+        run: scanner --no-migrate --actor ci:data-bundle feeds sync msrc
+      - name: БДУ ФСТЭК (только при заданном зеркале)
+        if: ${{ env.BDU_FSTEC_FEED_URL != '' }}
+        continue-on-error: true
+        run: scanner --no-migrate --actor ci:data-bundle feeds sync bdu
+      - name: Шаблоны Nuclei
+        continue-on-error: true
+        run: |
+          curl -fsSL -o /tmp/nuclei.zip \
+            "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip"
+          sudo unzip -o -d /usr/local/bin /tmp/nuclei.zip nuclei
+          nuclei -update-templates -disable-update-check
+
+      - name: Сборка комплекта
+        id: export
+        run: |
+          stamp=$(date -u +%Y%m%d)
+          out="dist/scanner-data-${stamp}.tar"
+          scanner --no-migrate --actor ci:data-bundle bundle export --out "$out" \
+            --nuclei-templates "$HOME/nuclei-templates"
+          scanner --no-migrate bundle info "$out" | tee dist/contents.txt
+          sha256sum "$out" | tee "$out.sha256"
+          echo "stamp=${stamp}" >> "$GITHUB_OUTPUT"
+          echo "file=${out}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scanner-data-${{ steps.export.outputs.stamp }}
+          path: dist/
+          retention-days: 30
+
+      - name: Релиз data-<дата>
+        run: |
+          tag="data-${{ steps.export.outputs.stamp }}"
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" \
+            "${{ steps.export.outputs.file }}" "${{ steps.export.outputs.file }}.sha256" \
+            --title "Комплект данных уязвимостей ${{ steps.export.outputs.stamp }}" \
+            --notes-file dist/contents.txt --latest=false

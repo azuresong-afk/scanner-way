@@ -15,6 +15,10 @@
     scanner credentials add --engagement 1 --name "Windows ДМЗ" --protocol winrm \
                 --user 'CORP\audit' --ask-password [--targets 10.0.2.0/24]
     scanner feeds sync-msrc [--file 2024-Jan.json ...]
+    scanner feeds sync nvd epss kev advisories     # как автообновление, с учётом даты
+    scanner bundle export --out data/bundle/scanner-data-20261103.tar
+    scanner bundle import [scanner-data-20261103.tar] [--auto] [--force]
+    scanner bundle info scanner-data-20261103.tar
 
 БД — `--db-url` / `SCANNER_DATABASE_URL`, иначе Postgres из настроек окружения.
 Перед каждой командой схема поднимается миграциями Alembic (`alembic upgrade
@@ -132,6 +136,59 @@ def build_parser() -> argparse.ArgumentParser:
                                                 "по расписанию (код 0 — да, 1 — нет)")
     auto.add_argument("source", help="bdu | nvd | nuclei | advisories")
     auto.set_defaults(handler=cmd_auto_enabled)
+
+    sync = fsub.add_parser("sync", help="обновить источники так же, как автообновление "
+                                        "(инкремент NVD/MSRC от прошлой загрузки, "
+                                        "итог — в «Справочниках»)")
+    sync.add_argument("sources", nargs="+", metavar="ИСТОЧНИК",
+                      help="bdu | nvd | nuclei | msrc | epss | kev | advisories")
+    sync.set_defaults(handler=cmd_feeds_sync)
+
+    # --- bundle ---
+    bundle = sub.add_parser("bundle", help="комплект данных уязвимостей для поставки "
+                                           "(снимок справочников одним файлом)")
+    bsub = bundle.add_subparsers(dest="bundle_command", required=True,
+                                 metavar="bundle_command")
+    bexp = bsub.add_parser("export", help="собрать комплект из справочников в БД")
+    bexp.add_argument("--out", required=True, type=Path,
+                      help="файл комплекта, напр. data/bundle/scanner-data-20261103.tar")
+    bexp.add_argument("--source", dest="sources", action="append", default=[],
+                      help="только этот источник (bdu, nvd, epss, kev, msrc, "
+                           "advisories); можно несколько раз. По умолчанию — все")
+    bexp.add_argument("--nuclei-templates", type=Path, default=None,
+                      help="каталог шаблонов Nuclei для комплекта (по умолчанию — "
+                           "каталог Nuclei этой установки, если он есть)")
+    bexp.add_argument("--no-nuclei", action="store_true",
+                      help="не класть шаблоны Nuclei в комплект")
+    bexp.set_defaults(handler=cmd_bundle_export)
+
+    bimp = bsub.add_parser("import", help="загрузить справочники из комплекта")
+    bimp.add_argument("file", nargs="?", type=Path,
+                      help="файл комплекта; без него — самый свежий scanner-data-*.tar "
+                           "в каталогах --dir")
+    bimp.add_argument("--dir", dest="dirs", action="append", default=[],
+                      help="где искать комплект (по умолчанию /data/bundle и "
+                           "/app/docker/data-bundle)")
+    bimp.add_argument("--url", default=os.environ.get("SCANNER_DATA_BUNDLE_URL", ""),
+                      help="скачать комплект, если в каталогах его нет "
+                           "(по умолчанию SCANNER_DATA_BUNDLE_URL)")
+    bimp.add_argument("--source", dest="sources", action="append", default=[],
+                      help="только этот источник; можно несколько раз")
+    bimp.add_argument("--force", action="store_true",
+                      help="заменить и более свежие локальные данные")
+    bimp.add_argument("--auto", action="store_true",
+                      help="режим старта контейнера: нет комплекта — не ошибка")
+    bimp.add_argument("--nuclei-templates", type=Path, default=None,
+                      help="куда разложить шаблоны Nuclei из комплекта")
+    bimp.add_argument("--bdu-marker", type=Path, default=None,
+                      help="создать этот файл, если БДУ загружена из комплекта (метка "
+                           "entrypoint: старая vullist.xlsx из ./data не перезапишет "
+                           "более свежую БДУ комплекта)")
+    bimp.set_defaults(handler=cmd_bundle_import)
+
+    binfo = bsub.add_parser("info", help="что внутри комплекта")
+    binfo.add_argument("file", type=Path)
+    binfo.set_defaults(handler=cmd_bundle_info)
 
     # --- run ---
     run = sub.add_parser("run", help="запустить прогон по договору (синхронно)")
@@ -427,6 +484,149 @@ def cmd_auto_enabled(args: argparse.Namespace, env: _Env) -> int:
     with session_scope(env.sessions) as s:
         enabled = s.scalar(select(FeedSync.enabled).where(FeedSync.source == args.source))
     return 0 if enabled else 1
+
+
+def _api_timezone() -> str:
+    """Пояс расписаний по умолчанию — тот же, что заводит API (SCANNER_API_TIMEZONE)."""
+    from scanner.api.settings import ApiSettings
+    return ApiSettings().timezone
+
+
+def cmd_feeds_sync(args: argparse.Namespace, env: _Env) -> int:
+    """Загрузка источников через те же загрузчики и учёт, что у автообновления:
+    дата успешной загрузки и отпечаток пишутся в feed_sync (NVD и MSRC дальше
+    докачивают только изменения; комплект данных берёт отсюда «актуально на»)."""
+    from datetime import UTC
+
+    from sqlalchemy import select
+
+    from scanner.core.db import FeedSync, session_scope
+    from scanner.feeds.scheduler import FeedScheduler, seed_feed_sync
+    from scanner.feeds.sources import SOURCES
+
+    unknown = [s for s in args.sources if s not in SOURCES]
+    if unknown:
+        raise CliError(f"неизвестные источники: {', '.join(unknown)} "
+                       f"(доступны: {', '.join(SOURCES)})")
+    seed_feed_sync(env.sessions, timezone=_api_timezone())
+    sched = FeedScheduler(env.sessions, env.audit, tick_seconds=0)
+    failed = 0
+    try:
+        for source in dict.fromkeys(args.sources):
+            outcome = sched.execute(source, datetime.now(UTC), env.actor, manual=True)
+            with session_scope(env.sessions) as s:
+                msg = s.scalar(select(FeedSync.message).where(FeedSync.source == source))
+            print(f"{source}: {outcome} — {msg or ''}")
+            failed += outcome == "error"
+    finally:
+        sched.stop()
+    return 1 if failed else 0
+
+
+def _nuclei_dir(arg: Path | None) -> Path:
+    if arg is not None:
+        return arg
+    from scanner.feeds.sources import nuclei_templates_dir
+    return nuclei_templates_dir()
+
+
+def cmd_bundle_export(args: argparse.Namespace, env: _Env) -> int:
+    from importlib.metadata import PackageNotFoundError, version
+
+    from scanner.feeds.bundle import BundleError, export_bundle
+
+    try:
+        ver = version("scanner")
+    except PackageNotFoundError:  # pragma: no cover
+        ver = ""
+    nuclei = None if args.no_nuclei else _nuclei_dir(args.nuclei_templates)
+    try:
+        res = export_bundle(env.engine, args.out, sources=args.sources or None,
+                            nuclei_dir=nuclei, scanner_version=ver)
+    except BundleError as e:
+        raise CliError(str(e)) from e
+    size = res.path.stat().st_size
+    for sid, entry in res.manifest["sources"].items():
+        print(f"{sid}: {entry['count']} записей, актуально на {entry['as_of'][:10]}")
+    if "nuclei_templates" in res.manifest:
+        print(f"nuclei: {res.manifest['nuclei_templates']['count']} шаблонов")
+    if res.skipped:
+        print(f"пропущены (нет данных): {', '.join(res.skipped)}")
+    print(f"комплект: {res.path} ({size / 1_048_576:.1f} МБ)")
+    env.audit.record(subject=env.actor, action="feed_bundle_export", target="bundle",
+                     result="ok", details={"file": res.path.name, "bytes": size,
+                                           "sources": sorted(res.manifest["sources"])})
+    return 0
+
+
+def cmd_bundle_import(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.feeds.bundle import (
+        DEFAULT_DIRS,
+        BundleError,
+        download_bundle,
+        find_bundle,
+        import_bundle,
+    )
+
+    dirs = args.dirs or list(DEFAULT_DIRS)
+    path = args.file
+    try:
+        if path is None:
+            path = find_bundle(dirs)
+        if path is None and args.url.strip():
+            print(f"комплект не найден в {', '.join(dirs)} — скачиваю {args.url.strip()}")
+            path = download_bundle(args.url.strip(), Path(dirs[0]))
+        if path is None:
+            if args.auto:
+                print("комплект данных не найден — справочники загрузятся из источников")
+                return 0
+            raise CliError(f"комплект не найден в {', '.join(dirs)}; укажите файл")
+        if not Path(path).is_file():
+            raise CliError(f"файл не найден: {path}")
+        results = import_bundle(env.engine, Path(path), sources=args.sources or None,
+                                force=args.force,
+                                nuclei_dir=_nuclei_dir(args.nuclei_templates),
+                                timezone=_api_timezone())
+    except BundleError as e:
+        env.audit.record(subject=env.actor, action="feed_bundle_import", target="bundle",
+                         result="error", details={"file": Path(path).name if path else None,
+                                                  "error": str(e)[:300]})
+        raise CliError(str(e)) from e
+    for r in results:
+        verb = "загружено" if r.status == "imported" else "пропущено"
+        print(f"{r.source}: {verb} — {r.message}")
+    if args.bdu_marker and any(r.source == "bdu" and r.status == "imported"
+                               for r in results):
+        try:
+            args.bdu_marker.touch()
+        except OSError:
+            pass
+    env.audit.record(subject=env.actor, action="feed_bundle_import", target="bundle",
+                     result="ok", details={
+                         "file": Path(path).name,
+                         "imported": {r.source: r.count for r in results
+                                      if r.status == "imported"},
+                         "skipped": [r.source for r in results if r.status != "imported"]
+                         or None})
+    return 0
+
+
+def cmd_bundle_info(args: argparse.Namespace, env: _Env) -> int:
+    from scanner.feeds.bundle import BundleError, read_manifest
+
+    try:
+        m = read_manifest(args.file)
+    except BundleError as e:
+        raise CliError(str(e)) from e
+    print(f"комплект от {m['created_at'][:10]}, формат {m['format']}, "
+          f"версия сканера {m.get('scanner_version') or '—'}")
+    for sid, entry in m["sources"].items():
+        extra = f"; выпуски: {', '.join(entry['releases'])}" if entry.get("releases") else ""
+        print(f"  {sid}: {entry['count']} записей, актуально на "
+              f"{(entry.get('as_of') or '')[:10]}{extra}")
+    if m.get("nuclei_templates"):
+        print(f"  nuclei: {m['nuclei_templates']['count']} шаблонов")
+    return 0
 
 
 def _registry(env: _Env):
