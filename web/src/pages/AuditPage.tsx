@@ -52,6 +52,8 @@ const ACTION_LABEL: Record<string, string> = {
   credential_delete: "Удаление учётной записи актива",
   false_positive_mark: "Отметка «ложное срабатывание»",
   false_positive_unmark: "Снятие отметки «ложное срабатывание»",
+  false_positive_mark_software: "Отметка «ложное срабатывание» всего ПО",
+  false_positive_unmark_software: "Снятие отметки «ложное срабатывание» со всего ПО",
   cred_audit_attempt: "Попытка входа (cred_audit)",
   cred_audit_limit: "Лимит попыток (cred_audit)",
   cred_audit_lockout: "Блокировка учётки (cred_audit)",

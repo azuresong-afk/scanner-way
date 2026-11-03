@@ -66,6 +66,8 @@ export function HostDetailPage() {
   const row = useMemo(() => (data.data ? byHost(data.data.findings.filter(isIssue), data.data.services)[0] : undefined), [data.data]);
   const info = data.data?.findings.filter((f) => f.severity === "info" && !isFalsePositive(f)) ?? [];
   const falsePositives = data.data?.findings.filter(isFalsePositive) ?? [];
+  // «По ПО» показывает и ложные срабатывания (не считая их) — чтобы отметку ПО можно было снять одной кнопкой
+  const softwareFindings = useMemo(() => data.data?.findings.filter((f) => f.severity !== "info") ?? [], [data.data]);
 
   return (
     <>
@@ -142,10 +144,19 @@ export function HostDetailPage() {
                 ))}
               </div>
             </div>
-            {!row.findings.length ? (
+            {view === "software" ? (
+              <SoftwareTable
+                findings={softwareFindings}
+                services={row.services}
+                onOpen={setOpen}
+                selected={open}
+                runId={run.id}
+                host={host}
+                triage={has("triage_findings")}
+                onChanged={() => void data.reload()}
+              />
+            ) : !row.findings.length ? (
               <Empty title="Уязвимостей не найдено" />
-            ) : view === "software" ? (
-              <SoftwareTable findings={row.findings} services={row.services} onOpen={setOpen} selected={open} />
             ) : (
               <FindingsTable findings={row.findings} onOpen={setOpen} selected={open} hideHost />
             )}

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import threading
 import time
@@ -26,6 +27,8 @@ from scanner.api.schemas import (
     FalsePositiveOut,
     FindingOut,
     PriorityOut,
+    SoftwareFalsePositiveIn,
+    SoftwareFalsePositiveOut,
 )
 from scanner.core import findings_query as fq
 from scanner.core import repository as repo
@@ -247,3 +250,87 @@ def list_false_positives(engagement_id: int,
                 module=r.module, title=r.title, reason=r.reason,
                 marked_by=marks[r.dedup_key].marked_by, marked_at=r.marked_at)
             for r in repo.list_false_positives(session, engagement_id)]
+
+
+# В журнал аудита массового действия — не больше стольких находок поимённо.
+AUDIT_FINDINGS_LIMIT = 200
+
+
+def _software_rows(session: Session, run_id: int,
+                   body: SoftwareFalsePositiveIn) -> list[FindingRow]:
+    """Уязвимости прогона (без info), относящиеся к указанному ПО."""
+    q = select(FindingRow).where(FindingRow.scan_run_id == run_id,
+                                 FindingRow.severity != Severity.INFO.value)
+    if not body.all_hosts:
+        try:
+            q = q.where(FindingRow.host == str(ipaddress.ip_address(body.host)))
+        except ValueError:
+            raise HTTPException(422, "host must be an IP address") from None
+    services = services_by_port(session, run_id)
+    name = body.software.casefold()
+    out = []
+    for row in session.scalars(q.order_by(FindingRow.id)):
+        sw = software_of(repo.row_to_finding(row), services)
+        if sw is not None and sw.name.casefold() == name and \
+                (sw.version or None) == body.version:
+            out.append(row)
+    return out
+
+
+def _software_fp(run_id: int, body: SoftwareFalsePositiveIn, user: Principal,
+                 session: Session, audit, *, mark: bool) -> SoftwareFalsePositiveOut:
+    run = repo.get_scan_run(session, run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "scan run not found")
+    rows = _software_rows(session, run_id, body)
+    marks = repo.false_positive_marks(session, run.engagement_id)
+    # одна отметка на dedup_key; меняем только то, что ещё не в нужном состоянии
+    todo: dict[str, FindingRow] = {}
+    for r in rows:
+        if (r.dedup_key in marks) != mark:
+            todo.setdefault(r.dedup_key, r)
+    result = SoftwareFalsePositiveOut(matched=len(rows), changed=len(todo),
+                                      hosts=len({str(r.host) for r in rows}),
+                                      dry_run=body.dry_run)
+    if body.dry_run or not todo:
+        return result
+    for r in todo.values():
+        if mark:
+            repo.mark_false_positive(session, r, reason=body.reason, marked_by=user.id)
+        else:
+            repo.unmark_false_positive(session, run.engagement_id, r.dedup_key)
+    session.commit()
+    changed = list(todo.values())
+    audit.record(
+        subject=user.subject,
+        action="false_positive_mark_software" if mark else "false_positive_unmark_software",
+        target=f"engagement:{run.engagement_id}", result="ok",
+        details={"scan_run_id": run_id, "software": body.software,
+                 "version": body.version,
+                 "host": "*" if body.all_hosts else body.host,
+                 "reason": body.reason if mark else None,
+                 "count": len(changed), "hosts": result.hosts,
+                 "findings": [{"host": str(r.host), "port": r.port,
+                               "vuln_id": r.vuln_id, "module": r.module}
+                              for r in changed[:AUDIT_FINDINGS_LIMIT]]})
+    return result
+
+
+@router.post("/runs/{run_id}/false-positives/by-software",
+             response_model=SoftwareFalsePositiveOut)
+def mark_software_false_positive(run_id: int, body: SoftwareFalsePositiveIn,
+                                 user: TriageUser, session: SessionDep,
+                                 audit: AuditDep) -> SoftwareFalsePositiveOut:
+    """Все уязвимости ПО на хосте (или на всех хостах прогона) — в ложные
+    срабатывания одним действием. Уже отмеченные не трогаются (их обоснование
+    сохраняется). Действие пишется в аудит одной записью со списком находок."""
+    return _software_fp(run_id, body, user, session, audit, mark=True)
+
+
+@router.post("/runs/{run_id}/false-positives/by-software/unmark",
+             response_model=SoftwareFalsePositiveOut)
+def unmark_software_false_positive(run_id: int, body: SoftwareFalsePositiveIn,
+                                   user: TriageUser, session: SessionDep,
+                                   audit: AuditDep) -> SoftwareFalsePositiveOut:
+    """Снять отметку «ложное срабатывание» со всех уязвимостей ПО."""
+    return _software_fp(run_id, body, user, session, audit, mark=False)
