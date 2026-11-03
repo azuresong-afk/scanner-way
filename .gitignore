@@ -14,3 +14,7 @@ build/
 /backups/
 /data.before-restore-*/
 /e2e-artifacts/
+
+# комплекты данных уязвимостей (scanner bundle export) — большие, не в git
+docker/data-bundle/*.tar
+*.tar.part
