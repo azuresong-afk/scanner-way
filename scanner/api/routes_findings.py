@@ -14,7 +14,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -26,13 +26,14 @@ from scanner.api.schemas import (
     FalsePositiveMarkOut,
     FalsePositiveOut,
     FindingOut,
+    FixPlanOut,
     PriorityOut,
     SoftwareFalsePositiveIn,
     SoftwareFalsePositiveOut,
 )
 from scanner.core import findings_query as fq
 from scanner.core import repository as repo
-from scanner.core.db import AssetRow, FindingRow
+from scanner.core.db import AssetRow, FindingRow, HostPackageRow
 from scanner.core.models import (
     FalsePositiveMark,
     Finding,
@@ -169,6 +170,7 @@ def clear_priority_cache() -> None:
     with _priority_lock:
         _priority_cache.clear()
         _priority_latest.clear()
+        _fix_plan_cache.clear()
 
 
 def finding_out(row: FindingRow, marks: dict[str, FalsePositiveMark],
@@ -250,6 +252,123 @@ def list_false_positives(engagement_id: int,
                 module=r.module, title=r.title, reason=r.reason,
                 marked_by=marks[r.dedup_key].marked_by, marked_at=r.marked_at)
             for r in repo.list_false_positives(session, engagement_id)]
+
+
+@router.get("/findings/{finding_id}", response_model=FindingOut)
+def read_finding(finding_id: int,
+                 _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                 session: SessionDep) -> FindingOut:
+    """Одна находка — для карточки из плана исправлений (отметка ложного срабатывания)."""
+    row = _get_finding(session, finding_id)
+    marks = repo.false_positive_marks(session, row.engagement_id)
+    return finding_out(row, marks, services_by_port(session, row.scan_run_id),
+                       run_priorities(session, row.scan_run_id, row.engagement_id, marks))
+
+
+# --- план исправлений («Находки» → «Что исправить») ---------------------------
+# Строится по всем находкам прогона, поэтому кэшируется так же, как приоритеты:
+# ключ — прогон и набор отметок «ложное срабатывание».
+FIX_PLAN_TTL = 300.0
+_FIX_PLAN_CACHE_SIZE = 16
+_fix_plan_cache: OrderedDict[tuple[int, int], tuple[float, list, int]] = OrderedDict()
+
+
+def _host_managers(session: Session, scan_run_id: int) -> dict[str, str]:
+    rows = session.execute(select(HostPackageRow.host, HostPackageRow.manager)
+                           .where(HostPackageRow.scan_run_id == scan_run_id)
+                           .distinct()).all()
+    return {str(h): m for h, m in rows}
+
+
+def fix_plan(request: Request, session: Session, scan_run_id: int, engagement_id: int,
+             cacheable: bool = True):
+    """(действия исправления, исключено ложных срабатываний) по прогону.
+    cacheable=False — прогон ещё идёт, находки добавляются: без кэша."""
+    from scanner.reporting.fixplan import build_fix_plan
+
+    marks = repo.false_positive_marks(session, engagement_id)
+    key = (scan_run_id, hash(frozenset(marks)))
+    now = time.monotonic()
+    with _priority_lock:
+        hit = _fix_plan_cache.get(key)
+        if cacheable and hit is not None and now - hit[0] < FIX_PLAN_TTL:
+            _fix_plan_cache.move_to_end(key)
+            return hit[1], hit[2]
+    rows = repo.get_finding_rows(session, scan_run_id)
+    items, fps = [], 0
+    for r in rows:
+        if r.dedup_key in marks:
+            fps += 1
+            continue
+        items.append((r.id, repo.row_to_finding(r)))
+    findings = [f for _, f in items]
+    resolver = request.app.state.resolver_factory(findings)
+    # ОС хостов без учётки — из инвентаря договора; ОС из прогона точнее
+    resolver.add_host_os(repo.host_os_names(session, engagement_id), override=False)
+    tasks = build_fix_plan(
+        items, resolver=resolver, managers=_host_managers(session, scan_run_id),
+        services=services_by_port(session, scan_run_id),
+        priorities=run_priorities(session, scan_run_id, engagement_id, marks))
+    if not cacheable:
+        return tasks, fps
+    with _priority_lock:
+        _fix_plan_cache[key] = (now, tasks, fps)
+        _fix_plan_cache.move_to_end(key)
+        while len(_fix_plan_cache) > _FIX_PLAN_CACHE_SIZE:
+            _fix_plan_cache.popitem(last=False)
+    return tasks, fps
+
+
+@router.get("/runs/{run_id}/fixes", response_model=FixPlanOut)
+def list_fixes(run_id: int, request: Request,
+               _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+               session: SessionDep,
+               severity: Annotated[list[str] | None, Query()] = None,
+               kind: Annotated[list[str] | None, Query()] = None,
+               os: Annotated[list[str] | None, Query()] = None,
+               host: Annotated[str | None, Query(max_length=64)] = None,
+               q: Annotated[str | None, Query(max_length=200)] = None,
+               limit: Annotated[int, Query(ge=1, le=500)] = 50,
+               offset: Annotated[int, Query(ge=0)] = 0) -> dict:
+    """План исправлений прогона для администраторов: находки, собранные в
+    действия («обновить пакет P до версии V на ОС X»), с командами для менеджера
+    пакетов ОС хоста, проверкой результата и списком хостов. Ложные
+    срабатывания не входят. Порядок — по приоритету (R6), затем по уровню.
+    os — подпись ОС («Debian 12»); «-» — действия без привязки к ОС."""
+    from scanner.api.routes_runs import FINISHED, _get_run
+    from scanner.reporting.fixplan import KINDS
+
+    run = _get_run(session, run_id)
+    tasks, fps = fix_plan(request, session, run_id, run.engagement_id,
+                          cacheable=run.status in FINISHED)
+    hosts = {h.host for t in tasks for h in t.hosts}
+    out = {"tasks": len(tasks), "hosts": len(hosts),
+           "findings": sum(t.findings for t in tasks), "false_positives": fps,
+           "kinds": {}, "os": {}, "severities": {}}
+    for t in tasks:
+        out["kinds"][t.kind] = out["kinds"].get(t.kind, 0) + 1
+        out["os"][t.os or "-"] = out["os"].get(t.os or "-", 0) + 1
+        out["severities"][str(t.severity)] = out["severities"].get(str(t.severity), 0) + 1
+    out["kinds"] = {k: out["kinds"][k] for k in KINDS if k in out["kinds"]}
+    sel = tasks
+    if severity:
+        sel = [t for t in sel if str(t.severity) in severity]
+    if kind:
+        kinds = set(kind)
+        if "package" in kinds:             # «обновление пакета» — с версией и без
+            kinds.add("package_upgrade")
+        sel = [t for t in sel if t.kind in kinds]
+    if os:
+        sel = [t for t in sel if (t.os or "-") in os]
+    if host:
+        h = host.strip()
+        sel = [t for t in sel if any(x.host == h for x in t.hosts)]
+    if q and q.strip():
+        needle = q.strip().lower()
+        sel = [t for t in sel if needle in t.search_text()]
+    out["total"] = len(sel)
+    out["items"] = [t.to_dict() for t in sel[offset:offset + limit]]
+    return out
 
 
 # В журнал аудита массового действия — не больше стольких находок поимённо.
