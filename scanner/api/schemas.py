@@ -488,6 +488,39 @@ class ReachabilityOut(BaseModel):
     checked_at: datetime
 
 
+# ---- проверка входа по учётным записям активов ----
+class CredentialCheckIn(BaseModel):
+    hosts: list[str] = Field(min_length=1, max_length=16)
+    # пусто — все учётки договора, привязанные к хосту областью действия
+    credential_ids: list[int] | None = Field(default=None, max_length=50)
+
+
+class CredentialLoginOut(BaseModel):
+    credential_id: int
+    credential: str
+    protocol: str                 # ssh | winrm
+    username: str
+    port: int
+    status: str                   # ok | auth_failed | timeout | unreachable | host_key_mismatch | error
+    message: str
+    elapsed_ms: float
+
+
+class CredentialHostCheckOut(BaseModel):
+    host: str
+    # ok | partial | auth_failed | timeout | unreachable | host_key_mismatch |
+    # no_credential | not_in_allowlist | error
+    status: str
+    message: str
+    results: list[CredentialLoginOut]
+    elapsed_ms: float
+
+
+class CredentialCheckOut(BaseModel):
+    hosts: list[CredentialHostCheckOut]
+    checked_at: datetime
+
+
 # ---- активы (R7) ----
 Criticality = Literal["low", "medium", "high", "critical"]
 

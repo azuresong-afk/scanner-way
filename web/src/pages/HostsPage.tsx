@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Pencil, Plus, Search, Server, Trash2 } from "lucide-react";
+import { KeyRound, Pencil, Plus, Search, Server, Trash2 } from "lucide-react";
 import { api } from "../api/client";
-import type { AssetOut, Criticality } from "../api/types";
+import type { AssetOut, CredentialHostCheckOut, Criticality } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { CredStatusPill, CredentialCheckModal } from "../components/CredentialCheck";
 import { AssetModal, BulkBar, CriticalityBadge, GroupsBar, type BulkPatch } from "../components/AssetEditing";
 import { SeverityStack } from "../components/charts/SeverityBars";
 import { RunPicker } from "../components/RunPicker";
@@ -40,6 +41,9 @@ export function HostsPage() {
   // Учётные атрибуты читаются с правом view_engagements, меняются — с manage_engagements.
   const showAssets = has("view_engagements");
   const canWrite = showAssets && has("manage_engagements");
+  // Проверка входа по учётным записям — те же права, что у прогона с учётками.
+  const canCheck = has("run_scan") && has("host_credentials");
+  const canSelect = canWrite || canCheck;
 
   // Список хостов — инвентарь договора по всем прогонам, от выбора прогона не зависит.
   const inventory = useAsync(() => api.hosts(eid!), [eid], !!eid);
@@ -61,6 +65,9 @@ export function HostsPage() {
   const [removing, setRemoving] = useState<HostListRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<Error | null>(null);
+  const [checking, setChecking] = useState<string[] | null>(null);
+  // Последний итог проверки учёток по хосту — до перезагрузки страницы.
+  const [credChecks, setCredChecks] = useState<Map<string, CredentialHostCheckOut>>(new Map());
 
   useEffect(() => {
     try {
@@ -127,14 +134,15 @@ export function HostsPage() {
   }
 
   // Колонки до «Макс. опасность» — для строки-заголовка группы ОС.
-  const leadCols = (canWrite ? 1 : 0) + 4 + (showAssets ? 2 : 0);
+  const leadCols = (canSelect ? 1 : 0) + 4 + (showAssets ? 2 : 0);
 
   function renderRow(h: HostListRow) {
     const to = hostLink(h);
     const a = h.asset;
+    const cc = credChecks.get(h.host);
     return (
       <tr key={h.host} className={to ? "clickable" : undefined} onClick={to ? () => navigate(to) : undefined}>
-        {canWrite && (
+        {canSelect && (
           <td onClick={(e) => e.stopPropagation()}>
             <input
               type="checkbox"
@@ -160,6 +168,11 @@ export function HostsPage() {
             <span className="mono">{h.host}</span>
           )}
           {a?.hostname && <small className="faint os-name">{a.hostname}</small>}
+          {cc && (
+            <div style={{ marginTop: 4 }}>
+              <CredStatusPill status={cc.status} title={`Проверка учётных записей: ${cc.message}`} />
+            </div>
+          )}
         </td>
         <td style={{ maxWidth: 240 }} title={osSourceHint(h.osSource, h.osAccuracy)}>
           {h.osFamily === "unknown" ? (
@@ -224,12 +237,25 @@ export function HostsPage() {
             <td className="right num faint">—</td>
           </>
         )}
-        {canWrite && (
+        {(canWrite || canCheck) && (
           <td className="nowrap" onClick={(e) => e.stopPropagation()}>
-            <button type="button" className="btn btn-ghost icon-btn" aria-label={`Изменить ${h.host}`} onClick={() => setEditing(h)}>
-              <Pencil size={15} />
-            </button>
-            {a && (
+            {canCheck && (
+              <button
+                type="button"
+                className="btn btn-ghost icon-btn"
+                aria-label={`Проверить учётные записи ${h.host}`}
+                title="Проверить вход по учётным записям"
+                onClick={() => setChecking([h.host])}
+              >
+                <KeyRound size={15} />
+              </button>
+            )}
+            {canWrite && (
+              <button type="button" className="btn btn-ghost icon-btn" aria-label={`Изменить ${h.host}`} onClick={() => setEditing(h)}>
+                <Pencil size={15} />
+              </button>
+            )}
+            {canWrite && a && (
               <button
                 type="button"
                 className="btn btn-ghost icon-btn"
@@ -259,6 +285,20 @@ export function HostsPage() {
           <h1>Активы</h1>
         </div>
         <div className="actions">
+          {canCheck && hosts.length > 0 && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setChecking(selected.size ? hosts.map((h) => h.host).filter((x) => selected.has(x)) : shown.map((h) => h.host))}
+              title={
+                selected.size
+                  ? "Проверить вход по привязанным учётным записям на выбранных активах"
+                  : "Проверить вход по привязанным учётным записям на всех показанных активах (с учётом фильтров)"
+              }
+            >
+              <KeyRound size={16} /> {selected.size ? `Проверить учётки (${selected.size})` : `Проверить учётки всех (${shown.length})`}
+            </button>
+          )}
           {canWrite && (
             <button type="button" className="btn" onClick={() => setEditing("new")} title="Завести актив вручную, например ещё не сканированный хост">
               <Plus size={16} /> Добавить актив
@@ -387,7 +427,7 @@ export function HostsPage() {
               <table className="table" style={{ minWidth: showAssets ? 1240 : 980 }}>
                 <thead>
                   <tr>
-                    {canWrite && (
+                    {canSelect && (
                       <th style={{ width: 36 }}>
                         <input
                           type="checkbox"
@@ -410,7 +450,7 @@ export function HostsPage() {
                     <th>Макс. опасность</th>
                     <th>Распределение</th>
                     <th className="right">Уязвимостей</th>
-                    {canWrite && <th style={{ width: 80 }} />}
+                    {(canWrite || canCheck) && <th style={{ width: canWrite && canCheck ? 116 : 80 }} />}
                   </tr>
                 </thead>
                 {grouped ? (
@@ -426,7 +466,7 @@ export function HostsPage() {
                         <td />
                         <td style={{ width: 180 }}>{g.total > 0 && <SeverityStack counts={g.counts} />}</td>
                         <td className="right num">{g.total}</td>
-                        {canWrite && <td />}
+                        {(canWrite || canCheck) && <td />}
                       </tr>
                       {g.rows.map(renderRow)}
                     </tbody>
@@ -440,6 +480,20 @@ export function HostsPage() {
         </section>
       )}
 
+      {checking && (
+        <CredentialCheckModal
+          engagementId={eid!}
+          hosts={checking}
+          onClose={() => setChecking(null)}
+          onResults={(rs) =>
+            setCredChecks((cur) => {
+              const next = new Map(cur);
+              for (const r of rs) next.set(r.host, r);
+              return next;
+            })
+          }
+        />
+      )}
       {editing && (
         <AssetModal
           asset={editing === "new" ? null : editing.asset}

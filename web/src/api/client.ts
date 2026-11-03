@@ -1,6 +1,8 @@
 // Тонкий клиент REST API сканера: Bearer-токен, разбор ошибок FastAPI.
 
 import type {
+  CredentialCheckIn,
+  CredentialCheckOut,
   AllowlistBulkIn,
   AllowlistBulkOut,
   AllowlistIn,
@@ -290,6 +292,8 @@ export const api = {
   deleteSchedule: (id: number) => request(`/schedules/${id}`, { method: "DELETE" }).then(() => undefined),
   checkReachability: (engagementId: number, data: ReachabilityIn) =>
     json<ReachabilityOut>(`/engagements/${engagementId}/reachability`, { method: "POST", ...body(data) }),
+  checkCredentials: (engagementId: number, data: CredentialCheckIn) =>
+    json<CredentialCheckOut>(`/engagements/${engagementId}/credential-check`, { method: "POST", ...body(data) }),
   stopRun: (id: number) => json<RunOut>(`/runs/${id}/stop`, { method: "POST" }),
   retryRun: (id: number) => json<RunCreated>(`/runs/${id}/retry`, { method: "POST" }),
   findings: (runId: number, params: FindingQuery = {}) => json<FindingOut[]>(`/runs/${runId}/findings${listQuery(params)}`),
