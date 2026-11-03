@@ -32,6 +32,7 @@ const ACTION_LABEL: Record<string, string> = {
   allowlist_remove: "Удаление из allowlist",
   scan_request: "Запрос прогона",
   reachability_check: "Проверка доступности хоста",
+  port_scan: "Проверка доступности (порты)",
   scan_queue: "Постановка прогона в очередь",
   scan_start: "Начало прогона",
   scan_finish: "Завершение прогона",

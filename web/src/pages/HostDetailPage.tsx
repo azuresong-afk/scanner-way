@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Pencil, Radar } from "lucide-react";
+import { Pencil, Wifi } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
@@ -9,11 +9,10 @@ import { AssetModal, CriticalityBadge } from "../components/AssetEditing";
 import { SeverityBars } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { FindingsTable } from "../components/FindingsTable";
-import { ReachabilityCheck } from "../components/ReachabilityCheck";
 import { RunPicker } from "../components/RunPicker";
 import { ServicesTable } from "../components/ServicesTable";
 import { SoftwareTable } from "../components/SoftwareTable";
-import { Empty, ErrorAlert, Kpi, Loading, Modal } from "../components/ui";
+import { Empty, ErrorAlert, Kpi, Loading } from "../components/ui";
 import { byHost, isFalsePositive, isIssue, replaceFinding } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
 import { useRunSelection } from "../lib/useRunSelection";
@@ -59,7 +58,6 @@ export function HostDetailPage() {
     !!run,
   );
   const [open, setOpen] = useState<FindingOut | null>(null);
-  const [checking, setChecking] = useState(false);
   const [view, setView] = useState<VulnView>(loadView);
   const { has } = useAuth();
   const { current } = useEngagement();
@@ -83,9 +81,9 @@ export function HostDetailPage() {
         </div>
         <div className="actions">
           {has("run_scan") && current && (
-            <button type="button" className="btn" onClick={() => setChecking(true)}>
-              <Radar size={15} /> Проверить доступность
-            </button>
+            <Link className="btn" to={`/reachability?target=${encodeURIComponent(host)}`}>
+              <Wifi size={15} /> Проверить доступность
+            </Link>
           )}
           {runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} />}
         </div>
@@ -185,11 +183,6 @@ export function HostDetailPage() {
             setOpen(u);
           }}
         />
-      )}
-      {checking && current && (
-        <Modal title="Проверка доступности хоста" onClose={() => setChecking(false)} wide>
-          <ReachabilityCheck engagementId={current.id} initialTarget={host} />
-        </Modal>
       )}
     </>
   );

@@ -6,7 +6,6 @@ import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { CredentialsCard } from "../components/CredentialsCard";
 import { CredSetsCard } from "../components/CredSetsCard";
-import { ReachabilityCheck } from "../components/ReachabilityCheck";
 import { StartRunModal } from "../components/StartRunModal";
 import { Empty, ErrorAlert, Loading, Modal, RunName, RunStatusPill } from "../components/ui";
 import { fmtDate, fmtDuration } from "../lib/format";
@@ -319,18 +318,6 @@ export function EngagementDetailPage() {
       {has("host_credentials") && <CredentialsCard engagementId={e.id} />}
 
       {has("cred_audit") && <CredSetsCard engagementId={e.id} />}
-
-      {has("run_scan") && (
-        <section className="card card-pad stack" style={{ gap: "var(--s3)" }}>
-          <div className="inline" style={{ justifyContent: "space-between" }}>
-            <h2>Проверка доступности хоста</h2>
-            <span className="faint" style={{ fontSize: 12 }}>
-              Без запуска прогона
-            </span>
-          </div>
-          <ReachabilityCheck engagementId={e.id} />
-        </section>
-      )}
 
       {editing && (
         <EngagementForm

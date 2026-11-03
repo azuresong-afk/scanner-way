@@ -15,6 +15,7 @@ import { HostDetailPage } from "./pages/HostDetailPage";
 import { HostsPage } from "./pages/HostsPage";
 import { IntegrationsPage } from "./pages/IntegrationsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { PortScanPage } from "./pages/PortScanPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { CompliancePage } from "./pages/CompliancePage";
 import { RunDetailPage } from "./pages/RunDetailPage";
@@ -83,6 +84,7 @@ export function App() {
         <Route path="findings" element={<RequirePerm perm="view_report"><FindingsPage /></RequirePerm>} />
         <Route path="hosts" element={<RequirePerm perm="view_report"><HostsPage /></RequirePerm>} />
         <Route path="hosts/:host" element={<RequirePerm perm="view_report"><HostDetailPage /></RequirePerm>} />
+        <Route path="reachability" element={<RequirePerm perm="view_report"><PortScanPage /></RequirePerm>} />
         <Route path="compliance" element={<RequirePerm perm="view_report"><CompliancePage /></RequirePerm>} />
         <Route path="reports" element={<RequirePerm perm="view_report"><ReportsPage /></RequirePerm>} />
         <Route path="feeds" element={<RequirePerm perm="view_engagements"><FeedsPage /></RequirePerm>} />
