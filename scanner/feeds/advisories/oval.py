@@ -9,8 +9,12 @@
 
 Логика AND/OR критериев намеренно не вычисляется: берутся все тесты
 «пакет < версия» определения. Прочие тесты (подпись ключом вендора, версия
-release-пакета, архитектура, ядро через uname) пропускаются — у них нет
-состояния «evr less than».
+release-пакета, архитектура) пропускаются — у них нет состояния «evr less than».
+
+Ядро у Ubuntu описано иначе: пара тестов «работает ядро по шаблону uname»
+(``uname_test``, ``os_release`` pattern match) и «ABI ядра меньше X»
+(``variable_test``, ``value`` less than). Такая пара даёт запись с пакетом
+``uname:<шаблон>`` и исправленной версией X (см. ``scanner.feeds.kernel``).
 
 Файлы большие (RHEL — сотни МБ после распаковки), поэтому разбор потоковый:
 элементы верхнего уровня секций очищаются сразу после чтения.
@@ -22,8 +26,9 @@ from collections.abc import Callable, Iterable, Iterator
 from typing import IO
 
 from scanner.feeds.advisories.base import FIXED, Advisory, is_cve
+from scanner.feeds.kernel import MAX_UNAME_PATTERN, UNAME_PREFIX
 
-_TESTS = ("rpminfo_test", "dpkginfo_test")
+_TESTS = ("rpminfo_test", "dpkginfo_test", "uname_test", "variable_test")
 _OBJECTS = ("rpminfo_object", "dpkginfo_object")
 _STATES = ("rpminfo_state", "dpkginfo_state")
 # Ссылки на бюллетень, кроме самих CVE: id бюллетеня для evidence.
@@ -96,6 +101,7 @@ def parse_oval_releases(stream: IO[bytes], family: str, releases: Iterable[str],
     tests: dict[str, tuple[str | None, str | None]] = {}       # id -> (object, state)
     objects: dict[str, tuple[str | None, str | None]] = {}     # id -> (name, var_ref)
     states: dict[str, str] = {}                                # id -> evr (less than)
+    uname: dict[str, str] = {}                                 # id -> шаблон uname -r
     variables: dict[str, list[str]] = {}
 
     for _event, el in ET.iterparse(stream, events=("end",)):
@@ -119,6 +125,16 @@ def parse_oval_releases(stream: IO[bytes], family: str, releases: Iterable[str],
             if evr is not None and (evr.get("operation") or "").lower() == "less than" \
                     and (evr.text or "").strip():
                 states[el.get("id", "")] = evr.text.strip()  # type: ignore[union-attr]
+        elif tag == "uname_state":
+            rel = _child(el, "os_release")
+            if rel is not None and (rel.get("operation") or "").lower() == "pattern match" \
+                    and 0 < len((rel.text or "").strip()) <= MAX_UNAME_PATTERN:
+                uname[el.get("id", "")] = rel.text.strip()  # type: ignore[union-attr]
+        elif tag == "variable_state":
+            val = _child(el, "value")
+            if val is not None and (val.get("operation") or "").lower() == "less than" \
+                    and (val.text or "").strip():
+                states[el.get("id", "")] = val.text.strip()  # type: ignore[union-attr]
         elif tag == "constant_variable":
             variables[el.get("id", "")] = [(v.text or "").strip() for v in el
                                            if _local(v.tag) == "value" and v.text]
@@ -128,13 +144,26 @@ def parse_oval_releases(stream: IO[bytes], family: str, releases: Iterable[str],
 
     seen: set[tuple[str, str, str, str]] = set()
     for adv, cves, refs, platforms in definitions:
+        # «работает ядро по шаблону» (Ubuntu): тест ABI относится к предыдущему
+        # шаблону критериев, а если его нет — к первому шаблону определения
+        pats = [uname[st] for _o, st in (tests.get(r, (None, None)) for r in refs)
+                if st in uname]
+        pattern: str | None = None
         for ref in refs:
             obj_id, state_id = tests.get(ref, (None, None))
+            if state_id in uname:
+                pattern = uname[state_id or ""]
+                continue
             fixed = states.get(state_id or "")
             if not fixed or obj_id is None:
                 continue
-            obj_name, var = objects.get(obj_id, (None, None))
-            names = [obj_name] if obj_name else variables.get(var or "", [])
+            if obj_id in objects:
+                obj_name, var = objects[obj_id]
+                names = [obj_name] if obj_name else variables.get(var or "", [])
+            elif pattern or pats:            # variable_test «ABI ядра меньше X»
+                names = [UNAME_PREFIX + (pattern or pats[0])]
+            else:
+                continue
             targets = mapper(rels, platforms, fixed)
             for release in targets:
                 for pkg in names:
