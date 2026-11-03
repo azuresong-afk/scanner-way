@@ -126,14 +126,14 @@ export function CompliancePage() {
     return out;
   }, [s, onlyFailed]);
 
-  if (!engagement) return <div className="card"><Empty title="Выберите или создайте договор" /></div>;
+  if (!engagement) return <div className="card"><Empty title="Выберите или создайте проект" /></div>;
 
   return (
     <>
       <div className="page-head">
         <div>
           <span className="crumbs">{engagement.client ? `${engagement.client} · ${engagement.name}` : engagement.name}</span>
-          <h1>Соответствие требованиям</h1>
+          <h1>Соответствие нормативам</h1>
           <span className="muted">
             Приказы ФСТЭК России №117, №21, №239 и CIS. Процент — доля выполненных мер среди проверенных автоматически; организационные и
             непроверенные меры в процент не входят и показаны отдельно.
@@ -193,7 +193,7 @@ export function CompliancePage() {
             <span style={{ marginLeft: "auto" }} className="inline">
               {canManage && (
                 <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void save({ in_report: true })}>
-                  {savedRow ? "Сохранить уровень для договора" : "Включить в отчёт"}
+                  {savedRow ? "Сохранить уровень для проекта" : "Включить в отчёт"}
                 </button>
               )}
               {canManage && savedRow && (

@@ -187,7 +187,7 @@ function FalsePositiveSection({ finding, onChanged }: { finding: FindingOut; onC
           </span>
           {mark.reason && <span style={{ color: "var(--text)" }}>{mark.reason}</span>}
           <span className="faint" style={{ fontSize: 12 }}>
-            Не учитывается в сводке, отчётах и сравнении прогонов. Действует для этой находки на {where} во всех прогонах договора.
+            Не учитывается в сводке, отчётах и сравнении прогонов. Действует для этой находки на {where} во всех прогонах проекта.
           </span>
           {canTriage && (
             <div>

@@ -47,7 +47,7 @@ it("после входа отправляет Bearer-токен", async () => {
   await userEvent.type(await screen.findByLabelText("Имя пользователя"), "ivanov");
   await userEvent.type(screen.getByLabelText("Пароль"), "correct-horse-battery");
   await userEvent.click(screen.getByRole("button", { name: /Войти/ }));
-  expect(await screen.findByRole("heading", { name: "Сводка по договору" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Сводка по проекту" })).toBeInTheDocument();
   const meCall = api.calls.find((c) => c.path === "/me");
   expect(new Headers(meCall?.init?.headers).get("Authorization")).toBe("Bearer tok123");
 });
@@ -57,9 +57,32 @@ it("меню зависит от прав: оператор не видит ад
   mockApi({ "GET /me": me(["operator"], OPERATOR), "GET /engagements": [ENG], "GET /engagements/1/runs": [] });
   renderApp("/");
   const nav = await screen.findByRole("navigation", { name: "Основное меню" });
-  await within(nav).findByText("Прогоны");
+  await within(nav).findByText("Сканирование");
   expect(within(nav).queryByText("Пользователи и роли")).not.toBeInTheDocument();
   expect(within(nav).queryByText("Журнал аудита")).not.toBeInTheDocument();
+});
+
+it("меню идёт сверху вниз по ходу работы, служебные разделы — в «Администрировании»", async () => {
+  setToken("t");
+  mockApi({ "GET /me": me(["admin", "operator"], [...new Set([...ADMIN, ...OPERATOR])]), "GET /engagements": [ENG], "GET /engagements/1/runs": [] });
+  renderApp("/");
+  const nav = await screen.findByRole("navigation", { name: "Основное меню" });
+  await within(nav).findByText("Сканирование");
+  const links = within(nav).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]);
+  expect(links.slice(0, 9)).toEqual([
+    ["Сводка", "/"],
+    ["Проекты", "/engagements"],
+    ["Активы", "/hosts"],
+    ["Находки", "/findings"],
+    ["Сетевой поиск", "/reachability"],
+    ["Сканирование", "/runs"],
+    ["Расписание", "/schedules"],
+    ["Соответствие нормативам", "/compliance"],
+    ["Отчёты", "/reports"],
+  ]);
+  expect(within(nav).getByText("Администрирование")).toBeInTheDocument();
+  expect(links.slice(9).map(([t]) => t)).toEqual(expect.arrayContaining(["Справочники", "Журнал аудита", "Пользователи и роли"]));
+  expect(screen.getByText("Проект")).toBeInTheDocument(); // подпись выбора проекта в шапке
 });
 
 it("администратор видит пользователей, но не кнопку запуска прогона", async () => {
@@ -233,7 +256,7 @@ it("сводка показывает открытые уязвимости и �
     "GET /runs/2/services": [],
   });
   renderApp("/");
-  await screen.findByRole("heading", { name: "Сводка по договору" });
+  await screen.findByRole("heading", { name: "Сводка по проекту" });
   expect(await screen.findByText("открытые уязвимости на 2 хостах")).toBeInTheDocument();
   expect(screen.getByText("без изменений к прогону №1")).toBeInTheDocument();
   const tile = (label: string) => screen.getByText(label).closest(".change-tile") as HTMLElement;
@@ -348,7 +371,7 @@ it("переключает светлую и тёмную тему и запом
   mockApi({ "GET /me": me(["operator"], OPERATOR), "GET /engagements": [ENG], "GET /engagements/1/runs": [] });
   renderApp("/");
   const html = document.documentElement;
-  await screen.findByRole("heading", { name: "Сводка по договору" });
+  await screen.findByRole("heading", { name: "Сводка по проекту" });
   expect(html.dataset.theme).toBe("dark");
 
   await userEvent.click(screen.getByRole("button", { name: "Включить светлую тему" }));
@@ -487,7 +510,7 @@ it("allowlist: диапазоны и несколько целей добавл�
   expect(fn.mock.calls.map(([u]) => String(u)).find((u) => u.includes("/allowlist/2"))).toMatch(/whole_range=true$/);
 });
 
-describe("вкладка «Доступность»", () => {
+describe("вкладка «Сетевой поиск» (бывшая «Доступность»)", () => {
   function open(roles: string[], perms: string[], path: string) {
     setToken("t");
     mockApi({
@@ -503,8 +526,8 @@ describe("вкладка «Доступность»", () => {
 
   it("оператор видит пункт меню и форму проверки", async () => {
     open(["operator"], OPERATOR, "/reachability");
-    expect(await screen.findByRole("heading", { name: "Проверка доступности" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Доступность/ })).toHaveAttribute("href", "/reachability");
+    expect(await screen.findByRole("heading", { name: "Сетевой поиск" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Сетевой поиск/ })).toHaveAttribute("href", "/reachability");
     expect(await screen.findByRole("form", { name: "Новая проверка доступности" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "10.0.0.0/24" })).toBeInTheDocument();
   });

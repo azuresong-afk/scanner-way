@@ -95,7 +95,7 @@ export function FindingsPage() {
   const active = severities.length + modules.length + statuses.length + (params.get("q") ? 1 : 0) + (bduOnly ? 1 : 0);
   const total = findings.data?.total ?? 0;
 
-  if (!engagement) return <div className="card"><Empty title="Выберите или создайте договор" /></div>;
+  if (!engagement) return <div className="card"><Empty title="Выберите или создайте проект" /></div>;
 
   const check = (label: React.ReactNode, checked: boolean, key: string, value = "1") => (
     <label className="check" style={{ alignItems: "center" }}>

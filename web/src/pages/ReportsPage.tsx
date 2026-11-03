@@ -21,7 +21,7 @@ export function ReportsPage() {
   const runs = useAsync(() => api.runs(current!.id), [current?.id], !!current);
   const finished = page.data?.items ?? [];
 
-  if (!current) return <div className="card"><Empty title="Выберите или создайте договор" /></div>;
+  if (!current) return <div className="card"><Empty title="Выберите или создайте проект" /></div>;
 
   return (
     <>

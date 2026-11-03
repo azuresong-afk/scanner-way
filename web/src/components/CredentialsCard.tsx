@@ -312,7 +312,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
         <label className="field">
           <span>Область действия (необязательно)</span>
           <textarea className="textarea mono" value={scope} onChange={(e) => setScope(e.target.value)} placeholder={"10.0.0.0/24\n10.0.1.15"} spellCheck={false} />
-          <small>IP и подсети из allowlist договора, к которым подходит учётка. Пусто — все цели прогона.</small>
+          <small>IP и подсети из allowlist проекта, к которым подходит учётка. Пусто — все цели прогона.</small>
           {parsed.invalid.length > 0 && <small style={{ color: "var(--danger)" }}>Не IP/подсеть: {parsed.invalid.slice(0, 5).join(", ")}</small>}
         </label>
         <small className="muted">

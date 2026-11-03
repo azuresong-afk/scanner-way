@@ -188,7 +188,7 @@ export function StartRunModal({
       const ex = err as ApiError;
       const d = ex.detail as { denied_targets?: DeniedTarget[] } | undefined;
       if (d && typeof d === "object" && Array.isArray(d.denied_targets)) setDenied(d.denied_targets);
-      setError(ex.status === 422 && d?.denied_targets ? "Ни одна цель не входит в allowlist договора" : ex.message);
+      setError(ex.status === 422 && d?.denied_targets ? "Ни одна цель не входит в allowlist проекта" : ex.message);
     } finally {
       setBusy(false);
     }
@@ -226,7 +226,7 @@ export function StartRunModal({
     >
       <form id="start-run" className="stack" style={{ gap: 18 }} onSubmit={submit}>
         <div className="muted" style={{ fontSize: 13 }}>
-          Договор: <b style={{ color: "var(--text)" }}>{engagement.client ? `${engagement.client} · ${engagement.name}` : engagement.name}</b>
+          Проект: <b style={{ color: "var(--text)" }}>{engagement.client ? `${engagement.client} · ${engagement.name}` : engagement.name}</b>
           {engagement.contract_ref ? ` · ${engagement.contract_ref}` : ""}
         </div>
 
@@ -332,7 +332,7 @@ export function StartRunModal({
           )}
           <small>Цели вне allowlist будут отклонены, подсети и диапазоны урезаны до разрешённой части.</small>
           {allowlist.data && allowlist.data.length === 0 && (
-            <small style={{ color: "var(--warn)" }}>У договора пустой allowlist — запуск будет отклонён.</small>
+            <small style={{ color: "var(--warn)" }}>У проекта пустой allowlist — запуск будет отклонён.</small>
           )}
           {parsed.invalid.length > 0 && (
             <small style={{ color: "var(--danger)" }}>
@@ -416,7 +416,7 @@ export function StartRunModal({
                 <ErrorAlert error={credSets.error} onRetry={credSets.reload} />
               ) : (credSets.data ?? []).length === 0 ? (
                 <small style={{ color: "var(--warn)" }}>
-                  У договора нет наборов проверки учёток — добавьте их на странице договора в разделе «Наборы проверки учёток». Без набора модуль
+                  У проекта нет наборов проверки учёток — добавьте их на странице проекта в разделе «Наборы проверки учёток». Без набора модуль
                   запишет осознанный пропуск и не сделает ни одной попытки.
                 </small>
               ) : (
@@ -451,7 +451,7 @@ export function StartRunModal({
               <ErrorAlert error={creds.error} onRetry={creds.reload} />
             ) : (creds.data ?? []).length === 0 ? (
               <small style={{ color: "var(--warn)" }}>
-                У договора нет учётных записей — добавьте их на странице договора в разделе «Учётные записи активов».
+                У проекта нет учётных записей — добавьте их на странице проекта в разделе «Учётные записи активов».
               </small>
             ) : (
               <div className="grid-2">

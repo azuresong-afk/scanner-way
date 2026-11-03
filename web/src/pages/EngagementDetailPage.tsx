@@ -119,7 +119,7 @@ export function EngagementDetailPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">
-            <Link to="/engagements">Договоры</Link> / {e.client ?? "Без заказчика"}
+            <Link to="/engagements">Проекты</Link> / {e.client ?? "Без заказчика"}
           </span>
           <h1>{e.name}</h1>
           <span className="muted">
@@ -257,7 +257,7 @@ export function EngagementDetailPage() {
 
       {editing && (
         <EngagementForm
-          title="Изменить договор"
+          title="Изменить проект"
           initial={e}
           onClose={() => setEditing(false)}
           onSubmit={async (data) => {
@@ -317,13 +317,13 @@ function DeleteEngagement({ id, name, onClose, onDone }: { id: number; name: str
       onDone();
     } catch (err) {
       const msg = (err as Error).message;
-      setError(msg.includes("scan runs") ? "По договору уже были прогоны — его история сохраняется, удаление невозможно." : msg);
+      setError(msg.includes("scan runs") ? "По проекту уже были прогоны — его история сохраняется, удаление невозможно." : msg);
       setBusy(false);
     }
   };
   return (
     <Modal
-      title="Удалить договор?"
+      title="Удалить проект?"
       onClose={onClose}
       footer={
         <>
@@ -337,7 +337,7 @@ function DeleteEngagement({ id, name, onClose, onDone }: { id: number; name: str
       }
     >
       <p style={{ margin: 0 }}>
-        Договор «{name}» и его allowlist будут удалены. Договор с прогонами удалить нельзя.
+        Проект «{name}» и его allowlist будут удалены. Проект с прогонами удалить нельзя.
       </p>
       {error && <ErrorAlert error={error} />}
     </Modal>

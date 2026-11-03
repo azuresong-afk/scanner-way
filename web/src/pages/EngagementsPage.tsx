@@ -19,12 +19,12 @@ export function EngagementsPage() {
       <div className="page-head">
         <div>
           <span className="crumbs">Объём работ и разрешённые цели</span>
-          <h1>Договоры и allowlist</h1>
+          <h1>Проекты</h1>
         </div>
         <div className="actions">
           {has("manage_engagements") && (
             <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-              <Plus size={16} /> Новый договор
+              <Plus size={16} /> Новый проект
             </button>
           )}
         </div>
@@ -34,8 +34,8 @@ export function EngagementsPage() {
         {loading && !engagements.length ? (
           <Loading />
         ) : engagements.length === 0 ? (
-          <Empty title="Договоров пока нет" icon={<FileText size={28} />}>
-            Сканирование возможно только в рамках договора с заданным allowlist.
+          <Empty title="Проектов пока нет" icon={<FileText size={28} />}>
+            Сканирование возможно только в рамках проекта (договора) с заданным allowlist.
           </Empty>
         ) : (
           <div className="table-wrap">
@@ -85,7 +85,7 @@ export function EngagementsPage() {
       </div>
       {creating && (
         <EngagementForm
-          title="Новый договор"
+          title="Новый проект"
           onClose={() => setCreating(false)}
           onSubmit={async (data) => {
             const e = await api.createEngagement(data);
