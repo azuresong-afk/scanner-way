@@ -20,6 +20,8 @@
 from __future__ import annotations
 
 import json
+
+from scanner.core.naming import MODULE_TITLES
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -93,6 +95,7 @@ def _env() -> Environment:
         SEVERITY_ORDER=SEVERITY_ORDER, SEVERITY_LABELS=SEVERITY_LABELS,
         STATUS_ORDER=STATUS_ORDER, STATUS_LABELS=STATUS_LABELS,
         SEVERITY_HEX={str(k): v for k, v in SEVERITY_HEX.items()},
+        MODULE_TITLES=MODULE_TITLES,
     )
     env.filters["links"] = _links
     return env
@@ -471,6 +474,27 @@ class ReportRenderer:
         doc.add_heading("Ключевые выводы", level=2)
         for point in s.key_points:
             doc.add_paragraph(_x(point), style="List Bullet")
+        if report.coverage:
+            cs = report.coverage["summary"]
+            doc.add_heading("Полнота проверки", level=2)
+            if report.run_status in ("partial", "failed"):
+                small(doc.add_paragraph(),
+                      "Прогон выполнен частично: часть проверок не выполнена. Отсутствие "
+                      "находок по этим хостам и модулям не означает отсутствие "
+                      "уязвимостей." if report.run_status == "partial" else
+                      "Проверка не выполнена. Отсутствие находок не означает отсутствие "
+                      "уязвимостей.", INK, 9)
+            doc.add_paragraph(_x(
+                f"Хостов в прогоне: {cs['hosts']} · проверено полностью: "
+                f"{cs['hosts_checked']} · частично: {cs['hosts_partial']} · недоступно: "
+                f"{cs['hosts_unreachable']}."))
+            if report.coverage_gaps:
+                table(["Хост", "Проверка", "Состояние", "Причина и рекомендация"],
+                      [[e["host"], MODULE_TITLES.get(e["module"], e["module"]), e["label"],
+                        e["reason"] or ""] for e in report.coverage_gaps],
+                      widths=[2.6, 4.0, 2.6, 7.8])
+        for w in report.warnings:
+            small(doc.add_paragraph(), _x(w.get("message") or ""), INK_2, 8.5)
         doc.add_heading("Находки по модулям", level=2)
         picture("modules", page_cm)
         table(["Модуль"] + [SEVERITY_LABELS[x] for x in SEVERITY_ORDER] + ["Всего"],
@@ -582,6 +606,16 @@ class ReportRenderer:
             table(["Модуль"] + [STATUS_LABELS[x] for x in STATUS_ORDER],
                   [[m.label] + [m.trend.counts[x] for x in STATUS_ORDER]
                    for m in report.modules if m.trend], first_cm=4.5, num_from=1)
+            for w in (report.comparability or {}).get("warnings", []):
+                small(doc.add_paragraph(), _x(w), INK_2, 8.5)
+            if t.unverified:
+                doc.add_heading("Не проверено в этом прогоне", level=2)
+                small(doc.add_paragraph(), "Находки базового прогона на хостах и модулях, "
+                      "которые в этом прогоне не проверялись. Не считаются устранёнными.",
+                      INK_2, 8.5)
+                table(["Опасность", "Находка", "Хост"],
+                      [[v.finding.severity, v.finding.title, v.target]
+                       for v in t.unverified], widths=[3.0, 10.0, 4.0])
             if t.fixed:
                 doc.add_heading("Устранено с предыдущего прогона", level=2)
                 table(["Опасность", "Находка", "Хост"],

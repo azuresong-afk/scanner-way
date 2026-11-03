@@ -94,7 +94,7 @@ export function ReportMenu({
     api.assetGroups(engagementId).then((g) => setGroups(g.filter((x) => x.asset_count > 0)), () => setGroups([]));
   }, [engagementId]);
   // Сравнивать можно только с более ранним успешно завершённым прогоном — так же проверяет API.
-  const baselines = (runs ?? []).filter((r) => r.id < runId && r.status === "done").sort((a, b) => b.id - a.id);
+  const baselines = (runs ?? []).filter((r) => r.id < runId && (r.status === "done" || r.status === "partial")).sort((a, b) => b.id - a.id);
   const suffix = (variant === "brief" ? "-brief" : "") + (compareTo === null ? "" : `-vs-${compareTo}`) + (groupId === null ? "" : `-group-${groupId}`);
 
   const download = async (fmt: ReportFormat) => {

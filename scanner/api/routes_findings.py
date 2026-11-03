@@ -179,6 +179,8 @@ def finding_out(row: FindingRow, marks: dict[str, FalsePositiveMark],
     f = repo.row_to_finding(row)
     mark = marks.get(row.dedup_key)
     sw = software_of(f, services)
+    from scanner.core.confidence import infer
+    source, confidence = infer(f)      # у находок до миграции 0020 — по модулю
     return FindingOut(
         id=row.id, dedup_key=row.dedup_key, module=f.module, host=f.host, port=f.port,
         finding_type=str(f.finding_type), title=f.title, severity=str(f.severity),
@@ -187,6 +189,7 @@ def finding_out(row: FindingRow, marks: dict[str, FalsePositiveMark],
         software=sw.name if sw else None, software_version=sw.version if sw else None,
         software_source=sw.source if sw else None,
         priority=_priority_out((priorities or {}).get(row.dedup_key)),
+        confidence=confidence, source=source,
         false_positive=None if mark is None else FalsePositiveMarkOut(
             reason=mark.reason, marked_by=mark.marked_by, marked_at=mark.marked_at))
 

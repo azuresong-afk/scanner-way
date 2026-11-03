@@ -51,7 +51,7 @@ from scanner.core.ratelimit import PROFILES
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 REPORT_FORMATS = ("html", "pdf", "docx", "json")
-FINISHED = {"done", "failed", "stopped", "interrupted"}
+FINISHED = {"done", "partial", "failed", "stopped", "interrupted"}
 
 
 class CliError(Exception):
@@ -217,6 +217,9 @@ def build_parser() -> argparse.ArgumentParser:
                      dest="cred_sets", metavar="ID",
                      help="набор проверки учёток для cred_audit (можно несколько)")
     run.add_argument("--name", help="имя прогона (по умолчанию — по модулям и целям)")
+    run.add_argument("--no-ping", action="store_true",
+                     help="сканировать хосты, не отвечающие на ICMP (nmap -Pn); дольше: "
+                          "выключенные адреса сканируются по портам до таймаута")
     run.set_defaults(handler=cmd_run)
 
     # --- credentials ---
@@ -692,17 +695,23 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
     run_id = svc.submit(engagement_id=args.engagement, modules=args.modules,
                         rate_profile=args.rate, requested_targets=args.targets,
                         actor=env.actor, credential_ids=args.credentials,
-                        cred_set_ids=cred_sets, name=args.name)
+                        cred_set_ids=cred_sets, name=args.name,
+                        options={"no_ping": getattr(args, "no_ping", False)})
     with session_scope(env.sessions) as s:
         run = repo.get_scan_run(s, run_id)
         status, title, error = run.status, run.name, run.error_message
+        warnings = [w.get("message") for w in run.warnings or [] if w.get("message")]
         findings = len(repo.get_findings(s, run_id))
     print(f"Прогон {run_id} «{title}»: {status}, находок — {findings}")
+    for w in warnings:
+        print(f"Внимание: {w}", file=sys.stderr)
     if status != "done":
         if error:
             print(error, file=sys.stderr)
-        print("Подробности — в журнале аудита (scan_finish).", file=sys.stderr)
-    return 0 if status == "done" else 1
+        print("Подробности — покрытие прогона (GET /runs/{id}/coverage) и журнал аудита "
+              "(scan_finish).", file=sys.stderr)
+    # 0 — выполнен полностью, 2 — частично (есть пробелы покрытия), 1 — ошибка
+    return {"done": 0, "partial": 2}.get(status, 1)
 
 
 def _resolver(env: _Env, findings):
@@ -751,12 +760,17 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
         marks = repo.false_positive_marks(s, eng.id)
         risk = build_risk_context(s, current, eng.id)
         os_names = repo.host_os_names(s, eng.id)
+        coverage = repo.run_coverage(s, run)
+        prev_cov = repo.run_coverage(s, prev_id) if prev_id is not None else None
+        run_status, run_warnings = run.status, list(run.warnings or [])
 
     resolver = _resolver(env, current)
     resolver.add_host_os(os_names, override=False)
     report = build_report(current, previous=previous, historically_fixed=hist,
                           resolver=resolver, context=context,
-                          false_positives=marks, risk=risk, with_plan=not args.no_plan)
+                          false_positives=marks, risk=risk, with_plan=not args.no_plan,
+                          coverage=coverage, previous_coverage=prev_cov,
+                          run_status=run_status, warnings=run_warnings)
     variant = "brief" if args.brief else "full"
     try:
         body = ReportRenderer().render(report, args.format, variant=variant)

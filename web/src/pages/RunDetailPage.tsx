@@ -10,17 +10,18 @@ import { FindingDrawer } from "../components/FindingDrawer";
 import { FindingsTable, type SortState } from "../components/FindingsTable";
 import { Pager } from "../components/Pager";
 import { ReportMenu } from "../components/ReportMenu";
+import { CoverageTable, RunResultNotes } from "../components/RunCoverage";
 import { ServicesTable } from "../components/ServicesTable";
 import { Empty, ErrorAlert, Kpi, Loading, RunStatusPill } from "../components/ui";
 import { fmtDateFull, fmtDuration } from "../lib/format";
-import { isFinished, isRetryable, MODULE_LABEL, RATE_PROFILES, runName } from "../lib/labels";
+import { isFinished, isRetryable, MODULE_LABEL, nothingChecked, RATE_PROFILES, runName } from "../lib/labels";
 import { hostRowsFromCounts } from "../lib/stats";
 import { useAsync, useInterval } from "../lib/useAsync";
 import { useFindingsPage } from "../lib/useFindingsPage";
 
 const PAGE = 50;
 
-type Tab = "findings" | "hosts" | "services";
+type Tab = "findings" | "hosts" | "services" | "coverage";
 
 export function RunDetailPage() {
   const id = Number(useParams().id);
@@ -32,6 +33,8 @@ export function RunDetailPage() {
   // Сводка (KPI, уровни, хосты) считается на сервере; таблица находок — страницами.
   const summary = useAsync(() => api.findingsSummary(id), [id, finished], finished);
   const services = useAsync(() => api.services(id), [id, finished], finished);
+  // Полнота проверки: хост × модуль (выполнено, недоступен, таймаут, нет учётки…).
+  const coverage = useAsync(() => api.runCoverage(id), [id, finished], finished);
   const [sort, setSort] = useState<SortState>({ key: "severity", dir: 1 });
   const [offset, setOffset] = useState(0);
   useEffect(() => setOffset(0), [id, sort.key, sort.dir]);
@@ -54,6 +57,9 @@ export function RunDetailPage() {
     () => (summary.data ? hostRowsFromCounts(summary.data.host_counts.filter((h) => h.total > 0), services.data ?? []) : []),
     [summary.data, services.data],
   );
+
+  const notChecked = nothingChecked(summary.data);
+  const emptyTitle = notChecked ? "Хост недоступен, проверка не выполнена" : "Уязвимостей не найдено";
 
   if (run.loading && !run.data) return <Loading />;
   if (run.error) return <ErrorAlert error={run.error} onRetry={run.reload} />;
@@ -164,6 +170,8 @@ export function RunDetailPage() {
         </div>
       )}
 
+      {finished && <RunResultNotes run={r} summary={summary.data} />}
+
       {finished && (summary.loading && !summary.data ? <Loading /> : summary.error ? <ErrorAlert error={summary.error} onRetry={summary.reload} /> : summary.data && (
         <>
           <section className="kpis">
@@ -188,7 +196,7 @@ export function RunDetailPage() {
               {hosts.length ? (
                 <HostHeatmap rows={hosts} limit={8} onPick={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${r.id}`)} />
               ) : (
-                <Empty title="Уязвимостей не найдено" />
+                <Empty title={emptyTitle} />
               )}
             </div>
           </section>
@@ -204,6 +212,10 @@ export function RunDetailPage() {
               <button type="button" role="tab" className="tab" aria-selected={tab === "services"} onClick={() => setTab("services")}>
                 Сервисы <span className="count">{services.data?.length ?? 0}</span>
               </button>
+              <button type="button" role="tab" className="tab" aria-selected={tab === "coverage"} onClick={() => setTab("coverage")}>
+                Полнота проверки
+                {!!coverage.data?.summary.gaps && <span className="count">{coverage.data.summary.gaps}</span>}
+              </button>
             </div>
             {tab === "findings" && findings.error && <ErrorAlert error={findings.error} onRetry={findings.reload} />}
             {tab === "findings" &&
@@ -215,7 +227,7 @@ export function RunDetailPage() {
                   <Pager total={findings.data.total} offset={offset} limit={PAGE} onChange={setOffset} label="Страницы находок" />
                 </>
               ) : (
-                <Empty title="Уязвимостей не найдено" />
+                <Empty title={emptyTitle}>{notChecked ? "Хосты недоступны — см. вкладку «Полнота проверки»." : undefined}</Empty>
               ))}
             {tab === "findings" && fpCount > 0 && (
               <details style={{ borderTop: "1px solid var(--border)" }}>
@@ -225,6 +237,11 @@ export function RunDetailPage() {
             )}
             {tab === "hosts" && <HostHeatmap rows={hosts} limit={hosts.length} onPick={(h) => navigate(`/hosts/${encodeURIComponent(h)}?run=${r.id}`)} />}
             {tab === "services" && <ServicesTable runId={r.id} services={services.data ?? []} />}
+            {tab === "coverage" && (
+              <div className="card-pad">
+                {coverage.error ? <ErrorAlert error={coverage.error} onRetry={coverage.reload} /> : coverage.data ? <CoverageTable coverage={coverage.data} /> : <Loading />}
+              </div>
+            )}
           </section>
         </>
       ))}

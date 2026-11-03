@@ -250,7 +250,7 @@ def test_error_messages_for_user(sqlite_factory):
                         rate_profile="gentle", requested_targets=["10.0.0.1"],
                         actor="user:op")
     run = _run(sqlite_factory, broken)
-    assert run.status == "failed"
+    assert run.status == "partial"          # discovery отработал — результат частичный
     assert "модуль broken" in run.error_message and "ssh unreachable" in run.error_message
     outside = svc.submit(engagement_id=eid, modules=["discovery"], rate_profile="gentle",
                          requested_targets=["192.168.1.1"], actor="user:op")

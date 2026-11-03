@@ -150,6 +150,8 @@ class NvdFeed:
         # Лимит NVD: 5 запросов за 30 с без ключа, 50 за 30 с с ключом.
         self.min_interval = 0.6 if api_key else 6.0
         self._last_request = 0.0
+        # (загружено записей, всего) после каждой страницы API — прогресс загрузки
+        self.progress: Callable[[int, int], None] | None = None
 
     # ---------- источники ----------
 
@@ -185,6 +187,8 @@ class NvdFeed:
                 total = int(data.get("totalResults", 0))
                 got = int(data.get("resultsPerPage", 0))
                 params["startIndex"] += got
+                if self.progress is not None:
+                    self.progress(min(params["startIndex"], total), total)
                 if got == 0 or params["startIndex"] >= total:
                     break
         finally:

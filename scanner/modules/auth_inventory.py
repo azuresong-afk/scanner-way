@@ -46,6 +46,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from scanner.core import coverage as cv
 from scanner.core.credentials import HostCredential, credentials_for_host
 from scanner.core.models import (
     Finding,
@@ -63,6 +64,7 @@ from scanner.core.sshexec import (
     SshOptions,
     Unreachable,
     connect,
+    failure_status,
 )
 from scanner.feeds import kernel as kn
 from scanner.feeds import packages as pk
@@ -335,6 +337,18 @@ class _HostAdvisories:
         return out
 
 
+def _advisory_note(inv: HostInventory, adv: _HostAdvisories) -> dict:
+    """Предупреждение прогона «Бэкпорты не учтены» (scan_runs.warnings)."""
+    label = inv.os_label or family_label(inv.os_family)
+    return {"kind": "advisories_missing", "host": inv.host,
+            "family": adv.spec.family if adv.spec else inv.os_family,
+            "release": adv.release, "os": label,
+            "message": (f"Бэкпорты не учтены: {adv.report.source}. Находки по пакетам "
+                        f"хоста {inv.host} ({label}) определены по версии апстрима и "
+                        "могут быть уже исправлены вендором."),
+            "loadable": adv.spec is not None and adv.release is not None}
+
+
 def _vendor_line(adv: _HostAdvisories, d: Decision) -> str:
     src = adv.report.source
     a = d.advisory
@@ -439,11 +453,14 @@ class AuthInventoryModule(ScanModule):
         for cred in creds:
             info = cred.describe()
             throttle.wait()
+            ctx.coverage.mark(host, MODULE, cv.ERROR, f"вход учёткой «{cred.name}» не удался")
             ctx.audit.record(subject="scanner", action="auth_inventory_ssh", target=host,
                              result="started", details=info)
             try:
                 shell = self._connect(host, cred, self.options.ssh)
             except AuthFailed as e:
+                ctx.coverage.mark(host, MODULE, cv.ERROR,
+                                  f"учётка «{cred.name}» отклонена хостом")
                 ctx.audit.record(subject="scanner", action="auth_inventory_ssh",
                                  target=host, result="auth_failed",
                                  details={**info, "error": str(e)[:300]})
@@ -453,19 +470,25 @@ class AuthInventoryModule(ScanModule):
                                         f"{cred.port}): {e}"))
                 continue                      # следующая учётка из области хоста
             except HostKeyMismatch as e:
+                ctx.coverage.mark(host, MODULE, cv.ERROR, f"ключ SSH хоста: {e}", force=True)
                 ctx.audit.record(subject="scanner", action="auth_inventory_ssh",
                                  target=host, result="host_key_mismatch",
                                  details={**info, "error": str(e)[:300]})
                 return None, [self._info(host, "INFO:auth-inventory-host-key",
                                          "Ключ SSH хоста не прошёл проверку", str(e))]
             except Unreachable as e:
+                status = failure_status(e)
+                ctx.coverage.mark(host, MODULE, status, str(e), force=True)
                 ctx.audit.record(subject="scanner", action="auth_inventory_ssh",
-                                 target=host, result="unreachable",
+                                 target=host,
+                                 result="timeout" if status == cv.TIMEOUT else "unreachable",
                                  details={**info, "error": str(e)[:300]})
-                return None, [self._info(host, "INFO:auth-inventory-unreachable",
-                                         "Хост недоступен по SSH",
+                title = ("Таймаут SSH: пакеты не проверены" if status == cv.TIMEOUT
+                         else "Хост недоступен по SSH: пакеты не проверены")
+                return None, [self._info(host, "INFO:auth-inventory-unreachable", title,
                                          f"{host}:{cred.port}: {e}")]
             except (SshError, ValueError) as e:
+                ctx.coverage.mark(host, MODULE, failure_status(e), str(e)[:300])
                 ctx.audit.record(subject="scanner", action="auth_inventory_ssh",
                                  target=host, result="error",
                                  details={**info, "error": str(e)[:300]})
@@ -476,6 +499,8 @@ class AuthInventoryModule(ScanModule):
             try:
                 res = shell.run(INVENTORY_COMMAND, self.options.command_timeout_sec)
             except SshError as e:
+                ctx.coverage.mark(host, MODULE, failure_status(e),
+                                  f"сбор пакетов: {e}"[:300], force=True)
                 ctx.audit.record(subject="scanner", action="auth_inventory_exec",
                                  target=host, result="error",
                                  details={**info, "error": str(e)[:300]})
@@ -486,6 +511,12 @@ class AuthInventoryModule(ScanModule):
                 shell.close()
             inv = parse_inventory(res.stdout.decode("utf-8", "replace"), host)
             inv.credential_id = cred.id
+            if inv.packages:
+                ctx.coverage.mark(host, MODULE, cv.COMPLETED, force=True)
+            else:
+                ctx.coverage.mark(host, MODULE, cv.ERROR,
+                                  "вход выполнен, но список пакетов не получен "
+                                  "(dpkg/rpm/apk не найден или недоступен)", force=True)
             ctx.audit.record(subject="scanner", action="auth_inventory_exec", target=host,
                              result="ok" if inv.packages else "no_packages",
                              details={**info, "rc": res.returncode,
@@ -554,6 +585,7 @@ class AuthInventoryModule(ScanModule):
                 continue
             if verdict is Verdict.VULNERABLE:
                 rep.confirmed += 1
+                f.source, f.confidence = "vendor_advisory", "high"
                 lines = list(dict.fromkeys(_vendor_line(adv, d) for d in decisions
                                            if d.verdict is Verdict.VULNERABLE))
                 text = "\n".join(lines)
@@ -604,6 +636,7 @@ class AuthInventoryModule(ScanModule):
                          f"{pk.upstream_version(p.version) or pk.distro_version(p.version)}")
                 f.evidence = (f"Пакет {p.name} ({p.version}) → {label}\n"
                               f"Находка по бюллетеню вендора.\n{line}{note}")
+                f.source, f.confidence = "vendor_advisory", "high"
                 added[cve] = f
         rep.added = len(added)
         out.update(added)
@@ -815,6 +848,8 @@ class AuthInventoryModule(ScanModule):
             alive = {s.host for s in ctx.services}
             for h in hosts:
                 if h not in alive:
+                    ctx.coverage.mark(h, MODULE, cv.UNREACHABLE,
+                                      "хост не обнаружен (нет открытых портов)")
                     ctx.audit.record(subject="scanner", action="auth_inventory_skip",
                                      target=h, result="host_not_discovered")
             hosts = [h for h in hosts if h in alive]
@@ -825,6 +860,12 @@ class AuthInventoryModule(ScanModule):
         for host in self._hosts(ctx):
             creds = credentials_for_host(host, ctx.credentials)
             if not creds:
+                if ctx.host_family(host) == "windows":
+                    ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
+                                      "хост Windows — пакеты Linux не проверяются")
+                else:
+                    ctx.coverage.mark(host, MODULE, cv.NO_CREDENTIALS,
+                                      "нет SSH-учётки для хоста — пакеты не проверены")
                 ctx.audit.record(subject="scanner", action="auth_inventory_skip",
                                  target=host, result="no_credentials")
                 continue
@@ -863,6 +904,17 @@ class AuthInventoryModule(ScanModule):
             adv = self._host_advisories(ctx, inv, advisories, loaded, errors)
             matched = (self._match(ctx, inv, matcher, bdu_names, adv)
                        if matcher or (adv and adv.has_data) else [])
+            assessed = ctx.assessed_cves.setdefault(host, {})
+            for f in matched:
+                for c in (f.vuln_id, *f.cve_ids):
+                    if c and c.upper().startswith("CVE-"):
+                        assessed.setdefault(c.upper(), "reported")
+            if adv is not None:
+                for c in adv.report.closed:
+                    if c.upper().startswith("CVE-"):
+                        assessed[c.upper()] = "closed"
+                if not adv.report.has_data:
+                    ctx.run_notes.append(_advisory_note(inv, adv))
             if adv is not None:
                 r = adv.report
                 ctx.audit.record(subject="scanner", action="auth_inventory_backport",
@@ -881,6 +933,9 @@ class AuthInventoryModule(ScanModule):
                                       "livepatched": krep.livepatched[:50],
                                       "pending": krep.pending,
                                       "reason": krep.reason})
+            for f in kernel_found:
+                if f.finding_type is FindingType.VULN:
+                    f.source, f.confidence = "vendor_advisory", "high"
             matched.extend(kernel_found)
             cred = next((c for c in creds if c.id == inv.credential_id), None)
             vulns = [f for f in matched if f.finding_type is FindingType.VULN]

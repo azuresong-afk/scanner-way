@@ -15,6 +15,7 @@ from decimal import Decimal
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from scanner.core import coverage as cov
 from scanner.core.allowlist import AllowlistGate
 from scanner.core.credentials import (
     AUTH_KEY,
@@ -44,6 +45,7 @@ from scanner.core.db import (
     HostCredentialRow,
     HostPackageRow,
     HostResult,
+    RunCoverageRow,
     ScanRun,
     ServiceResult,
     User,
@@ -64,10 +66,14 @@ from scanner.core.osfamily import UNKNOWN as UNKNOWN_OS
 from scanner.core.osfamily import classify as classify_os
 from scanner.core.targetspec import parse_target
 
-RUN_STATUSES = {"pending", "running", "done", "failed", "stopped", "interrupted"}
+RUN_STATUSES = {"pending", "running", "done", "partial", "failed", "stopped",
+                "interrupted"}
 # Итоговые статусы: прогон больше не исполняется. interrupted — процесс,
 # который вёл прогон, остановился посреди работы (миграция 0017).
-FINISHED_RUN_STATUSES = frozenset({"done", "failed", "stopped", "interrupted"})
+FINISHED_RUN_STATUSES = frozenset({"done", "partial", "failed", "stopped", "interrupted"})
+# Прогоны, результат которых годится как база сравнения: завершены штатно
+# (partial — тоже: сравнение идёт только по реально проверенному, см. coverage).
+COMPARABLE_RUN_STATUSES = frozenset({"done", "partial"})
 ACTIVE_RUN_STATUSES = frozenset({"pending", "running"})
 
 
@@ -382,8 +388,9 @@ def create_scan_run(session: Session, *, engagement_id: int, modules: list[str],
                     credential_ids: Iterable[int] = (),
                     cred_set_ids: Iterable[int] = (), name: str | None = None,
                     targets: Iterable[str] = (), schedule_id: int | None = None,
-                    retry_of: int | None = None, worker_id: str | None = None) -> int:
-    run = ScanRun(engagement_id=engagement_id, modules=list(modules),
+                    retry_of: int | None = None, worker_id: str | None = None,
+                    options: Mapping[str, object] | None = None) -> int:
+    run = ScanRun(options=dict(options or {}), engagement_id=engagement_id, modules=list(modules),
                   rate_profile=rate_profile, started_by=started_by, status="pending",
                   credential_ids=[int(i) for i in credential_ids],
                   cred_set_ids=[int(i) for i in cred_set_ids], name=name,
@@ -460,6 +467,7 @@ def clear_scan_run_results(session: Session, scan_run_id: int) -> None:
     повторное исполнение того же прогона заменяет его строки, а не дублирует.
     Сервисы и пакеты удаляются каскадом вместе с host_results."""
     session.execute(delete(FindingRow).where(FindingRow.scan_run_id == scan_run_id))
+    session.execute(delete(RunCoverageRow).where(RunCoverageRow.scan_run_id == scan_run_id))
     session.execute(delete(HostPackageRow).where(HostPackageRow.scan_run_id == scan_run_id))
     host_ids = select(HostResult.id).where(HostResult.scan_run_id == scan_run_id)
     session.execute(delete(ServiceResult).where(ServiceResult.host_id.in_(host_ids)))
@@ -471,17 +479,33 @@ def get_scan_run(session: Session, scan_run_id: int) -> ScanRun | None:
     return session.get(ScanRun, scan_run_id)
 
 
-def previous_scan_run_id(session: Session, scan_run_id: int) -> int | None:
-    """Предыдущий завершённый прогон того же договора (для diff)."""
+def previous_scan_run_id(session: Session, scan_run_id: int, *,
+                         coverage: cov.Coverage | None = None,
+                         lookback: int = 20) -> int | None:
+    """База сравнения: последний более ранний завершённый (done/partial) прогон
+    того же договора, у которого есть общие с этим прогоном проверенные пары
+    (хост, модуль). Прогон по другим хостам или другим модулям базой не
+    становится — иначе всё «исправлено»/«новое» было бы ложным.
+
+    coverage — покрытие этого прогона (если ещё не сохранено в БД)."""
     run = session.get(ScanRun, scan_run_id)
     if run is None:
         return None
-    return session.scalar(
-        select(ScanRun.id)
+    candidates = list(session.scalars(
+        select(ScanRun)
         .where(ScanRun.engagement_id == run.engagement_id,
-               ScanRun.id < run.id, ScanRun.status == "done")
+               ScanRun.id < run.id, ScanRun.status.in_(COMPARABLE_RUN_STATUSES))
         .order_by(ScanRun.id.desc())
-        .limit(1))
+        .limit(lookback)))
+    if not candidates:
+        return None
+    current = coverage if coverage is not None else run_coverage(session, run)
+    if not current:
+        return candidates[0].id
+    for cand in candidates:
+        if cov.comparability(run_coverage(session, cand), current).level != "none":
+            return cand.id
+    return None
 
 
 def comparison_baseline(session: Session, run: ScanRun, baseline_id: int) -> ScanRun:
@@ -495,10 +519,51 @@ def comparison_baseline(session: Session, run: ScanRun, baseline_id: int) -> Sca
         raise ValueError(f"прогон {baseline_id} не найден в договоре")
     if base.id >= run.id:
         raise ValueError("сравнивать можно только с более ранним прогоном")
-    if base.status != "done":
+    if base.status not in COMPARABLE_RUN_STATUSES:
         raise ValueError(f"прогон {baseline_id} в статусе {base.status}; "
-                         "для сравнения нужен успешно завершённый прогон")
+                         "для сравнения нужен завершённый прогон (выполнен или частично)")
     return base
+
+
+# ========== Покрытие прогона ==========
+def save_coverage(session: Session, scan_run_id: int, coverage: cov.Coverage) -> int:
+    n = 0
+    for e in coverage.entries():
+        try:
+            host = str(ipaddress.ip_address(e.host))
+        except ValueError:
+            continue
+        session.add(RunCoverageRow(scan_run_id=scan_run_id, host=host, module=e.module,
+                                   status=e.status, reason=e.reason))
+        n += 1
+    session.flush()
+    return n
+
+
+def run_coverage(session: Session, run: ScanRun | int) -> cov.Coverage:
+    """Покрытие прогона; у прогонов до миграции 0020 — оценка по хостам
+    discovery и модулям прогона (coverage.legacy_coverage)."""
+    if not isinstance(run, ScanRun):
+        run = session.get(ScanRun, run)
+        if run is None:
+            return cov.Coverage()
+    rows = list(session.scalars(select(RunCoverageRow)
+                                .where(RunCoverageRow.scan_run_id == run.id)))
+    if rows:
+        return cov.coverage_from_rows(rows)
+    hosts = {str(h) for h in session.scalars(select(HostResult.host)
+                                             .where(HostResult.scan_run_id == run.id))}
+    hosts |= {str(h) for h in session.scalars(select(FindingRow.host).distinct()
+                                              .where(FindingRow.scan_run_id == run.id))}
+    return cov.legacy_coverage(run.status, list(run.modules or []),
+                               list(run.targets or []), hosts)
+
+
+def set_run_warnings(session: Session, scan_run_id: int, warnings: list[dict]) -> None:
+    run = session.get(ScanRun, scan_run_id)
+    if run is not None:
+        run.warnings = list(warnings)
+        session.flush()
 
 
 # ========== Инвентарь ==========
@@ -727,7 +792,7 @@ def save_findings(session: Session, *, engagement_id: int, scan_run_id: int,
             cvss=None if f.cvss is None else Decimal(str(f.cvss)),
             evidence=f.evidence, status=str(statuses.get(key, FindingStatus.OPEN)),
             dedup_key=key, detected_at=_aware(f.detected_at),
-            remediation=f.remediation))
+            remediation=f.remediation, confidence=f.confidence, source=f.source))
         n += 1
     session.flush()
     return n
@@ -739,7 +804,8 @@ def row_to_finding(r: FindingRow) -> Finding:
         title=r.title, severity=Severity(r.severity), port=r.port, vuln_id=r.vuln_id,
         cve_ids=list(r.cve_ids or []), bdu_ids=list(r.bdu_ids or []),
         cvss=None if r.cvss is None else float(r.cvss), evidence=r.evidence,
-        detected_at=r.detected_at, remediation=r.remediation)
+        detected_at=r.detected_at, remediation=r.remediation,
+        confidence=r.confidence, source=r.source)
 
 
 def get_findings(session: Session, scan_run_id: int,

@@ -2,7 +2,8 @@
 
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 export type FindingStatus = "open" | "fixed" | "new" | "regression";
-export type RunStatus = "pending" | "running" | "done" | "failed" | "stopped" | "interrupted";
+/** partial — «Частично»: прогон завершён, но часть хостов/модулей не проверена (см. покрытие). */
+export type RunStatus = "pending" | "running" | "done" | "partial" | "failed" | "stopped" | "interrupted";
 export type ReportFormat = "html" | "pdf" | "docx" | "json";
 /** full — полный отчёт; brief — без плана устранения, по находкам только ссылки на устранение. */
 export type ReportVariant = "full" | "brief";
@@ -102,6 +103,94 @@ export interface RunCreate {
   cred_set_ids?: number[];
   /** Своё имя; пусто — имя по выбранным опциям. */
   name?: string;
+  /** Сканировать хосты, не отвечающие на ping (nmap -Pn). */
+  no_ping?: boolean;
+  /** Готовый профиль проверки (GET /run-profiles). */
+  profile?: string;
+}
+
+/** Готовый профиль проверки («Полная проверка Linux» и др.). */
+export interface RunProfile {
+  id: string;
+  title: string;
+  description: string;
+  modules: string[];
+  /** Протоколы учёток, без которых профиль неполон: ssh | winrm. */
+  needs: string[];
+}
+
+export interface PlannedModule {
+  name: string;
+  title: string;
+  /** Добавлен автоматически как спутник другого модуля. */
+  companion: boolean;
+  note: string | null;
+}
+
+/** Итоговый состав прогона до запуска (POST /engagements/{id}/runs/plan). */
+export interface RunPlan {
+  modules: PlannedModule[];
+  removed: PlannedModule[];
+  warnings: string[];
+  full_check: boolean;
+  accepted_targets: number;
+  denied_targets: DeniedTarget[];
+}
+
+export type CoverageStatus = "completed" | "not_applicable" | "skipped" | "unreachable" | "no_credentials" | "timeout" | "error";
+export type HostCoverageStatus = "checked" | "partial" | "unreachable" | "not_checked";
+
+export interface CoverageEntry {
+  host: string;
+  module: string;
+  status: CoverageStatus;
+  label: string;
+  reason: string | null;
+}
+
+export interface CoverageSummary {
+  hosts: number;
+  hosts_checked: number;
+  hosts_partial: number;
+  hosts_unreachable: number;
+  hosts_not_checked: number;
+  counts: Record<CoverageStatus, number>;
+  gaps: number;
+  auth_gaps: number;
+}
+
+/** Что реально проверено в прогоне: хост × модуль. */
+export interface CoverageOut {
+  scan_run_id: number;
+  status: RunStatus;
+  summary: CoverageSummary;
+  hosts: { host: string; status: HostCoverageStatus; modules: Record<string, { status: CoverageStatus; label: string; reason: string | null }> }[];
+  entries: CoverageEntry[];
+  /** Прогон до обновления: покрытие оценено по модулям и найденным хостам. */
+  legacy: boolean;
+}
+
+/** Предупреждение прогона (например «Бэкпорты не учтены»). */
+export interface RunWarning {
+  kind: string;
+  message: string;
+  family?: string;
+  release?: string;
+  os?: string;
+  hosts?: string[];
+  loadable?: boolean;
+}
+
+/** Сопоставимость прогона с базовым: same | partial | none. */
+export interface Comparability {
+  level: "same" | "partial" | "none";
+  common_hosts: string[];
+  common_modules: string[];
+  only_baseline_hosts: string[];
+  only_current_hosts: string[];
+  only_baseline_modules: string[];
+  only_current_modules: string[];
+  warnings: string[];
 }
 
 export type ScheduleKind = "once" | "daily" | "weekly" | "monthly";
@@ -170,6 +259,58 @@ export interface FeedOut {
   message: string | null;
   /** Обновление идёт прямо сейчас. */
   running: boolean;
+  /** Прогресс текущей загрузки (null — не идёт). */
+  progress?: FeedProgress | null;
+  /** message — итог ПРОШЛОЙ попытки (идёт новая). */
+  message_is_previous?: boolean;
+  last_error_at?: string | null;
+}
+
+export interface FeedProgress {
+  stage: string | null;
+  done: number | null;
+  total: number | null;
+  percent: number | null;
+  rate_per_sec: number | null;
+  eta_seconds: number | null;
+  elapsed_seconds: number;
+  started_at: string;
+  updated_at: string | null;
+}
+
+export type FeedState = "ready" | "missing" | "running" | "error" | "stale";
+
+export interface FeedReadinessItem {
+  source: string;
+  title: string;
+  purpose: string;
+  required: boolean;
+  state: FeedState;
+  records: number | null;
+  progress: FeedProgress | null;
+  auto_update: boolean;
+  last_success_at: string | null;
+  last_result: string | null;
+  message: string | null;
+  message_is_previous: boolean;
+  last_error_at: string | null;
+  hint: string | null;
+}
+
+export interface MissingRelease {
+  family: string;
+  release: string;
+  os: string | null;
+  hosts: string[];
+  runs: number[];
+}
+
+/** Мастер настройки справочников: готовность каждого источника. */
+export interface FeedReadiness {
+  ready: boolean;
+  sources: FeedReadinessItem[];
+  releases: { family: string; release: string; records: number; loaded_at: string | null }[];
+  missing_releases: MissingRelease[];
 }
 
 export interface FeedScheduleIn {
@@ -282,6 +423,10 @@ export interface RunOut {
   error_message?: string | null;
   /** Прогон, который повторяет этот («Повторить»). */
   retry_of?: number | null;
+  /** Опции запуска: no_ping, profile. */
+  options?: { no_ping?: boolean; profile?: string };
+  /** Предупреждения о неполноте результата («Бэкпорты не учтены» и др.). */
+  warnings?: RunWarning[];
 }
 
 /** Страница списка: элементы и общее число по фильтру (X-Total-Count). */
@@ -337,6 +482,10 @@ export interface FindingsSummary {
   statuses: Record<string, number>;
   previous_run_id: number | null;
   host_counts: HostCountsOut[];
+  /** Находки базового прогона на хостах/модулях, не проверенных в этом прогоне. */
+  unverified?: number;
+  comparability?: Comparability | null;
+  coverage?: CoverageSummary | null;
 }
 
 export interface RunCreated extends RunOut {
@@ -410,6 +559,10 @@ export interface FindingOut {
   software_source?: "service" | "package" | null;
   /** null — информационная находка или ложное срабатывание. */
   priority?: PriorityOut | null;
+  /** Уверенность: high — пакет/бюллетень вендора, low — только баннер. */
+  confidence?: "high" | "medium" | "low" | null;
+  /** Источник: authenticated_package | vendor_advisory | banner | nuclei | … */
+  source?: string | null;
 }
 
 export interface ServiceOut {

@@ -23,6 +23,32 @@ services:
         ipv4_address: 172.29.250.10
     restart: "no"
 
+  # Debian 13 (trixie) с OpenSSH: проверка по учётной записи (пакеты, бюллетени
+  # trixie, «Бэкпорты не учтены»). Пароль учётки audit — из .env стека e2e.
+  ssh13:
+    build: tests/e2e/targets/debian13
+    image: scanner-e2e-debian13
+    environment:
+      MODE: ssh
+      E2E_SSH_PASSWORD: ${E2E_SSH_PASSWORD:-e2e-lab-only}
+    networks:
+      e2e-lab:
+        ipv4_address: 172.29.250.13
+    restart: "no"
+
+  # Порт 22 принимает соединение, но баннера SSH нет — таймаут SSH, «Частично».
+  sshsilent:
+    build: tests/e2e/targets/debian13
+    image: scanner-e2e-debian13
+    environment:
+      MODE: silent
+    networks:
+      e2e-lab:
+        ipv4_address: 172.29.250.22
+    restart: "no"
+
+  # 172.29.250.99 намеренно не занят — «выключенный» хост.
+
 networks:
   e2e-lab:
     internal: true

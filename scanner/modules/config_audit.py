@@ -67,6 +67,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from scanner.compliance.facts import OPENSCAP_RESULTS
 from scanner.compliance.facts import record as record_fact
+from scanner.core import coverage as cv
 from scanner.core.credentials import (
     AUTH_PASSWORD,
     BECOME_NONE,
@@ -84,6 +85,7 @@ from scanner.core.sshexec import (
     SshOptions,
     Unreachable,
     connect,
+    failure_status,
 )
 from scanner.modules.base import ScanContext, ScanModule
 from scanner.modules.password_policy import POLICY_FILES
@@ -806,6 +808,8 @@ class ConfigAuditModule(ScanModule):
             try:
                 shell = self._connect(host, cred, self.options.ssh)
             except AuthFailed as e:
+                ctx.coverage.mark(host, MODULE, cv.ERROR,
+                                  f"учётка «{cred.name}» отклонена хостом")
                 self._audit(ctx, "config_audit_ssh", host, "auth_failed",
                             {**info, "error": _scrub(str(e), cred)[:300]})
                 notes.append(_info(host, "INFO:config-audit-auth-failed",
@@ -814,19 +818,26 @@ class ConfigAuditModule(ScanModule):
                                    f"{cred.port}): {_scrub(str(e), cred)}"))
                 continue
             except HostKeyMismatch as e:
+                ctx.coverage.mark(host, MODULE, cv.ERROR, f"ключ SSH хоста: {e}", force=True)
                 self._audit(ctx, "config_audit_ssh", host, "host_key_mismatch",
                             {**info, "error": str(e)[:300]})
                 return None, [_info(host, "INFO:config-audit-host-key",
                                     "Аудит конфигурации: ключ SSH хоста не прошёл проверку",
                                     str(e))]
             except Unreachable as e:
-                self._audit(ctx, "config_audit_ssh", host, "unreachable",
+                status = failure_status(e)
+                ctx.coverage.mark(host, MODULE, status, str(e), force=True)
+                self._audit(ctx, "config_audit_ssh", host,
+                            "timeout" if status == cv.TIMEOUT else "unreachable",
                             {**info, "error": str(e)[:300]})
                 return None, [_info(host, "INFO:config-audit-unreachable",
+                                    "Аудит конфигурации: таймаут SSH — конфигурация "
+                                    "не проверена" if status == cv.TIMEOUT else
                                     "Аудит конфигурации: хост недоступен по SSH",
                                     f"{host}:{cred.port}: {e}")]
             except (SshError, ValueError) as e:
                 msg = _scrub(f"{type(e).__name__}: {e}", cred)
+                ctx.coverage.mark(host, MODULE, failure_status(e), msg[:300])
                 self._audit(ctx, "config_audit_ssh", host, "error",
                             {**info, "error": msg[:300]})
                 notes.append(_info(host, "INFO:config-audit-error",
@@ -840,6 +851,9 @@ class ConfigAuditModule(ScanModule):
             except (SshError, SudoError) as e:
                 shell.close()
                 msg = _scrub(str(e), cred)
+                ctx.coverage.mark(host, MODULE, failure_status(e),
+                                  ("повышение прав: " if isinstance(e, SudoError) else "")
+                                  + msg[:300])
                 kind = "sudo_failed" if isinstance(e, SudoError) else "error"
                 self._audit(ctx, "config_audit_become", host, kind,
                             {**info, "error": msg[:300]})
@@ -924,6 +938,8 @@ class ConfigAuditModule(ScanModule):
                     res.stdout.decode("utf-8", "replace"), host, self.name, facts)
         except SshError as e:
             msg = _scrub(str(e), cred)
+            ctx.coverage.mark(host, MODULE, failure_status(e),
+                              f"{_BACKEND_LABEL[backend]}: {msg}"[:300])
             self._audit(ctx, "config_audit_exec", host, "error",
                         {**info, "error": msg[:500]})
             if tmpdir:
@@ -931,6 +947,8 @@ class ConfigAuditModule(ScanModule):
             return [self._error(host, backend, msg)]
         except (ConfigAuditError, OSError, ValueError) as e:
             msg = _scrub(str(e), cred)
+            ctx.coverage.mark(host, MODULE, cv.ERROR,
+                              f"{_BACKEND_LABEL[backend]}: {msg}"[:300])
             self._audit(ctx, "config_audit_exec", host, "error",
                         {**info, "error": msg[:500]})
             if tmpdir:
@@ -1037,6 +1055,7 @@ class ConfigAuditModule(ScanModule):
         sess, notes = self._open(ctx, throttle, host, creds)
         if sess is None:
             return notes
+        ctx.coverage.mark(host, MODULE, cv.COMPLETED, force=True)
         try:
             os = self._host_os(ctx, host, sess.pre)
             plan = self.plan(os, sess.pre.tools)
@@ -1061,6 +1080,8 @@ class ConfigAuditModule(ScanModule):
             alive = {s.host for s in ctx.services}
             for h in hosts:
                 if h not in alive:
+                    ctx.coverage.mark(h, MODULE, cv.UNREACHABLE,
+                                      "хост не обнаружен (нет открытых портов)")
                     ctx.audit.record(subject="scanner", action="config_audit_skip",
                                      target=h, result="host_not_discovered")
             hosts = [h for h in hosts if h in alive]
@@ -1075,6 +1096,13 @@ class ConfigAuditModule(ScanModule):
         for host in self._hosts(ctx):
             creds = credentials_for_host(host, ctx.credentials)
             if not creds:
+                if ctx.host_family(host) == "windows":
+                    ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
+                                      "хост Windows — аудит конфигурации Linux неприменим")
+                else:
+                    ctx.coverage.mark(host, MODULE, cv.NO_CREDENTIALS,
+                                      "нет SSH-учётки для хоста — конфигурация не "
+                                      "проверена")
                 ctx.audit.record(subject="scanner", action="config_audit_skip",
                                  target=host, result="no_credentials")
                 findings.append(_info(

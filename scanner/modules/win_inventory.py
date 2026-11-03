@@ -45,6 +45,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from scanner.compliance.facts import record as record_fact
+from scanner.core import coverage as cv
 from scanner.core.credentials import (
     PROTOCOL_WINRM,
     HostCredential,
@@ -317,6 +318,8 @@ class WinInventoryModule(ScanModule):
             try:
                 shell = self._connect(host, cred, self.options.winrm)
             except AuthFailed as e:
+                ctx.coverage.mark(host, MODULE, cv.ERROR,
+                                  f"учётка «{cred.name}» отклонена хостом")
                 ctx.audit.record(subject="scanner", action="win_inventory_winrm",
                                  target=host, result="auth_failed",
                                  details={**info, "error": str(e)[:300]})
@@ -326,6 +329,8 @@ class WinInventoryModule(ScanModule):
                                         f"{cred.port}): {e}"))
                 continue                      # следующая WinRM-учётка из области хоста
             except CertMismatch as e:
+                ctx.coverage.mark(host, MODULE, cv.ERROR, f"сертификат WinRM: {e}",
+                                  force=True)
                 ctx.audit.record(subject="scanner", action="win_inventory_winrm",
                                  target=host, result="cert_mismatch",
                                  details={**info, "error": str(e)[:300]})
@@ -333,6 +338,9 @@ class WinInventoryModule(ScanModule):
                     host, "INFO:win-inventory-cert", "Сертификат WinRM не прошёл проверку",
                     str(e))]
             except Unreachable as e:
+                timed_out = "timeout" in str(e).lower() or "таймаут" in str(e).lower()
+                ctx.coverage.mark(host, MODULE, cv.TIMEOUT if timed_out else cv.UNREACHABLE,
+                                  str(e)[:300], force=True)
                 ctx.audit.record(subject="scanner", action="win_inventory_winrm",
                                  target=host, result="unreachable",
                                  details={**info, "error": str(e)[:300]})
@@ -340,6 +348,7 @@ class WinInventoryModule(ScanModule):
                     host, "INFO:win-inventory-unreachable", "Хост недоступен по WinRM",
                     f"{host}:{cred.port}: {e}")]
             except (WinRmError, ValueError) as e:
+                ctx.coverage.mark(host, MODULE, cv.ERROR, str(e)[:300])
                 ctx.audit.record(subject="scanner", action="win_inventory_winrm",
                                  target=host, result="error",
                                  details={**info, "error": str(e)[:300]})
@@ -350,6 +359,8 @@ class WinInventoryModule(ScanModule):
             try:
                 text, truncated = self._run_parts(shell)
             except WinRmError as e:
+                ctx.coverage.mark(host, MODULE, cv.ERROR, f"сбор данных: {e}"[:300],
+                                  force=True)
                 ctx.audit.record(subject="scanner", action="win_inventory_exec",
                                  target=host, result="error",
                                  details={**info, "error": str(e)[:300]})
@@ -359,6 +370,7 @@ class WinInventoryModule(ScanModule):
             finally:
                 shell.close()
             inv = parse_inventory(text)
+            ctx.coverage.mark(host, MODULE, cv.COMPLETED, force=True)
             ctx.audit.record(subject="scanner", action="win_inventory_exec", target=host,
                              result="ok" if inv.os.build is not None else "no_os",
                              details={**info, "truncated": truncated,
@@ -505,6 +517,8 @@ class WinInventoryModule(ScanModule):
             alive = {s.host for s in ctx.services}
             for h in hosts:
                 if h not in alive:
+                    ctx.coverage.mark(h, MODULE, cv.UNREACHABLE,
+                                      "хост не обнаружен (нет открытых портов)")
                     ctx.audit.record(subject="scanner", action="win_inventory_skip",
                                      target=h, result="host_not_discovered")
             hosts = [h for h in hosts if h in alive]
@@ -517,6 +531,16 @@ class WinInventoryModule(ScanModule):
         for host in self._hosts(ctx):
             creds = credentials_for_host(host, ctx.credentials, protocol=PROTOCOL_WINRM)
             if not creds:
+                fam = ctx.host_family(host)
+                has_winrm = any(c.protocol == PROTOCOL_WINRM for c in ctx.credentials)
+                if fam == "windows" or (fam is None and has_winrm):
+                    ctx.coverage.mark(host, MODULE, cv.NO_CREDENTIALS,
+                                      "нет WinRM-учётки для хоста — обновления Windows "
+                                      "не проверены")
+                else:
+                    ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
+                                      "не Windows-хост" if fam else
+                                      "в прогоне нет учёток WinRM")
                 ctx.audit.record(subject="scanner", action="win_inventory_skip",
                                  target=host, result="no_winrm_credentials")
                 continue

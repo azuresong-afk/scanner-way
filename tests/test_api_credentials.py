@@ -182,8 +182,9 @@ def test_run_with_credentialed_engine(api, rec):
     assert r.status_code == 202, r.text
     run = r.json()
     # vuln заменён движком «По учётной записи» — Linux (auth_inventory) и Windows
-    # (win_inventory); win_inventory инертен без WinRM-учётки.
-    assert run["modules"] == ["discovery", "auth_inventory", "win_inventory"]
+    # (win_inventory); выбрана только SSH-учётка, поэтому неприменимый
+    # win_inventory в прогон не попадает (раньше он показывался «для Linux»).
+    assert run["modules"] == ["discovery", "auth_inventory"]
     assert run["credential_ids"] == [cid] and run["status"] == "done"
     assert "vuln" not in rec.seen
     assert [c.password for c in rec.creds] == [HOST_PASSWORD]    # расшифровано для модуля
@@ -206,7 +207,7 @@ def test_run_engine_both_and_nuclei(api, rec):
     r = api.c.post(f"/engagements/{eid}/runs", headers=holder,
                    json={"targets": ["10.0.0.5"], "modules": ["discovery"],
                          "vuln_engine": "both", "credential_ids": [cid]})
-    assert r.json()["modules"] == ["discovery", "vuln", "auth_inventory", "win_inventory"]
+    assert r.json()["modules"] == ["discovery", "vuln", "auth_inventory"]
     op = api.user("op", "operator")
     r = api.c.post(f"/engagements/{eid}/runs", headers=op,
                    json={"targets": ["10.0.0.5"], "modules": ["discovery", "auth_inventory"],

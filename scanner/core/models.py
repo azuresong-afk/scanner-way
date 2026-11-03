@@ -58,6 +58,11 @@ class Finding:
     # Рекомендация от самого модуля (fixtext правила бенчмарка, решение Lynis);
     # у RemediationResolver она главнее общих текстов.
     remediation: str | None = None
+    # Насколько находка подтверждена (scanner.core.confidence): high | medium |
+    # low, и чем — authenticated_package | vendor_advisory | banner | nuclei |
+    # config | credential | inventory. None — определяется по модулю.
+    confidence: str | None = None
+    source: str | None = None
 
     def dedup_key(self) -> str:
         """Стабильный ключ для сравнения прогонов: host+port+vuln_id+module."""

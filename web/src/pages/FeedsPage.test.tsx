@@ -62,3 +62,43 @@ it("без права управления кнопок нет, ошибка п�
   expect(await screen.findByText("NVD недоступен")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Обновить сейчас/ })).toBeNull();
 });
+
+it("долгая загрузка: этап, загружено из всего, %, скорость, осталось; прошлая ошибка — как прошлая", async () => {
+  setToken("t");
+  mockApi({
+    "GET /me": me(["admin"], ADMIN),
+    "GET /feeds": [
+      feed({
+        running: true, last_result: "error", message: "NVD: ConnectTimeout", message_is_previous: true,
+        progress: { stage: "Полная загрузка NVD через API", done: 20000, total: 300000, percent: 6.7, rate_per_sec: 200, eta_seconds: 1400,
+          elapsed_seconds: 100, started_at: "2026-11-03T12:00:00Z", updated_at: "2026-11-03T12:01:40Z" },
+      }),
+    ],
+    "GET /feeds/readiness": {
+      ready: false, releases: [],
+      sources: [
+        { source: "bdu", title: "БДУ ФСТЭК", purpose: "привязка к БДУ", required: true, state: "missing", records: 0, progress: null, auto_update: false,
+          last_success_at: null, last_result: null, message: null, message_is_previous: false, last_error_at: null,
+          hint: "Загрузите файл vullist.xlsx с bdu.fstec.ru" },
+      ],
+      missing_releases: [{ family: "debian", release: "trixie", os: "Debian 13", hosts: ["10.0.0.5"], runs: [7] }],
+    },
+  });
+  render(
+    <MemoryRouter>
+      <AuthProvider>
+        <FeedsPage />
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+  expect(await screen.findByText("Полная загрузка NVD через API")).toBeInTheDocument();
+  const line = screen.getByText(/6.7%/);
+  expect(line).toHaveTextContent(/20\s000 из 300\s000/);
+  expect(line).toHaveTextContent("200/с");
+  expect(line).toHaveTextContent("осталось ~23 мин");
+  expect(screen.getByText(/Прошлая попытка: NVD: ConnectTimeout/)).toBeInTheDocument();
+  expect(await screen.findByText("Готовность справочников")).toBeInTheDocument();
+  expect(screen.getByText("Не загружен")).toBeInTheDocument();
+  expect(screen.getByText(/Загрузить файл БДУ/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Загрузить debian:trixie/ })).toBeInTheDocument();
+});

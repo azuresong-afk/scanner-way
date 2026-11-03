@@ -13,6 +13,7 @@ from scanner.api.rbac import MODULE_PERMISSIONS, Perm
 from scanner.api.routes_engagements import get_engagement
 from scanner.api.routes_findings import finding_out, run_priorities, services_by_port
 from scanner.api.schemas import (
+    CoverageOut,
     DeniedTargetOut,
     FindingOut,
     FindingsSummaryOut,
@@ -60,7 +61,7 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
               audit: AuditDep,
               runs: Annotated[RunService, Depends(_runs)]) -> RunCreated:
     get_engagement(session, engagement_id)
-    modules = with_engine(body.modules, body.vuln_engine)
+    modules, _plan = run_plan(session, engagement_id, body, runs)
     check_run_options(engagement_id, modules=modules, rate_profile=body.rate_profile,
                       credential_ids=body.credential_ids, cred_set_ids=body.cred_set_ids,
                       user=user, request=request, audit=audit, runs=runs)
@@ -72,11 +73,61 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
                          rate_profile=body.rate_profile, requested_targets=body.targets,
                          actor=user.subject, started_by=user.id,
                          credential_ids=body.credential_ids,
-                         cred_set_ids=body.cred_set_ids, name=body.name)
+                         cred_set_ids=body.cred_set_ids, name=body.name,
+                         options={"no_ping": body.no_ping, "profile": body.profile})
     session.expire_all()
     run = _get_run(session, run_id)
     return RunCreated(**RunOut.model_validate(run).model_dump(),
                       accepted_targets=len(plan.allowed), denied_targets=denied)
+
+
+def run_plan(session: Session, engagement_id: int, body: RunCreate, runs: RunService):
+    """(модули к запуску, итоговый план с предупреждениями) — профиль, движок,
+    неприменимые модули (WinRM-инвентаризация без WinRM-учётки и т. п.)."""
+    from scanner.core.profiles import PROFILES as RUN_PROFILES
+    from scanner.core.profiles import plan_modules
+    if body.profile:
+        prof = RUN_PROFILES.get(body.profile)
+        if prof is None:
+            raise HTTPException(422, f"unknown profile: {body.profile}; available: "
+                                     f"{', '.join(RUN_PROFILES)}")
+        modules = [m for m in prof.modules if m in runs.registry]
+        auto = set(modules)
+    else:
+        modules = with_engine(body.modules, body.vuln_engine)
+        auto = set(VULN_ENGINES[body.vuln_engine]) if body.vuln_engine else set()
+    wanted = set(body.credential_ids)
+    protocols = {r.protocol or "ssh" for r in repo.list_host_credentials(session, engagement_id)
+                 if r.id in wanted}
+    plan = plan_modules(modules, protocols=protocols, engine_modules=auto,
+                        known=runs.registry, no_ping=body.no_ping)
+    removed = {m.name for m in plan.removed}
+    return [m for m in modules if m not in removed], plan
+
+
+@router.post("/engagements/{engagement_id}/runs/plan")
+def preview_run(engagement_id: int, body: RunCreate,
+                _: Annotated[Principal, Depends(require(Perm.RUN_SCAN))],
+                session: SessionDep,
+                runs: Annotated[RunService, Depends(_runs)]) -> dict:
+    """Итоговый состав прогона до запуска: модули (со спутниками), что убрано
+    как неприменимое и предупреждения о неполной проверке. Ничего не запускает."""
+    get_engagement(session, engagement_id)
+    _, plan = run_plan(session, engagement_id, body, runs)
+    targets = runs.preview(engagement_id, body.targets)
+    return {**plan.to_dict(), "accepted_targets": len(targets.allowed),
+            "denied_targets": [{"target": d.target, "reason": d.reason, "count": d.count}
+                               for d in targets.denied]}
+
+
+@router.get("/run-profiles")
+def list_run_profiles(_: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))]
+                      ) -> list[dict]:
+    """Готовые профили проверки («Полная проверка Linux» и др.)."""
+    from scanner.core.profiles import PROFILES as RUN_PROFILES
+    return [{"id": p.id, "title": p.title, "description": p.description,
+             "modules": list(p.modules), "needs": list(p.needs)}
+            for p in RUN_PROFILES.values()]
 
 
 def check_run_options(engagement_id: int, *, modules: list[str], rate_profile: str,
@@ -224,7 +275,7 @@ def retry_run(run_id: int, request: Request,
     обычном запуске; исходный прогон и его результаты не меняются."""
     run = _get_run(session, run_id)
     if run.status not in RETRYABLE:
-        raise HTTPException(409, "повторить можно только прогон с ошибкой, прерванный "
+        raise HTTPException(409, "повторить можно только прогон с ошибкой, частичный, прерванный "
                                  f"или остановленный (сейчас: {run.status})")
     modules = list(run.modules)
     check_run_options(run.engagement_id, modules=modules, rate_profile=run.rate_profile,
@@ -297,6 +348,29 @@ def findings_summary(run_id: int,
     плашек фильтров, KPI и тепловой карты без выгрузки всех находок."""
     run = _get_run(session, run_id)
     return FindingsSummaryOut(**fq.summary(session, run_id, run.engagement_id))
+
+
+@router.get("/runs/{run_id}/coverage", response_model=CoverageOut)
+def run_coverage(run_id: int,
+                 _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                 session: SessionDep) -> CoverageOut:
+    """Что реально проверено: статус каждого модуля на каждом хосте
+    (completed, unreachable, timeout, no_credentials, not_applicable, skipped,
+    error) с причиной и рекомендацией."""
+    from scanner.core.coverage import STATUS_LABELS
+    from scanner.core.db import RunCoverageRow
+    run = _get_run(session, run_id)
+    legacy = session.scalar(select(RunCoverageRow.id)
+                            .where(RunCoverageRow.scan_run_id == run_id).limit(1)) is None
+    cov = repo.run_coverage(session, run)
+    hosts = []
+    for h in cov.hosts():
+        per = {e.module: {"status": e.status, "label": STATUS_LABELS[e.status],
+                          "reason": e.reason}
+               for e in cov.entries() if e.host == h}
+        hosts.append({"host": h, "status": cov.host_status(h), "modules": per})
+    return CoverageOut(scan_run_id=run_id, status=run.status, summary=cov.summary(),
+                       hosts=hosts, entries=cov.to_dicts(), legacy=legacy)
 
 
 @router.get("/runs/{run_id}/services", response_model=list[ServiceOut])
@@ -387,7 +461,10 @@ def get_report(run_id: int, request: Request,
         false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts,
         risk=build_risk_context(session, current, eng.id),
         compliance=_compliance_sections(session, run_id, eng.id, hosts, profiles),
-        with_plan=plan)
+        with_plan=plan, coverage=repo.run_coverage(session, run),
+        previous_coverage=(repo.run_coverage(session, prev_id)
+                           if prev_id is not None else None),
+        run_status=run.status, warnings=list(run.warnings or []))
     fmt, var = ReportFormat(format), ReportVariant(variant)
     body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",

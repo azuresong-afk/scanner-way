@@ -1,10 +1,10 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ListChecks, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "../api/client";
-import type { DeniedTarget, EngagementOut, RunCreated, ScheduleIn, ScheduleKind, ScheduleOut } from "../api/types";
+import type { DeniedTarget, EngagementOut, RunCreated, RunPlan, RunProfile, ScheduleIn, ScheduleKind, ScheduleOut } from "../api/types";
 import { useAuth, type Perm } from "../auth/AuthContext";
 import { localToIso, toLocalInput } from "../lib/format";
-import { CREDENTIAL_MODULES, ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, runTitle, type EngineInfo } from "../lib/labels";
+import { CREDENTIAL_MODULES, ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, applyProfile, runTitle, type EngineInfo } from "../lib/labels";
 import { compactAddresses, mergeTargets, parseTargets, specSize, splitTargets } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
 import { HostPicker } from "./HostPicker";
@@ -76,6 +76,19 @@ export function StartRunModal({
   const [error, setError] = useState<string | null>(null);
   const [denied, setDenied] = useState<DeniedTarget[]>([]);
   const [picking, setPicking] = useState(false);
+  // Готовый профиль проверки («Полная проверка Linux» …) или «Свой набор».
+  const profiles = useAsync(() => api.runProfiles(), []);
+  const [checkProfile, setCheckProfile] = useState<string>("custom");
+  const [noPing, setNoPing] = useState(false);
+  const [plan, setPlan] = useState<RunPlan | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const pickProfile = (p: RunProfile | null) => {
+    if (!p) return setCheckProfile("custom");
+    const x = applyProfile(p);
+    setEngine(x.engine);
+    setModules(x.modules);
+    setCheckProfile(p.id);
+  };
 
   const available = MODULES.filter((m) => !ENGINE_MODULES.includes(m.id) && (!m.permission || has(m.permission as Perm)));
   const eng = VULN_ENGINES.find((x) => x.id === engine)!;
@@ -100,10 +113,40 @@ export function StartRunModal({
   const canPickHosts = has("view_report");
   const toggleDay = (d: number) => setWeekdays((w) => (w.includes(d) ? w.filter((x) => x !== d) : [...w, d].sort()));
 
-  const toggle = (id: string) => setModules((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
+  const toggle = (id: string) => {
+    setCheckProfile("custom");
+    setModules((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
+  };
   const toggleCred = (id: number) => setCredIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
   const toggleCredSet = (id: number) => setCredSetIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
   const credAuditOn = modules.includes("cred_audit");
+  const planKey = JSON.stringify([parsed.targets, allModules, needsCreds ? credIds : [], noPing, scheduled]);
+
+  // Итоговый состав прогона с сервера: модули со спутниками, неприменимые, предупреждения.
+  useEffect(() => {
+    if (parsed.targets.length === 0 || parsed.invalid.length > 0 || allModules.length === 0) {
+      setPlan(null);
+      return;
+    }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      api
+        .planRun(engagement.id, {
+          targets: parsed.targets,
+          modules: allModules,
+          rate_profile: profile,
+          credential_ids: needsCreds ? credIds : [],
+          no_ping: !scheduled && noPing,
+        })
+        .then((p) => alive && (setPlan(p), setPlanError(null)))
+        .catch((e) => alive && (setPlan(null), setPlanError((e as Error).message)));
+    }, 400);
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planKey, engagement.id]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -133,7 +176,13 @@ export function StartRunModal({
         const saved = schedule ? await api.updateSchedule(schedule.id, data) : await api.createSchedule(engagement.id, data);
         onScheduled?.(saved);
       } else {
-        onStarted?.(await api.startRun(engagement.id, base));
+        onStarted?.(
+          await api.startRun(engagement.id, {
+            ...base,
+            no_ping: noPing || undefined,
+            profile: checkProfile !== "custom" ? checkProfile : undefined,
+          }),
+        );
       }
     } catch (err) {
       const ex = err as ApiError;
@@ -294,13 +343,42 @@ export function StartRunModal({
         </div>
 
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+          <span>Что проверить</span>
+          <div className="grid-2">
+            {(profiles.data ?? []).map((p) => {
+              const locked = p.needs.length > 0 && !canCreds;
+              return (
+                <label key={p.id} className="option-card" aria-disabled={locked || undefined} style={locked ? { opacity: 0.55 } : undefined}>
+                  <input type="radio" name="check-profile" checked={checkProfile === p.id} disabled={locked} onChange={() => pickProfile(p)} />
+                  <span>
+                    <b style={{ fontWeight: 500 }}>{p.title}</b>
+                    <small>{locked ? "Нужно право host_credentials" : p.description}</small>
+                  </span>
+                </label>
+              );
+            })}
+            <label className="option-card">
+              <input type="radio" name="check-profile" checked={checkProfile === "custom"} onChange={() => pickProfile(null)} />
+              <span>
+                <b style={{ fontWeight: 500 }}>Свой набор</b>
+                <small>Движок и модули — вручную ниже</small>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
           <span>Поиск уязвимостей — движок</span>
           <div className="grid-2">
             {VULN_ENGINES.map((x) => {
               const locked = x.credentials && !canCreds;
               return (
                 <label key={x.id} className="option-card" aria-disabled={locked || undefined} style={locked ? { opacity: 0.55 } : undefined}>
-                  <input type="radio" name="engine" checked={engine === x.id} disabled={locked} onChange={() => setEngine(x.id)} />
+                  <input type="radio" name="engine" checked={engine === x.id} disabled={locked} onChange={() => {
+                      setEngine(x.id);
+                      setCheckProfile("custom");
+                    }}
+                  />
                   <span>
                     <b style={{ fontWeight: 500 }}>{x.label}</b>
                     <small>{locked ? "Нужно право host_credentials" : x.description}</small>
@@ -426,6 +504,54 @@ export function StartRunModal({
             ))}
           </div>
         </fieldset>
+
+        {!scheduled && allModules.includes("discovery") && (
+          <label className="check">
+            <input type="checkbox" checked={noPing} onChange={(e) => setNoPing(e.target.checked)} />
+            <span>
+              <b style={{ fontWeight: 500 }}>Сканировать хосты, не отвечающие на ping (-Pn)</b>
+              <small>
+                Для хостов за межсетевым экраном, блокирующим ICMP. Каждый адрес считается включённым: выключенные и несуществующие адреса
+                сканируются по портам до таймаута — прогон заметно дольше, на больших подсетях — в разы.
+              </small>
+            </span>
+          </label>
+        )}
+
+        {(plan || planError) && (
+          <section className="card card-pad stack" style={{ gap: 8 }} aria-label="Итоговый состав прогона">
+            <div className="inline" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <b>Итоговый состав прогона</b>
+              {plan && (
+                <span className={`pill ${plan.full_check ? "pill-ok" : "pill-warn"}`}>{plan.full_check ? "Полная проверка" : "Неполная проверка"}</span>
+              )}
+            </div>
+            {planError && <small style={{ color: "var(--danger)" }}>{planError}</small>}
+            {plan && (
+              <>
+                <ul className="stack" style={{ gap: 4, margin: 0, paddingLeft: 18 }}>
+                  {plan.modules.map((m) => (
+                    <li key={m.name}>
+                      {m.title}
+                      {m.companion && <small className="muted"> — добавлен автоматически</small>}
+                      {m.note && <small style={{ color: "var(--warn)" }}> — {m.note}</small>}
+                    </li>
+                  ))}
+                </ul>
+                {plan.removed.length > 0 && (
+                  <small className="muted">
+                    Не будет запущено (неприменимо): {plan.removed.map((m) => `${m.title}${m.note ? ` — ${m.note}` : ""}`).join("; ")}.
+                  </small>
+                )}
+                {plan.warnings.map((w) => (
+                  <small key={w} style={{ color: "var(--warn)" }}>
+                    {w}
+                  </small>
+                ))}
+              </>
+            )}
+          </section>
+        )}
 
         <label className="field">
           <span>Название</span>

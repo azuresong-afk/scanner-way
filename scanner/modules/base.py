@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from scanner.core.audit import AuditSink
+from scanner.core.coverage import Coverage
 from scanner.core.credentials import HostCredential
 from scanner.core.models import Finding, HostInventory, HostOs, ServiceInfo
 from scanner.core.ratelimit import RateProfile
@@ -43,6 +44,33 @@ class ScanContext:
     # Факты для профилей соответствия (R5): хост -> {ключ -> значение}, какие
     # проверки на хосте реально выполнялись (см. scanner.compliance.facts).
     compliance_facts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Покрытие (scanner.core.coverage): что модуль реально проверил на хосте —
+    # completed / unreachable / timeout / no_credentials / not_applicable / …
+    # Модуль отмечает исходы по хостам; что не отмечено, оркестратор
+    # достраивает сам (ошибка модуля, хост не найден discovery, выполнено).
+    coverage: Coverage = field(default_factory=Coverage)
+    # Опции прогона, выбранные оператором (scan_runs.options): no_ping (-Pn) и т. п.
+    options: dict[str, Any] = field(default_factory=dict)
+    # Ограничения достоверности, замеченные модулями (scan_runs.warnings):
+    # {"kind": "advisories_missing", "host", "family", "release", "message"}.
+    run_notes: list[dict[str, Any]] = field(default_factory=list)
+    # CVE, проверенные по пакетам хоста (auth_inventory): хост -> {CVE: closed |
+    # reported}. По ним находки «по баннеру» того же хоста заменяются точным
+    # результатом проверки по учётной записи.
+    assessed_cves: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    def host_family(self, host: str) -> str | None:
+        """Семейство ОС хоста (scanner.core.osfamily) по данным прогона."""
+        if host in self.inventory:
+            return "linux"         # вход по SSH и пакеты dpkg/rpm/apk
+        h = self.hosts.get(host)
+        return h.family if h else None
+
+    def alive_hosts(self) -> set[str] | None:
+        """Хосты с открытыми портами по discovery; None — discovery не выполнялся."""
+        if "discovery" in self.completed and self.services is not None:
+            return {s.host for s in self.services}
+        return None
 
 
 class ScanModule(ABC):

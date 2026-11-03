@@ -35,6 +35,17 @@ class FeedOut(BaseModel):
     last_count: int | None
     message: str | None
     running: bool = False
+    # Прогресс текущей загрузки: этап, загружено/всего, %, скорость, ETA.
+    progress: dict | None = None
+    # Во время новой попытки message — итог ПРОШЛОЙ попытки, не текущая ошибка.
+    message_is_previous: bool = False
+    last_error_at: datetime | None = None
+    records: int | None = None
+
+
+class ReleaseIn(BaseModel):
+    family: str = Field(min_length=2, max_length=32, pattern=r"^[a-z]+$")
+    release: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9._-]+$")
 
 
 class FeedScheduleIn(BaseModel):
@@ -51,12 +62,15 @@ def _scheduler(request: Request) -> FeedScheduler:
 
 
 def _out(sched: FeedScheduler, row: FeedSync) -> FeedOut:
+    from scanner.feeds.readiness import progress_view
     out = FeedOut.model_validate(row)
     src = sched.sources.get(row.source)
     if src is not None:
         out.title, out.description = src.title, src.description
     out.running = (row.running_since is not None and
                    datetime.now(UTC) - _aware(row.running_since) < STALE_AFTER)
+    out.progress = progress_view(row) if out.running else None
+    out.message_is_previous = out.running
     return out
 
 
@@ -77,6 +91,107 @@ def list_feeds(_: Annotated[Principal, Depends(require(Perm.VIEW_ENGAGEMENTS))],
                sched: Annotated[FeedScheduler, Depends(_scheduler)]) -> list[FeedOut]:
     rows = session.scalars(select(FeedSync).order_by(FeedSync.source))
     return [_out(sched, r) for r in rows if r.source in sched.sources]
+
+
+@router.get("/feeds/readiness")
+def feeds_readiness(_: Annotated[Principal, Depends(require(Perm.VIEW_ENGAGEMENTS))],
+                    session: SessionDep,
+                    sched: Annotated[FeedScheduler, Depends(_scheduler)]) -> dict:
+    """Мастер первоначальной настройки: готовность каждого источника (есть ли
+    данные, идёт ли загрузка, что сделать) и выпуски ОС хостов без бюллетеней."""
+    from scanner.feeds.readiness import readiness
+    return readiness(session, sched.sources)
+
+
+@router.post("/feeds/advisories/releases", response_model=FeedOut, status_code=202)
+def load_release(body: ReleaseIn,
+                 user: Annotated[Principal, Depends(require(Perm.MANAGE_ENGAGEMENTS))],
+                 session: SessionDep, audit: AuditDep,
+                 sched: Annotated[FeedScheduler, Depends(_scheduler)]) -> FeedOut:
+    """Загрузить бюллетени одного выпуска ОС одним действием (например
+    debian:trixie для хостов Debian 13) — согласие оператора на обращение к
+    источнику вендора. Идёт в фоне, как «Обновить сейчас» бюллетеней."""
+    from scanner.feeds.advisories import FAMILIES
+    from scanner.feeds.sources import FeedError, FeedResult
+    if body.family not in FAMILIES:
+        raise HTTPException(422, f"unknown family: {body.family}; available: "
+                                 f"{', '.join(sorted(FAMILIES))}")
+    _get(session, sched, "advisories")
+    target = (body.family, body.release)
+
+    def loader(ctx):
+        from pathlib import Path
+
+        from scanner.core.config import settings
+        from scanner.feeds.advisories.store import SqlAdvisoryStore
+        from scanner.feeds.advisories.sync import sync_releases
+        ctx.progress(f"Бюллетени {body.family}:{body.release}", 0, 1)
+        directory = Path(settings.advisory_dir) if settings.advisory_dir else None
+        results, _ = sync_releases(SqlAdvisoryStore(ctx.engine), [target],
+                                   directory=directory, urls=settings.advisory_urls())
+        ok = [r for r in results if r.error is None]
+        if not ok:
+            raise FeedError("; ".join(f"{r.family}:{r.release} — ошибка: {r.error}"
+                                      for r in results) or "нет данных")
+        return FeedResult(count=sum(r.count for r in ok),
+                          message="; ".join(f"{r.family}:{r.release} — {r.count}"
+                                            for r in ok))
+
+    session.commit()
+    if not sched.submit_manual("advisories", user.subject, loader=loader):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "бюллетени уже загружаются — дождитесь окончания")
+    audit.record(subject=user.subject, action="advisory_release_load",
+                 target=f"{body.family}:{body.release}", result="queued")
+    session.expire_all()
+    return _out(sched, _get(session, sched, "advisories"))
+
+
+MAX_BDU_UPLOAD = 128 * 1024 * 1024
+
+
+@router.post("/feeds/bdu/upload", response_model=FeedOut, status_code=202)
+async def upload_bdu(request: Request,
+                     user: Annotated[Principal, Depends(require(Perm.MANAGE_ENGAGEMENTS))],
+                     session: SessionDep, audit: AuditDep,
+                     sched: Annotated[FeedScheduler, Depends(_scheduler)]) -> FeedOut:
+    """Загрузить выгрузку БДУ (vullist.xlsx с bdu.fstec.ru) из браузера: файл
+    сохраняется по BDU_FSTEC_FEED_PATH и сразу загружается в справочник.
+    Тело запроса — сам файл (application/octet-stream)."""
+    import os
+    import tempfile
+    from pathlib import Path
+
+    from scanner.core.config import settings
+    _get(session, sched, "bdu")
+    if settings.bdu_fstec_feed_url.strip():
+        raise HTTPException(409, "задан BDU_FSTEC_FEED_URL — выгрузка скачивается по "
+                                 "адресу; уберите его, чтобы загружать файл вручную")
+    dest = Path(settings.bdu_fstec_feed_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".bdu-upload-", dir=dest.parent)
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_BDU_UPLOAD:
+                    raise HTTPException(413, "файл больше 128 МБ")
+                fh.write(chunk)
+        with open(tmp, "rb") as fh:
+            if fh.read(2) != b"PK":
+                raise HTTPException(422, "это не файл .xlsx (ожидается vullist.xlsx с "
+                                         "bdu.fstec.ru)")
+        os.replace(tmp, dest)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    audit.record(subject=user.subject, action="bdu_upload", target="feed:bdu",
+                 result="ok", details={"bytes": size, "path": str(dest)})
+    session.commit()
+    sched.submit_manual("bdu", user.subject)
+    session.expire_all()
+    return _out(sched, _get(session, sched, "bdu"))
 
 
 @router.put("/feeds/{source}", response_model=FeedOut)
