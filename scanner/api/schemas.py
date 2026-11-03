@@ -234,6 +234,29 @@ class RunCreate(BaseModel):
     cred_set_ids: list[int] = Field(default_factory=list, max_length=32)
     # Своё имя прогона; пусто — имя по выбранным опциям (модули и цели).
     name: str | None = Field(default=None, max_length=200)
+    # Сканировать хосты, не отвечающие на ICMP/пробы обнаружения (nmap -Pn).
+    no_ping: bool = False
+    # Готовый профиль проверки (scanner.core.profiles): задаёт модули и движок,
+    # если они не перечислены явно. Сохраняется в опциях прогона.
+    profile: str | None = Field(default=None, max_length=64)
+
+
+class CoverageEntryOut(BaseModel):
+    host: str
+    module: str
+    status: str            # completed | not_applicable | skipped | unreachable |
+    label: str             # no_credentials | timeout | error
+    reason: str | None = None
+
+
+class CoverageOut(BaseModel):
+    """Покрытие прогона: что реально проверено (хост × модуль)."""
+    scan_run_id: int
+    status: str
+    summary: dict
+    hosts: list[dict]
+    entries: list[CoverageEntryOut]
+    legacy: bool = False       # прогон до миграции 0020: покрытие оценено
 
 
 class DeniedTargetOut(BaseModel):
@@ -261,6 +284,17 @@ class RunOut(_Orm):
     error_message: str | None = None
     # Прогон, который повторяет этот («Повторить»).
     retry_of: int | None = None
+    # Опции прогона (no_ping, profile) и ограничения достоверности результата
+    # («Бэкпорты не учтены», находки только по баннерам) — миграция 0020.
+    options: dict = Field(default_factory=dict)
+    warnings: list[dict] = Field(default_factory=list)
+
+    @field_validator("options", "warnings", mode="before")
+    @classmethod
+    def _none_to_empty(cls, v, info):
+        if v is None:
+            return {} if info.field_name == "options" else []
+        return v
 
     @model_validator(mode="after")
     def _default_name(self) -> RunOut:
@@ -389,6 +423,13 @@ class FindingsSummaryOut(BaseModel):
     statuses: dict[str, int]
     previous_run_id: int | None
     host_counts: list[HostCountsOut]
+    # Находки базового прогона на хостах/модулях, не проверенных в этом прогоне:
+    # не считаются ни исправленными, ни открытыми.
+    unverified: int = 0
+    # Сопоставимость с базовым прогоном (scanner.core.coverage.comparability).
+    comparability: dict | None = None
+    # Покрытие прогона: хосты проверены / частично / недоступны, пробелы.
+    coverage: dict | None = None
 
 
 class FindingOut(BaseModel):
@@ -415,6 +456,10 @@ class FindingOut(BaseModel):
     software_source: str | None = None      # service | package
     # None — информационная находка или отмечена как ложное срабатывание
     priority: PriorityOut | None = None
+    # Уверенность (high | medium | low) и источник (authenticated_package,
+    # vendor_advisory, banner, nuclei, config, credential, inventory).
+    confidence: str | None = None
+    source: str | None = None
 
 
 class ServiceOut(BaseModel):

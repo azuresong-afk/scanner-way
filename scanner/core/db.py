@@ -179,6 +179,13 @@ class FeedSync(Base):
     message: Mapped[str | None] = mapped_column(Text)
     fingerprint: Mapped[str | None] = mapped_column(Text)
     running_since: Mapped[datetime | None] = mapped_column(TsTz)
+    # Прогресс текущей загрузки (миграция 0020): этап, записей загружено/всего,
+    # время последнего обновления; когда была последняя ошибка.
+    progress_stage: Mapped[str | None] = mapped_column(Text)
+    progress_done: Mapped[int | None] = mapped_column(BigInteger)
+    progress_total: Mapped[int | None] = mapped_column(BigInteger)
+    progress_at: Mapped[datetime | None] = mapped_column(TsTz)
+    last_error_at: Mapped[datetime | None] = mapped_column(TsTz)
 
 
 # ========== Прогоны ==========
@@ -200,7 +207,8 @@ class ScanRun(Base):
     targets: Mapped[list[str]] = mapped_column(TextArray, default=list)
     schedule_id: Mapped[int | None] = mapped_column(
         ForeignKey("scan_schedules.id", ondelete="SET NULL"), index=True)
-    # pending | running | done | failed | stopped | interrupted (миграция 0017)
+    # pending | running | done | partial | failed | stopped | interrupted
+    # (interrupted — миграция 0017, partial — 0020)
     status: Mapped[str] = mapped_column(Text, default="pending")
     started_at: Mapped[datetime | None] = mapped_column(TsTz)
     finished_at: Mapped[datetime | None] = mapped_column(TsTz)
@@ -213,6 +221,23 @@ class ScanRun(Base):
     worker_id: Mapped[str | None] = mapped_column(Text)
     retry_of: Mapped[int | None] = mapped_column(
         ForeignKey("scan_runs.id", ondelete="SET NULL"))
+    # Опции прогона (миграция 0020): no_ping (-Pn), profile.
+    options: Mapped[dict] = mapped_column(Jsonb, default=dict)
+    # Ограничения достоверности (миграция 0020): [{kind, host, message, …}].
+    warnings: Mapped[list[dict]] = mapped_column(Jsonb, default=list)
+
+
+class RunCoverageRow(Base):
+    """Покрытие прогона: статус модуля на хосте (scanner.core.coverage)."""
+    __tablename__ = "scan_run_coverage"
+    __table_args__ = (UniqueConstraint("scan_run_id", "host", "module"),)
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    scan_run_id: Mapped[int] = mapped_column(
+        ForeignKey("scan_runs.id", ondelete="CASCADE"), index=True)
+    host: Mapped[str] = mapped_column(Inet)
+    module: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
 
 
 class HostResult(Base):
@@ -304,6 +329,9 @@ class FindingRow(Base):
     detected_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
     # Рекомендация модуля (fixtext правила бенчмарка и т. п.), миграция 0008.
     remediation: Mapped[str | None] = mapped_column(Text)
+    # Уверенность и источник (миграция 0020, scanner.core.confidence).
+    confidence: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str | None] = mapped_column(Text)
 
 
 class FalsePositiveRow(Base):

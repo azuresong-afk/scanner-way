@@ -177,7 +177,14 @@ class PasswordPolicyModule(ScanModule):
     name = "password_policy"
 
     def run(self, ctx: ScanContext) -> list[Finding]:
+        from scanner.core import coverage as cv
         configs = ctx.host_policy_configs or {}
+        for host in ctx.targets:
+            if host not in configs:
+                ctx.coverage.mark(host, self.name, cv.SKIPPED,
+                                  "нет данных парольной политики от аудита конфигурации")
+        for host in configs:
+            ctx.coverage.mark(host, self.name, cv.COMPLETED)
         if not configs:
             ctx.audit.record(subject="scanner", action="password_policy_skip",
                              target=",".join(sorted(ctx.targets)) or "-",

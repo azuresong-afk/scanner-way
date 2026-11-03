@@ -38,6 +38,15 @@ class Unreachable(SshError):
     """Нет TCP/SSH-соединения (хост недоступен, порт закрыт, таймаут)."""
 
 
+class SshTimeout(Unreachable):
+    """Таймаут: TCP-порт не ответил (фильтруется), нет SSH-баннера или
+    вход не уложился в отведённое время."""
+
+
+class CommandTimeout(SshError):
+    """Команда на цели не уложилась в отведённое время."""
+
+
 class HostKeyMismatch(SshError):
     """Ключ хоста отличается от запомненного или неизвестен в строгом режиме."""
 
@@ -63,6 +72,11 @@ class SshOptions:
     strict_host_keys: bool = False        # True — только ключи из known_hosts
     connect_timeout_sec: float = 15.0
     max_output_bytes: int = 32 * 1024 * 1024
+    # Предварительная проверка TCP/SSH перед входом и ограниченный повтор
+    # при таймауте (всего попыток; пауза между ними — retry_delay_sec).
+    preflight: bool = True
+    attempts: int = 2
+    retry_delay_sec: float = 3.0
 
 
 class _SshSettings(BaseSettings):
@@ -74,13 +88,72 @@ class _SshSettings(BaseSettings):
     known_hosts: str = "/data/ssh_known_hosts"
     strict_host_keys: bool = False
     connect_timeout_sec: float = 15.0
+    preflight: bool = True
+    attempts: int = 2
+    retry_delay_sec: float = 3.0
 
 
 def options_from_env() -> SshOptions:
     s = _SshSettings()
     return SshOptions(known_hosts_file=s.known_hosts or None,
                       strict_host_keys=s.strict_host_keys,
-                      connect_timeout_sec=s.connect_timeout_sec)
+                      connect_timeout_sec=s.connect_timeout_sec,
+                      preflight=s.preflight, attempts=max(1, min(s.attempts, 5)),
+                      retry_delay_sec=max(0.0, s.retry_delay_sec))
+
+
+# ---------- предварительная проверка TCP/SSH ----------
+REC_FILTERED = ("Порт не ответил (пакеты отбрасываются). Проверьте межсетевой экран "
+                "между сканером и хостом (разрешите TCP/{port} с адреса сканера) и "
+                "что хост включён.")
+REC_CLOSED = ("Порт закрыт (соединение отклонено). Проверьте, что служба sshd "
+              "запущена и слушает порт {port}, и порт в учётной записи указан верно.")
+REC_NO_BANNER = ("TCP-соединение установлено, но SSH-баннер не получен за {t:.0f} с. "
+                 "Возможны: перегрузка sshd (MaxStartups), IPS/прокси на пути, не SSH "
+                 "на этом порту. Проверьте sshd на хосте или увеличьте "
+                 "SCANNER_SSH_CONNECT_TIMEOUT_SEC.")
+REC_LOGIN_TIMEOUT = ("Вход по SSH не уложился в {t:.0f} с (медленный DNS/GSSAPI на "
+                     "хосте, перегрузка). Отключите UseDNS/GSSAPIAuthentication в sshd "
+                     "или увеличьте SCANNER_SSH_CONNECT_TIMEOUT_SEC.")
+
+
+def preflight_ssh(host: str, port: int, timeout: float) -> None:
+    """TCP connect + чтение SSH-баннера. Ничего не отправляет, кроме TCP
+    рукопожатия. Бросает SshTimeout/Unreachable с рекомендацией оператору."""
+    import errno
+    import ipaddress
+    import socket
+
+    family = socket.AF_INET6 if ipaddress.ip_address(host).version == 6 else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        try:
+            code = sock.connect_ex((host, port))
+        except TimeoutError as e:
+            raise SshTimeout(f"{host}:{port}: таймаут TCP за {timeout:.0f} с. "
+                             + REC_FILTERED.format(port=port)) from e
+        except OSError as e:
+            raise Unreachable(f"{host}:{port}: {e}. "
+                              + REC_FILTERED.format(port=port)) from e
+        if code == errno.ECONNREFUSED:
+            raise Unreachable(f"{host}:{port}: соединение отклонено. "
+                              + REC_CLOSED.format(port=port))
+        if code in (errno.ETIMEDOUT, errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS):
+            raise SshTimeout(f"{host}:{port}: таймаут TCP за {timeout:.0f} с. "
+                             + REC_FILTERED.format(port=port))
+        if code != 0:
+            raise Unreachable(f"{host}:{port}: {os.strerror(code)}. "
+                              + REC_FILTERED.format(port=port))
+        try:
+            banner = sock.recv(256)
+        except TimeoutError as e:
+            raise SshTimeout(f"{host}:{port}: " + REC_NO_BANNER.format(t=timeout)) from e
+        except OSError as e:
+            raise Unreachable(f"{host}:{port}: соединение разорвано до SSH-баннера "
+                              f"({e})") from e
+        if not banner.startswith(b"SSH-"):
+            raise SshError(f"{host}:{port}: на порту не SSH (ответ "
+                           f"{banner[:40]!r}) — проверьте порт в учётной записи")
 
 
 _known_hosts_lock = threading.Lock()
@@ -141,7 +214,7 @@ class ParamikoShell:
             truncated = False
             while True:
                 if time.monotonic() > deadline:
-                    raise SshError(f"команда не уложилась в {timeout:.0f} с")
+                    raise CommandTimeout(f"команда не уложилась в {timeout:.0f} с")
                 if chan.recv_ready():
                     chunk = chan.recv(self._CHUNK)
                     if len(out) + len(chunk) > self._max_output:
@@ -157,7 +230,7 @@ class ParamikoShell:
             rc = -1 if truncated else chan.recv_exit_status()
             chan.close()
         except TimeoutError as e:
-            raise SshError(f"команда не уложилась в {timeout:.0f} с") from e
+            raise CommandTimeout(f"команда не уложилась в {timeout:.0f} с") from e
         except (paramiko.SSHException, OSError, EOFError) as e:
             raise SshError(f"{type(e).__name__}: {e}") from e
         return CommandResult(rc, bytes(out), err.decode("utf-8", "replace"), truncated)
@@ -188,8 +261,29 @@ class ParamikoShell:
         self._client.close()
 
 
-def connect(host: str, cred: HostCredential, opts: SshOptions) -> RemoteShell:
-    """SSH-сессия с хостом по учётке. host — уже проверенный allowlist-ом IP."""
+def connect(host: str, cred: HostCredential, opts: SshOptions, *,
+            sleep=time.sleep) -> RemoteShell:
+    """SSH-сессия с хостом по учётке. host — уже проверенный allowlist-ом IP.
+
+    Сначала — предварительная проверка TCP/SSH (быстрый понятный отказ вместо
+    общего TimeoutError), при таймауте — ограниченный повтор (opts.attempts).
+    Отказ в учётке и несовпадение ключа хоста не повторяются."""
+    attempts = max(1, opts.attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            if opts.preflight:
+                preflight_ssh(host, cred.port, opts.connect_timeout_sec)
+            return _connect_once(host, cred, opts)
+        except SshTimeout as e:
+            if attempt >= attempts:
+                if attempts > 1:
+                    raise SshTimeout(f"{e} (попыток: {attempts})") from e
+                raise
+            sleep(opts.retry_delay_sec)
+    raise AssertionError("unreachable")
+
+
+def _connect_once(host: str, cred: HostCredential, opts: SshOptions) -> RemoteShell:
     import paramiko
 
     client = paramiko.SSHClient()
@@ -220,10 +314,28 @@ def connect(host: str, cred: HostCredential, opts: SshOptions) -> RemoteShell:
     except paramiko.AuthenticationException as e:
         client.close()
         raise AuthFailed("учётные данные отклонены") from e
-    except (paramiko.ssh_exception.NoValidConnectionsError, TimeoutError, ConnectionError) as e:
+    except TimeoutError as e:
         client.close()
-        raise Unreachable(f"нет SSH-соединения: {type(e).__name__}") from e
+        raise SshTimeout(f"{host}:{cred.port}: таймаут SSH ({type(e).__name__}). "
+                         + REC_LOGIN_TIMEOUT.format(t=timeout)) from e
+    except (paramiko.ssh_exception.NoValidConnectionsError, ConnectionError) as e:
+        client.close()
+        raise Unreachable(f"нет SSH-соединения: {type(e).__name__}. "
+                          + REC_CLOSED.format(port=cred.port)) from e
     except (paramiko.SSHException, OSError, EOFError) as e:
         client.close()
+        if "banner" in str(e).lower() or "timed out" in str(e).lower():
+            raise SshTimeout(f"{host}:{cred.port}: {e}. "
+                             + REC_NO_BANNER.format(t=timeout)) from e
         raise SshError(f"{type(e).__name__}: {e}") from e
     return ParamikoShell(client, opts.max_output_bytes)
+
+
+def failure_status(e: BaseException) -> str:
+    """Статус покрытия (scanner.core.coverage) по ошибке SSH."""
+    from scanner.core import coverage as cov
+    if isinstance(e, (SshTimeout, CommandTimeout)):
+        return cov.TIMEOUT
+    if isinstance(e, Unreachable):
+        return cov.UNREACHABLE
+    return cov.ERROR

@@ -63,10 +63,17 @@ def validate_targets(targets: Sequence[str]) -> tuple[list[str], list[str]]:
 
 
 def build_nmap_command(targets: Sequence[str], rate: RateProfile,
-                       opts: DiscoveryOptions | None = None) -> list[str]:
-    """Собирает argv nmap. Цели должны быть уже проверены validate_targets()."""
+                       opts: DiscoveryOptions | None = None, *,
+                       no_ping: bool = False) -> list[str]:
+    """Собирает argv nmap. Цели должны быть уже проверены validate_targets().
+
+    no_ping — опция прогона «без проверки ping» (-Pn): хосты, не отвечающие на
+    ICMP/пробы обнаружения, всё равно сканируются по портам. Дольше (каждый
+    выключенный адрес ждёт таймаутов всех портов)."""
     opts = opts or DiscoveryOptions()
     cmd = [opts.nmap_path, "-sV"]
+    if no_ping:
+        cmd.append("-Pn")
     if opts.os_detection:
         cmd.append("-O")
     if opts.udp:
@@ -210,11 +217,12 @@ class DiscoveryModule(ScanModule):
             ctx.services = []
 
         opts = self.options
+        no_ping = bool(ctx.options.get("no_ping"))
         findings: list[Finding] = []
         step = max(1, opts.batch_size)
         for i in range(0, len(targets), step):
             batch = targets[i:i + step]
-            cmd = build_nmap_command(batch, ctx.rate, opts)
+            cmd = build_nmap_command(batch, ctx.rate, opts, no_ping=no_ping)
             # Общий таймаут вызова: host-timeout на волну параллельных хостов + запас.
             timeout = opts.host_timeout_sec * 2 + 60
             ctx.audit.record(subject="scanner", action="nmap_exec",
@@ -235,4 +243,24 @@ class DiscoveryModule(ScanModule):
             ctx.services.extend(services)
             ctx.hosts.update((h.host, h) for h in hosts)
             findings.extend(batch_findings)
+        self._mark_coverage(ctx, targets, no_ping)
         return findings
+
+    def _mark_coverage(self, ctx: ScanContext, targets: Sequence[str], no_ping: bool) -> None:
+        from scanner.core import coverage as cv
+        with_ports = {s.host for s in ctx.services or []}
+        for t in targets:
+            if t in ctx.hosts and (t in with_ports or not no_ping):
+                ctx.coverage.mark(t, self.name, cv.COMPLETED)
+            elif t in ctx.hosts:
+                # с -Pn nmap считает включённым любой адрес: без единого открытого
+                # порта проверять на хосте нечего
+                ctx.coverage.mark(t, self.name, cv.UNREACHABLE,
+                                  "сканирование без ping (-Pn): ни одного открытого порта — "
+                                  "хост выключен или все порты фильтруются межсетевым "
+                                  "экраном")
+            else:
+                ctx.coverage.mark(t, self.name, cv.UNREACHABLE,
+                                  "хост не ответил на обнаружение nmap" +
+                                  ("" if no_ping else "; если ICMP заблокирован — "
+                                   "повторите с опцией «без проверки ping (-Pn)»"))

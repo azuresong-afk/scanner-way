@@ -22,6 +22,17 @@ _PARTS: tuple[tuple[str, str], ...] = (
 _ALONE = {"auth_inventory": "по учётной записи", "config_audit": "аудит конфигураций",
           "cred_audit": "аудит паролей", "discovery": "инвентаризация"}
 
+# Понятные названия модулей (покрытие прогона, предупреждения, состав проверки).
+MODULE_TITLES: dict[str, str] = {
+    "discovery": "обнаружение хостов и сервисов (nmap)",
+    "vuln": "сетевая проверка уязвимостей (Nuclei, баннеры)",
+    "auth_inventory": "пакеты Linux по SSH (CVE/БДУ, бюллетени)",
+    "win_inventory": "обновления и ПО Windows по WinRM",
+    "config_audit": "аудит конфигурации (OpenSCAP, Lynis)",
+    "password_policy": "парольная политика",
+    "cred_audit": "проверка стойкости паролей",
+}
+
 MAX_NAME_LENGTH = 200
 _SHOWN_TARGETS = 2
 

@@ -57,6 +57,25 @@ _TLS_PORTS = {443, 8443, 993, 995, 465, 636, 990}
 _CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
 
 
+BANNER_NOTE = ("Потенциальное совпадение по версии из сетевого баннера — не "
+               "подтверждено. Дистрибутивы исправляют уязвимости бэкпортом без смены "
+               "версии апстрима; подтвердите проверкой по учётной записи (пакеты и "
+               "бюллетени вендора).")
+_DISTRO_BANNER = re.compile(r"debian|ubuntu|astra|red ?os|redos|centos|rhel|red hat|"
+                            r"rocky|alma|alt ?linux|suse|deb\d+u\d+|\bel\d", re.IGNORECASE)
+
+
+def mark_banner(f: Finding, service: ServiceInfo) -> None:
+    """Находка по баннеру: низкая уверенность и пояснение в доказательствах."""
+    f.source, f.confidence = "banner", "low"
+    banner = " ".join(x for x in (service.product, service.version) if x)
+    distro = bool(_DISTRO_BANNER.search(f"{service.version or ''} {service.cpe or ''} "
+                                        f"{service.product or ''}"))
+    note = BANNER_NOTE + (f" Баннер «{banner}» указывает на сборку дистрибутива — "
+                          "вероятность бэкпорта высокая." if distro else "")
+    f.evidence = f"{f.evidence}\n{note}" if f.evidence else note
+
+
 class VulnScanError(RuntimeError):
     """Nuclei завершился с ошибкой или вернул неразбираемый вывод."""
 
@@ -284,6 +303,7 @@ def parse_nuclei_jsonl(output: str, module: str = "vuln") -> list[Finding]:
             cve_ids=cves,
             cvss=cvss,
             evidence=_evidence(rec, info, template_id),
+            source="nuclei", confidence="medium",
         ))
     return findings
 
@@ -454,6 +474,7 @@ class VulnModule(ScanModule):
                 if ids & known:
                     continue
                 known |= ids
+                mark_banner(f, s)
                 out.append(f)
         ctx.audit.record(subject="scanner", action="banner_match",
                          target=f"{len(services)} services", result="ok",

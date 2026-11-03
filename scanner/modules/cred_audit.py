@@ -277,7 +277,11 @@ class CredentialAuditModule(ScanModule):
         # из согласованного набора проверки (ctx.cred_candidates). Нет ни того, ни
         # другого — модуль не делает ни одной попытки (осознанный пропуск в аудите).
         base_creds = self._base_credentials(ctx)
+        from scanner.core import coverage as cv
         if not base_creds and not self.options.service_credentials:
+            for h in allowed:
+                ctx.coverage.mark(h, self.name, cv.SKIPPED,
+                                  "набор проверки учёток не выбран")
             ctx.audit.record(subject="scanner", action="cred_audit_skip",
                              target=",".join(sorted(allowed)) or "-",
                              result="no_credentials")
@@ -285,6 +289,8 @@ class CredentialAuditModule(ScanModule):
 
         # Без подключённого бэкенда аутентификации модуль инертен (ноль попыток).
         if self._auth is None:
+            for h in allowed:
+                ctx.coverage.mark(h, self.name, cv.SKIPPED, "нет бэкенда проверки")
             ctx.audit.record(subject="scanner", action="cred_audit_skip",
                              target=",".join(sorted(allowed)) or "-",
                              result="no_authenticator")

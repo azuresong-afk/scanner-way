@@ -42,6 +42,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from scanner.core import coverage as cv
 from scanner.core import repository as repo
 from scanner.core.allowlist import AllowlistGate
 from scanner.core.audit import AuditSink
@@ -90,7 +91,7 @@ MAX_TARGETS_PER_RUN = 4096
 ModuleFactory = Callable[[], ScanModule]
 
 # Какие прогоны можно повторить кнопкой «Повторить».
-RETRYABLE = frozenset({"failed", "interrupted", "stopped"})
+RETRYABLE = frozenset({"failed", "interrupted", "stopped", "partial"})
 
 log = logging.getLogger(__name__)
 
@@ -287,6 +288,46 @@ class RunOutcome:
     stopped: bool = False
     # Факты для профилей соответствия (R5): какие проверки на хосте выполнялись.
     compliance_facts: dict[str, dict] = field(default_factory=dict)
+    # Покрытие: что реально проверено на каждом хосте каждым модулем.
+    coverage: cv.Coverage = field(default_factory=cv.Coverage)
+    # Ограничения достоверности результата (нет бюллетеней, только баннеры…).
+    warnings: list[dict] = field(default_factory=list)
+
+
+def finalize_coverage(ctx: ScanContext, module_names: Iterable[str],
+                      errors: Mapping[str, str], ran: set[str]) -> None:
+    """Достраивает покрытие тем, чего модули не отметили сами.
+
+    Ошибка модуля (исключение) — его находки потеряны, поэтому все хосты по
+    нему error (кроме более точных unreachable/timeout); модуль, до которого
+    прогон не дошёл (остановка), — skipped; хост, который discovery не нашёл, —
+    unreachable; остальное — completed."""
+    hosts = []
+    for t in ctx.targets:
+        try:
+            hosts.append(str(ipaddress.ip_address(t.strip())))
+        except ValueError:
+            continue
+    alive = ctx.alive_hosts()
+    for m in module_names:
+        for h in hosts:
+            cur = ctx.coverage.get(h, m)
+            if m in errors:
+                if cur is None or cur.status in (cv.COMPLETED, cv.NOT_APPLICABLE,
+                                                 cv.SKIPPED):
+                    ctx.coverage.mark(h, m, cv.ERROR, f"ошибка модуля: {errors[m]}"[:500],
+                                      force=True)
+                continue
+            if cur is not None:
+                continue
+            if m not in ran:
+                ctx.coverage.mark(h, m, cv.SKIPPED, "прогон остановлен до этого модуля")
+            elif m != "discovery" and alive is not None and h not in alive:
+                ctx.coverage.mark(h, m, cv.UNREACHABLE,
+                                  "хост не обнаружен (нет открытых портов) — "
+                                  "модуль на нём не выполнялся")
+            else:
+                ctx.coverage.mark(h, m, cv.COMPLETED)
 
 
 class Orchestrator:
@@ -309,7 +350,8 @@ class Orchestrator:
                      requested_targets: list[str], modules: list[ScanModule],
                      rate: RateProfile,
                      credentials: list[HostCredential] | None = None,
-                     cred_candidates: list[tuple[str, str]] | None = None) -> RunOutcome:
+                     cred_candidates: list[tuple[str, str]] | None = None,
+                     options: Mapping[str, object] | None = None) -> RunOutcome:
         """Гейт + модули по порядку. Ошибка модуля не прерывает остальные."""
         plan = plan_targets(self.gate, requested_targets)
         out = RunOutcome(allowed=plan.allowed, denied=plan.denied)
@@ -323,7 +365,9 @@ class Orchestrator:
         ctx = ScanContext(engagement_id=engagement_id, scan_run_id=scan_run_id,
                           targets=list(plan.allowed), rate=rate, audit=self.audit,
                           credentials=list(credentials or []),
-                          cred_candidates=list(cred_candidates or []))
+                          cred_candidates=list(cred_candidates or []),
+                          options=dict(options or {}))
+        ran: set[str] = set()
         for module in modules:
             if self.should_stop():
                 out.stopped = True
@@ -331,6 +375,7 @@ class Orchestrator:
                                   target=module.name, result="stopped",
                                   details={"scan_run_id": scan_run_id})
                 break
+            ran.add(module.name)
             self.audit.record(subject="scanner", action="module_start",
                               target=module.name, result="ok",
                               details={"scan_run_id": scan_run_id,
@@ -350,6 +395,27 @@ class Orchestrator:
                               target=module.name, result="ok",
                               details={"scan_run_id": scan_run_id,
                                        "findings": len(found)})
+        finalize_coverage(ctx, [m.name for m in modules], out.errors, ran)
+        out.coverage = ctx.coverage
+        from scanner.core.confidence import (
+            apply_confidence,
+            supersede_banner,
+            warnings_for,
+        )
+        out.findings, superseded = supersede_banner(out.findings, ctx.assessed_cves)
+        if superseded:
+            self.audit.record(subject="scanner", action="banner_superseded",
+                              target=f"scan_run:{scan_run_id}", result="ok",
+                              details={"findings": len(superseded),
+                                       "ids": [f.vuln_id for f in superseded][:50]})
+        apply_confidence(out.findings)
+        out.warnings = warnings_for(out.findings, ctx.run_notes, ctx.coverage)
+        cov_sum = ctx.coverage.summary()
+        self.audit.record(subject="scanner", action="coverage", target=f"scan_run:{scan_run_id}",
+                          result="gaps" if cov_sum["gaps"] else "ok",
+                          details={k: cov_sum[k] for k in ("hosts", "hosts_checked",
+                                                           "hosts_partial",
+                                                           "hosts_unreachable", "gaps")})
         out.services = list(ctx.services or [])
         out.hosts = list(ctx.hosts.values())
         out.inventory = list(ctx.inventory.values())
@@ -432,6 +498,20 @@ def owner_is_dead(worker_id: str | None, me: str) -> bool:
     except OSError:          # процесс есть, но чужой (EPERM)
         return False
     return False
+
+
+# Опции прогона, которые понимает сканер (остальное отбрасывается).
+RUN_OPTION_KEYS = {"no_ping": bool, "profile": str}
+
+
+def clean_run_options(options: Mapping[str, object] | None) -> dict:
+    out: dict = {}
+    for k, typ in RUN_OPTION_KEYS.items():
+        v = (options or {}).get(k)
+        if v in (None, "", False):
+            continue
+        out[k] = bool(v) if typ is bool else str(v)[:64]
+    return out
 
 
 def error_summary(errors: Mapping[str, str]) -> str:
@@ -554,7 +634,8 @@ class RunService:
                credential_ids: list[int] | None = None,
                cred_set_ids: list[int] | None = None,
                name: str | None = None, schedule_id: int | None = None,
-               retry_of: int | None = None) -> int:
+               retry_of: int | None = None,
+               options: Mapping[str, object] | None = None) -> int:
         """Создаёт прогон (pending) и отдаёт его исполнителю. Права проверяет API.
 
         name — имя, заданное оператором; без него имя строится по модулям и целям.
@@ -565,6 +646,7 @@ class RunService:
         if rate_profile not in PROFILES:
             raise ValueError(f"unknown rate profile: {rate_profile}")
         names = order_modules(with_companions(modules, self.registry))
+        opts = clean_run_options(options)
         cred_ids = list(dict.fromkeys(credential_ids or []))
         set_ids = list(dict.fromkeys(cred_set_ids or []))
         self.check_credentials(engagement_id, names, cred_ids)
@@ -578,7 +660,7 @@ class RunService:
                                           cred_set_ids=set_ids,
                                           name=title, targets=requested_targets[:1024],
                                           schedule_id=schedule_id, retry_of=retry_of,
-                                          worker_id=self.worker_id)
+                                          worker_id=self.worker_id, options=opts)
         self.audit.record(subject=actor, action="scan_queue", target=f"scan_run:{run_id}",
                           result="ok",
                           details={"engagement_id": engagement_id, "name": title,
@@ -586,7 +668,7 @@ class RunService:
                                    "rate_profile": rate_profile,
                                    "credential_ids": cred_ids,
                                    "cred_set_ids": set_ids,
-                                   "retry_of": retry_of,
+                                   "retry_of": retry_of, "options": opts or None,
                                    "requested_targets": requested_targets[:100]})
         self._enqueue(run_id, list(requested_targets))
         return run_id
@@ -600,14 +682,15 @@ class RunService:
             if run is None:
                 raise LookupError(f"scan_run {scan_run_id} not found")
             if run.status not in RETRYABLE:
-                raise ValueError(f"повторить можно только прогон с ошибкой, прерванный "
-                                 f"или остановленный (сейчас: {run.status})")
+                raise ValueError(f"повторить можно только прогон с ошибкой, частичный, "
+                                 f"прерванный или остановленный (сейчас: {run.status})")
             params = {"engagement_id": run.engagement_id, "modules": list(run.modules),
                       "rate_profile": run.rate_profile,
                       "requested_targets": list(run.targets or []),
                       "credential_ids": list(run.credential_ids or []),
                       "cred_set_ids": list(run.cred_set_ids or []),
-                      "name": run.name, "schedule_id": run.schedule_id}
+                      "name": run.name, "schedule_id": run.schedule_id,
+                      "options": dict(run.options or {})}
         if not params["requested_targets"]:
             raise ValueError("у прогона не сохранены цели — запустите новый прогон")
         return self.submit(**params, actor=actor, started_by=started_by,
@@ -803,6 +886,7 @@ class RunService:
                 return run.status
             engagement_id = run.engagement_id
             names = list(run.modules)
+            run_options = dict(run.options or {})
             rate = get_profile(run.rate_profile)
             # allowlist читается в момент запуска, а не постановки
             gate = repo.load_allowlist_gate(s, engagement_id)
@@ -840,7 +924,7 @@ class RunService:
         out = orch.run_detailed(engagement_id=engagement_id, scan_run_id=scan_run_id,
                                 requested_targets=requested_targets, modules=modules,
                                 rate=rate, credentials=credentials,
-                                cred_candidates=cred_candidates)
+                                cred_candidates=cred_candidates, options=run_options)
         del credentials, cred_candidates    # секреты больше не нужны
 
         with session_scope(self.sessions) as s:
@@ -852,11 +936,15 @@ class RunService:
                 repo.save_services(s, scan_run_id=scan_run_id, services=out.services)
             if out.inventory:
                 repo.save_inventory(s, scan_run_id=scan_run_id, inventories=out.inventory)
-            prev_id = repo.previous_scan_run_id(s, scan_run_id)
+            repo.save_coverage(s, scan_run_id, out.coverage)
+            repo.set_run_warnings(s, scan_run_id, out.warnings)
+            prev_id = repo.previous_scan_run_id(s, scan_run_id, coverage=out.coverage)
             statuses = {}
             if prev_id is not None:
                 d = diff_runs(repo.get_findings(s, prev_id), out.findings,
-                              repo.historically_fixed_keys(s, engagement_id, scan_run_id))
+                              repo.historically_fixed_keys(s, engagement_id, scan_run_id),
+                              previous_coverage=repo.run_coverage(s, prev_id),
+                              current_coverage=out.coverage)
                 statuses = {f.dedup_key(): st for st, items in
                             (("open", d.open), ("new", d.new),
                              ("regression", d.regression)) for f in items}
@@ -871,10 +959,13 @@ class RunService:
                 final = "stopped"
             elif not out.allowed:
                 final, message = "failed", MSG_NO_TARGETS
-            elif out.errors:
-                final, message = "failed", error_summary(out.errors)
             else:
-                final = "done"
+                # итог по покрытию: недоступный хост, таймаут SSH, нет учётки —
+                # не «успешно»; ошибки модулей входят в покрытие как error
+                final, message = cv.run_verdict(out.coverage, out.allowed)
+                if out.errors:
+                    message = error_summary(out.errors) + (f". {message}" if message
+                                                           else "")
             if run.status != final or message:
                 repo.set_scan_run_status(s, scan_run_id, final, error_message=message)
         self.audit.record(subject="scanner", action="scan_finish",
@@ -882,6 +973,7 @@ class RunService:
                           details={"targets": len(out.allowed),
                                    "denied": len(out.denied),
                                    "findings": len(out.findings),
+                                   "coverage_gaps": len(out.coverage.gaps()),
                                    "errors": out.errors or None})
         self._notify(scan_run_id)
         return final

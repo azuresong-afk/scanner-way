@@ -95,7 +95,7 @@ def create_temp_database(server_url: str | URL) -> str:
         with engine.connect() as c:
             c.execute(text(f'CREATE DATABASE "{name}"'))
             c.execute(text(f"COMMENT ON DATABASE \"{name}\" IS '{TEST_DB_MARK}'"))
-    except Exception as e:  # noqa: BLE001 — любая ошибка = тестов не будет
+    except Exception as e:
         raise UnsafeDatabaseError(
             "не удалось создать временную тестовую базу по адресу "
             "SCANNER_TEST_DATABASE_URL (нужно право CREATE DATABASE): "

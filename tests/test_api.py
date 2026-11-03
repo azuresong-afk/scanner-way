@@ -493,11 +493,14 @@ def test_stop_between_modules(api_deferred, deferred, sqlite_factory, rec):
     assert ("scanner", "module_skip", "vuln", "stopped") in api.audit(sqlite_factory)
 
 
-def test_module_error_fails_run_but_keeps_other_findings(api, sqlite_factory):
+def test_module_error_makes_run_partial_and_keeps_other_findings(api, sqlite_factory):
+    """Ошибка одного модуля при отработавших других — прогон «Частично»
+    (раньше failed): результаты discovery достоверны, пробел виден в покрытии."""
     eid = api.engagement("10.0.0.0/24")
     op = api.user("op", "operator")
     r = _run(api, eid, op, ["10.0.0.1"], modules=["discovery", "broken"])
-    assert r.json()["status"] == "failed"
+    assert r.json()["status"] == "partial"
+    assert "модуль broken" in r.json()["error_message"]
     assert len(api.c.get(f"/runs/{r.json()['id']}/findings", headers=op).json()) == 1
     assert ("scanner", "module_finish", "broken", "error") in api.audit(sqlite_factory)
 

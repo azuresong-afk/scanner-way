@@ -183,7 +183,7 @@ def test_wave1_run_end_to_end(world, sqlite_factory):
     run = r.json()
     assert run["status"] == "done", run
     # password_policy поставлен автоматически вместе с config_audit, в имени его нет
-    assert run["modules"] == ["discovery", "auth_inventory", "win_inventory",
+    assert run["modules"] == ["discovery", "auth_inventory",
                               "config_audit", "password_policy", "cred_audit"]
     assert "password_policy" not in run["name"]
 

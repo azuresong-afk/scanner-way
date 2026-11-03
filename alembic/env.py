@@ -21,7 +21,7 @@ def _url() -> str:
     return settings.database_url
 
 
-def _guard_downgrade(ctx, step, heads, run_args) -> None:  # noqa: ARG001
+def _guard_downgrade(ctx, step, heads, run_args) -> None:
     """Откат миграции удаляет таблицы с данными: разрешён только во временной
     тестовой базе или при явном SCANNER_ALLOW_DOWNGRADE=1 (см.
     scanner.core.dbsafety). Вызывается после шага, но до фиксации транзакции —

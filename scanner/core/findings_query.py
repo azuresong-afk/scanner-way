@@ -205,17 +205,35 @@ def summary(session: Session, scan_run_id: int, engagement_id: int) -> dict:
     for h in hosts.values():
         h["total"] = sum(v for k, v in h["counts"].items() if k != "info")
 
-    fixed = 0
-    prev_id = repo.previous_scan_run_id(session, scan_run_id)
+    fixed = unverified = 0
+    comparability = None
+    run = session.get(ScanRun, scan_run_id)
+    cur_cov = repo.run_coverage(session, run) if run is not None else None
+    prev_id = repo.previous_scan_run_id(session, scan_run_id, coverage=cur_cov)
     if prev_id is not None:
         prev = FindingRow.__table__.alias("prev")
         prev_fp = exists().where(FalsePositiveRow.engagement_id == engagement_id,
                                  FalsePositiveRow.dedup_key == prev.c.dedup_key)
         now = exists().where(FindingRow.scan_run_id == scan_run_id,
                              FindingRow.dedup_key == prev.c.dedup_key)
-        fixed = session.scalar(select(func.count()).select_from(prev).where(
-            prev.c.scan_run_id == prev_id, prev.c.severity != "info", ~prev_fp, ~now)) or 0
+        # исчезнувшие находки базы — исправлены, только если хост этим модулем
+        # в этом прогоне действительно проверен; иначе «не проверено»
+        for host, module, n in session.execute(
+                select(prev.c.host, prev.c.module, func.count()).select_from(prev)
+                .where(prev.c.scan_run_id == prev_id, prev.c.severity != "info",
+                       ~prev_fp, ~now)
+                .group_by(prev.c.host, prev.c.module)).all():
+            if cur_cov is None or cur_cov.covered(str(host), module):
+                fixed += int(n)
+            else:
+                unverified += int(n)
+        if cur_cov is not None:
+            from scanner.core.coverage import comparability as _cmp
+            comparability = _cmp(repo.run_coverage(session, prev_id), cur_cov).to_dict()
     return {
+        "unverified": int(unverified),
+        "comparability": comparability,
+        "coverage": cur_cov.summary() if cur_cov is not None else None,
         "counts": counts,
         "open": sum(v for k, v in counts.items() if k != "info"),
         "hosts": len(hosts),
