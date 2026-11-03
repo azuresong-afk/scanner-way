@@ -254,7 +254,7 @@ export const FINDING_TYPE_LABEL: Record<string, string> = {
 };
 
 export const RATE_PROFILES = [
-  { id: "gentle", label: "Щадящий", description: "Минимальная нагрузка на сеть заказчика" },
+  { id: "gentle", label: "Медленный", description: "Минимальная нагрузка на сеть заказчика" },
   { id: "normal", label: "Обычный", description: "Баланс скорости и нагрузки" },
   { id: "aggressive", label: "Быстрый", description: "Только для согласованных окон" },
 ];

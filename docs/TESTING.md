@@ -275,7 +275,7 @@ API: `GET /engagements/{id}/hosts` — поля `latest_counts`, `latest_total`,
 | 6а.15 | Страница хоста (`/hosts/LAB_IP`) → «Проверить доступность» | Открывается вкладка «Сетевой поиск» с подставленным адресом |
 | 6а.16 | «Журнал аудита», действие «Проверка доступности (порты)» | Записи `queued`, `done`/`stopped`, отказы `rejected_*`, `rate_limited`; для каждого вызова nmap — `nmap_exec` с полной командой |
 
-Настройки: `SCANNER_API_PORTSCAN_PER_MINUTE` (6 запусков на пользователя в минуту), `SCANNER_API_PORTSCAN_MAX_ACTIVE` (2 одновременных), `SCANNER_API_PORTSCAN_MAX_TARGETS` (1024 адреса в проверке), `SCANNER_API_PORTSCAN_WORKERS` (2 проверки параллельно). Интенсивность — профиль прогона («Щадящий» = `--max-rate 5`). Allowlist перепроверяется перед каждой пачкой из 32 адресов.
+Настройки: `SCANNER_API_PORTSCAN_PER_MINUTE` (6 запусков на пользователя в минуту), `SCANNER_API_PORTSCAN_MAX_ACTIVE` (2 одновременных), `SCANNER_API_PORTSCAN_MAX_TARGETS` (1024 адреса в проверке), `SCANNER_API_PORTSCAN_WORKERS` (2 проверки параллельно). Интенсивность — профиль прогона («Медленный» = `--max-rate 5`). Allowlist перепроверяется перед каждой пачкой из 32 адресов.
 
 - [ ] Шаг 6а пройден
 
