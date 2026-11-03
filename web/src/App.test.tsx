@@ -240,6 +240,10 @@ it("сводка показывает открытые уязвимости и �
   expect(within(tile("Новые")).getByText("1")).toBeInTheDocument();
   expect(within(tile("Закрытые")).getByText("1")).toBeInTheDocument();
   expect(within(tile("Регрессии")).getByText("0")).toBeInTheDocument();
+  // сводка разгружена: ни кнопок отчёта, ни запуска прогона сверху
+  expect(screen.queryByRole("button", { name: /Новый прогон/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Скачать отчёт/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("radiogroup", { name: "Версия отчёта" })).not.toBeInTheDocument();
 });
 
 it("вкладка «Активы»: список постоянный, от прогона меняются только счётчики", async () => {
@@ -482,6 +486,13 @@ describe("проверка доступности хоста на страниц
   it("видна оператору", async () => {
     open(["operator"], OPERATOR);
     expect(await screen.findByRole("heading", { name: "Проверка доступности хоста" })).toBeInTheDocument();
+  });
+
+  it("страница договора без прогонов: нет кнопки запуска и списка прогонов", async () => {
+    open(["operator"], OPERATOR);
+    await screen.findByRole("heading", { name: "Allowlist — разрешённые цели" });
+    expect(screen.queryByRole("button", { name: /Новый прогон/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Прогоны по договору" })).not.toBeInTheDocument();
   });
 
   it("скрыта от администратора (не сканирует)", async () => {
