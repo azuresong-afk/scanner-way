@@ -175,6 +175,11 @@ def build_inputs(ctx: ScanContext) -> tuple[list[str], list[str]]:
     else:
         ok, bad = validate_targets(ctx.targets)
         rejected.extend(bad)
+        alive = ctx.alive_hosts()
+        if alive is not None:
+            # обнаружение выполнено: недоступные хосты Nuclei не сканирует —
+            # иначе выключенный хост «проверен» и «чист»
+            ok = [h for h in ok if h in alive]
         for h in ok:
             line = _host_literal(h)
             if line not in seen:

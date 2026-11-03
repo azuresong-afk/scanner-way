@@ -442,3 +442,28 @@ def test_report_for_down_host_says_not_checked(svc, sqlite_factory):
     text = "\n".join(p.text for p in doc.paragraphs)
     assert "Полнота проверки" in text and "не выявлено" not in text.lower()
 
+
+
+def test_vuln_does_not_scan_hosts_discovery_found_down():
+    """Nuclei не запускается по хостам, которые обнаружение признало недоступными
+    (раньше при нуле сервисов он получал все цели прогона)."""
+    from scanner.core.audit import AuditSink
+    from scanner.modules.vuln import VulnModule, build_inputs
+
+    class _A(AuditSink):
+        def record(self, **kw):
+            pass
+
+    calls = []
+    ctx = ScanContext(engagement_id=1, scan_run_id=1, targets=["10.0.0.7", "10.0.0.5"],
+                      rate=get_profile("gentle"), audit=_A(), services=[],
+                      completed={"discovery"})
+    assert build_inputs(ctx) == ([], [])
+    mod = VulnModule(runner=lambda *a: calls.append(a) or "")
+    assert mod.run(ctx) == [] and calls == []
+    ctx.services = [_ssh("10.0.0.5")]
+    assert build_inputs(ctx)[0] == ["10.0.0.5:22"]
+    # без обнаружения — как раньше, все цели
+    ctx2 = ScanContext(engagement_id=1, scan_run_id=1, targets=["10.0.0.7"],
+                       rate=get_profile("gentle"), audit=_A())
+    assert build_inputs(ctx2)[0] == ["10.0.0.7"]
