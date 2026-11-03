@@ -17,6 +17,7 @@ from scanner.api.schemas import (
     DeniedTargetOut,
     FindingOut,
     FindingsSummaryOut,
+    HostLatestOut,
     InventoryHostOut,
     PackageOut,
     RunCreate,
@@ -25,6 +26,7 @@ from scanner.api.schemas import (
     ServiceOut,
 )
 from scanner.core import findings_query as fq
+from scanner.core import host_latest
 from scanner.core import repository as repo
 from scanner.core.audit import AuditSink
 from scanner.core.db import ScanRun
@@ -232,20 +234,55 @@ def list_hosts(engagement_id: int, _: Annotated[Principal, Depends(require(Perm.
     """Инвентарь договора — не зависит от выбранного прогона.
 
     `os_family` оставляет хосты одного семейства ОС (`unknown` — без ОС).
+    `latest_*` — последние известные уязвимости хоста по всем прогонам
+    (scanner.core.host_latest): непроверенное в новом прогоне не считается
+    исправленным.
     """
     get_engagement(session, engagement_id)
-    return [InventoryHostOut(
-                host=h["host"], os_guess=h["os_guess"], run_ids=h["run_ids"],
-                os_family=h["os_family"], os_family_label=h["os_family_label"],
-                os_source=h["os_source"], os_accuracy=h["os_accuracy"],
-                os_run_id=h["os_run_id"],
-                services_run_id=h["services_run_id"],
-                packages_run_id=h["packages_run_id"], package_count=h["package_count"],
-                services=[ServiceOut(host=s.host, port=s.port, protocol=s.protocol,
-                                     service=s.service, product=s.product,
-                                     version=s.version, cpe=s.cpe)
-                          for s in h["services"]])
-            for h in repo.engagement_hosts(session, engagement_id, os_family=os_family)]
+    latest = host_latest.latest_counts(session, engagement_id)
+    out = []
+    for h in repo.engagement_hosts(session, engagement_id, os_family=os_family):
+        lt = latest.get(h["host"])
+        out.append(InventoryHostOut(
+            host=h["host"], os_guess=h["os_guess"], run_ids=h["run_ids"],
+            os_family=h["os_family"], os_family_label=h["os_family_label"],
+            os_source=h["os_source"], os_accuracy=h["os_accuracy"],
+            os_run_id=h["os_run_id"],
+            services_run_id=h["services_run_id"],
+            packages_run_id=h["packages_run_id"], package_count=h["package_count"],
+            services=[ServiceOut(host=s.host, port=s.port, protocol=s.protocol,
+                                 service=s.service, product=s.product,
+                                 version=s.version, cpe=s.cpe)
+                      for s in h["services"]],
+            latest_counts=lt.counts if lt else {}, latest_total=lt.total if lt else 0,
+            latest_run_ids=lt.run_ids if lt else [],
+            checked_run_id=lt.checked_run_id if lt else None))
+    return out
+
+
+@router.get("/engagements/{engagement_id}/hosts/{host}/latest", response_model=HostLatestOut)
+def host_latest_findings(engagement_id: int, host: str,
+                         _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                         session: SessionDep) -> HostLatestOut:
+    """Последние известные находки хоста: по каждому модулю — из последнего
+    прогона, где модуль хост действительно проверил. Ложные срабатывания — с
+    полем false_positive, как в находках прогона."""
+    get_engagement(session, engagement_id)
+    try:
+        key = str(ipaddress.ip_address(host.strip()))
+    except ValueError as e:
+        raise HTTPException(422, f"invalid host: {host}") from e
+    lt, rows = host_latest.latest_findings(session, engagement_id, key)
+    marks = repo.false_positive_marks(session, engagement_id)
+    services, priorities = {}, {}
+    for rid in lt.run_ids:
+        services[rid] = services_by_port(session, rid)
+        priorities[rid] = run_priorities(session, rid, engagement_id, marks)
+    return HostLatestOut(
+        host=key, run_ids=lt.run_ids, checked_run_id=lt.checked_run_id,
+        module_runs=lt.module_runs,
+        findings=[finding_out(r, marks, services.get(r.scan_run_id),
+                              priorities.get(r.scan_run_id)) for r in rows])
 
 
 @router.get("/runs/{run_id}", response_model=RunOut)

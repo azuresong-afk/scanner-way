@@ -44,6 +44,7 @@ import type {
   FindingsSummary,
   FixPlanOut,
   FixQuery,
+  HostLatestOut,
   InventoryHostOut,
   MeOut,
   PackageOut,
@@ -341,6 +342,8 @@ export const api = {
     json<PackageOut[]>(`/runs/${runId}/packages${host ? `?host=${encodeURIComponent(host)}` : ""}`),
   /** Инвентарь договора — не зависит от прогона. */
   hosts: (engagementId: number) => json<InventoryHostOut[]>(`/engagements/${engagementId}/hosts`),
+  hostLatest: (engagementId: number, host: string) =>
+    json<HostLatestOut>(`/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/latest`),
 
   /** Отчёт как Blob: эндпоинт требует Bearer, поэтому обычная ссылка не подходит. */
   report: async (

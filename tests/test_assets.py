@@ -23,6 +23,12 @@ def api(sqlite_factory):
 def _mk(api, eid, address, **kw):
     r = api.c.post(f"/engagements/{eid}/assets", headers=api.admin,
                    json={"address": address, **kw})
+    if r.status_code == 409:    # хост уже заведён прогоном (0022) — правим учёт
+        a = next(x for x in api.c.get(f"/engagements/{eid}/assets",
+                                      headers=api.admin).json() if x["address"] == address)
+        r = api.c.patch(f"/engagements/{eid}/assets/{a['id']}", headers=api.admin, json=kw)
+        assert r.status_code == 200, r.text
+        return r.json()
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -156,14 +162,17 @@ def test_enrichment_and_import_discovered(api):
     eid = api.engagement("10.0.0.0/24")
     op = api.user("op", "operator")
     run_id = _run(api, eid, op, ["10.0.0.1"]).json()["id"]
+    # найденный прогоном хост заводится активом сам (0022) — импортировать нечего
     r = api.c.post(f"/engagements/{eid}/assets/import-discovered", headers=api.admin)
     assert r.status_code == 201, r.text
-    assert [a["address"] for a in r.json()] == ["10.0.0.1"]
-    assert api.c.post(f"/engagements/{eid}/assets/import-discovered",
-                      headers=api.admin).json() == []        # повторно — ничего нового
+    assert r.json() == []
     got = api.c.get(f"/engagements/{eid}/assets", headers=api.admin).json()[0]
+    assert got["address"] == "10.0.0.1" and got["source"] == "discovery"
+    assert got["first_seen_at"] and got["last_seen_at"]
     assert got["last_run_id"] == run_id and got["findings_total"] >= 1
-    assert sum(got["finding_counts"].values()) == got["findings_total"]
+    assert got["checked_run_id"] == run_id
+    assert sum(v for k, v in got["finding_counts"].items() if k != "info") \
+        == got["findings_total"]
     # отметка «ложное срабатывание» убирает находку из счётчика
     f = next(x for x in api.c.get(f"/runs/{run_id}/findings", headers=op).json()
              if x["vuln_id"] == "CVE-2016-6210")

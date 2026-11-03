@@ -246,7 +246,7 @@ it("сводка показывает открытые уязвимости и �
   expect(screen.queryByRole("radiogroup", { name: "Версия отчёта" })).not.toBeInTheDocument();
 });
 
-it("вкладка «Активы»: список постоянный, от прогона меняются только счётчики", async () => {
+it("вкладка «Активы»: по умолчанию последние данные каждого хоста, прогон — только его хосты", async () => {
   setToken("t");
   const run = (id: number) => ({
     id, engagement_id: 1, modules: ["discovery", "vuln"], rate_profile: "gentle", status: "done",
@@ -258,8 +258,11 @@ it("вкладка «Активы»: список постоянный, от п�
     "GET /engagements": [ENG],
     "GET /engagements/1/runs": [run(1), run(2)],
     "GET /engagements/1/hosts": [
-      { host: "10.0.0.1", os_guess: null, run_ids: [1, 2], services_run_id: 2, services: [{ host: "10.0.0.1", ...ssh }] },
-      { host: "10.0.0.2", os_guess: null, run_ids: [1], services_run_id: 1, services: [{ host: "10.0.0.2", ...ssh }] },
+      { host: "10.0.0.1", os_guess: null, run_ids: [1, 2], services_run_id: 2, services: [{ host: "10.0.0.1", ...ssh }],
+        latest_counts: { high: 1 }, latest_total: 1, latest_run_ids: [2], checked_run_id: 2 },
+      // в прогон №2 не входил — последние данные из №1
+      { host: "10.0.0.2", os_guess: null, run_ids: [1], services_run_id: 1, services: [{ host: "10.0.0.2", ...ssh }],
+        latest_counts: { medium: 1 }, latest_total: 1, latest_run_ids: [1], checked_run_id: 1 },
     ],
     "GET /runs/1/findings": [
       finding({ host: "10.0.0.1", severity: "critical", vuln_id: "A" }),
@@ -271,17 +274,31 @@ it("вкладка «Активы»: список постоянный, от п�
   renderApp("/hosts");
   const row = async (host: string) => (await screen.findByRole("link", { name: host })).closest("tr") as HTMLElement;
   const vulns = async (host: string) => (await row(host)).lastElementChild?.textContent;
+  const hostLinks = () => screen.getAllByRole("link").filter((a) => a.closest("tbody"));
 
-  // по умолчанию — последний прогон (№2): 10.0.0.2 в нём не было, но он остаётся в списке
-  await screen.findByText(/в прогоне №2: 1/);
+  // по умолчанию — «Последние данные»: оба хоста со своими последними уязвимостями
+  await screen.findByText(/последние известные уязвимости/);
+  expect(screen.getByRole("combobox", { name: "Прогон" })).toHaveValue("");
   expect(await vulns("10.0.0.1")).toBe("1");
-  expect(within(await row("10.0.0.2")).getByText("не в прогоне №2")).toBeInTheDocument();
+  expect(await vulns("10.0.0.2")).toBe("1");
+  expect(within(await row("10.0.0.2")).getByText("по прогону №1")).toBeInTheDocument();
+  expect((await screen.findByRole("link", { name: "10.0.0.2" })).getAttribute("href")).toBe("/hosts/10.0.0.2");
+
+  // выбран прогон №2 — только его хосты и его находки
+  fireEvent.change(screen.getByRole("combobox", { name: "Прогон" }), { target: { value: "2" } });
+  await screen.findByText(/в прогоне №2 · всего в договоре 2/);
+  await waitFor(() => expect(hostLinks().map((a) => a.textContent)).toEqual(["10.0.0.1"]));
+  expect((await screen.findByRole("link", { name: "10.0.0.1" })).getAttribute("href")).toBe("/hosts/10.0.0.1?run=2");
 
   fireEvent.change(screen.getByRole("combobox", { name: "Прогон" }), { target: { value: "1" } });
-  await screen.findByText(/в прогоне №1: 2/);
+  await screen.findByText(/в прогоне №1/);
   await waitFor(async () => expect(await vulns("10.0.0.1")).toBe("2"));
   expect(await vulns("10.0.0.2")).toBe("1");
-  expect(screen.getAllByRole("link").filter((a) => a.closest("tbody"))).toHaveLength(2);
+  expect(hostLinks()).toHaveLength(2);
+
+  // назад к последним данным
+  fireEvent.change(screen.getByRole("combobox", { name: "Прогон" }), { target: { value: "" } });
+  await waitFor(async () => expect(await vulns("10.0.0.1")).toBe("1"));
 });
 
 it("показывает ОС хостов, фильтрует и группирует по семейству ОС", async () => {

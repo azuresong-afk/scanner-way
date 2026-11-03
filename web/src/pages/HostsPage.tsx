@@ -28,13 +28,28 @@ function readGrouped(): boolean {
 
 const critOf = (h: HostListRow): Criticality => h.asset?.criticality ?? DEFAULT_CRITICALITY;
 
+const LATEST_HINT =
+  "Последние известные уязвимости: по каждому виду проверки — из последнего прогона, где хост действительно проверялся. " +
+    "Если в новом прогоне хост был недоступен или не было учётной записи, остаются данные прошлого прогона.";
+
+function notCheckedHint(h: HostListRow): string {
+  if (h.scanned) return "Хост найден, но ни один прогон его ещё не проверил (недоступен, нет учётной записи или прогон прерван)";
+  if (h.asset?.source === "netscan") return "Хост найден сканированием портов; запустите прогон, чтобы проверить уязвимости";
+  if (h.asset?.source === "discovery") return "Хост найден прогоном, уязвимости ещё не проверялись";
+  return "Хост заведён вручную и ещё не сканировался";
+}
+
 /**
- * Единая вкладка «Хосты»: инвентарь договора по всем прогонам (ОС, сервисы,
- * уязвимости выбранного прогона) вместе с учётными атрибутами хоста —
- * критичностью, владельцем, тегами и группами (бывшая вкладка «Активы», R7).
+ * Вкладка «Активы»: все хосты договора — найденные любым прогоном или
+ * сканированием портов, заведённые вручную — с учётными атрибутами
+ * (критичность, владелец, теги, группы, R7).
+ *
+ * По умолчанию прогон не выбран: у каждого хоста его последние известные
+ * уязвимости (по модулям — из последнего прогона, где хост действительно
+ * проверялся). Выбор прогона показывает только хосты этого прогона и его находки.
  */
 export function HostsPage() {
-  const { engagement, runs, run, setRun, loading, error } = useRunSelection();
+  const { engagement, runs, run, latest, setRun, loading, error } = useRunSelection({ latest: true });
   const { has } = useAuth();
   const navigate = useNavigate();
   const eid = engagement?.id;
@@ -45,10 +60,9 @@ export function HostsPage() {
   const canCheck = has("run_scan") && has("host_credentials");
   const canSelect = canWrite || canCheck;
 
-  // Список хостов — инвентарь договора по всем прогонам, от выбора прогона не зависит.
+  // Инвентарь договора по всем прогонам, с последними известными уязвимостями хостов.
   const inventory = useAsync(() => api.hosts(eid!), [eid], !!eid);
-  // От прогона зависят только счётчики уязвимостей.
-  // Счётчики по хостам — из серверной сводки прогона, без выгрузки находок.
+  // Выбран прогон — счётчики из серверной сводки прогона, без выгрузки находок.
   const findings = useAsync(async () => hostRowsFromCounts((await api.findingsSummary(run!.id)).host_counts), [run?.id], !!run);
   const assets = useAsync(() => api.assets(eid!), [eid], !!eid && showAssets);
   const groups = useAsync(() => api.assetGroups(eid!), [eid], !!eid && showAssets);
@@ -77,11 +91,12 @@ export function HostsPage() {
     }
   }, [grouped]);
 
-  const hosts = useMemo(
-    () => (inventory.data ? hostListRows(inventory.data, assets.data ?? [], findings.data ?? [], run?.id ?? null) : []),
-    [inventory.data, assets.data, findings.data, run?.id],
+  const allHosts = useMemo(
+    () => (inventory.data ? hostListRows(inventory.data, assets.data ?? [], run ? (findings.data ?? []) : [], run?.id ?? null) : []),
+    [inventory.data, assets.data, findings.data, run],
   );
-  const inRun = hosts.filter((h) => h.inRun).length;
+  // Выбран прогон — только хосты, которые он обработал.
+  const hosts = useMemo(() => (run ? allHosts.filter((h) => h.inRun) : allHosts), [allHosts, run]);
   // Семейства ОС, встречающиеся в договоре, в порядке групп — для чипов фильтра.
   const osFamilies = useMemo(() => groupByOs(hosts).map((g) => ({ family: g.family, label: g.label, count: g.rows.length })), [hosts]);
   const q = query.trim().toLowerCase();
@@ -129,8 +144,9 @@ export function HostsPage() {
   }
 
   function hostLink(h: HostListRow): string | null {
-    if (!run || !h.scanned) return null;
-    return `/hosts/${encodeURIComponent(h.host)}?run=${h.inRun ? run.id : (h.lastRunId ?? run.id)}`;
+    if (!h.scanned) return null;
+    const path = `/hosts/${encodeURIComponent(h.host)}`;
+    return run ? `${path}?run=${run.id}` : path;
   }
 
   // Колонки до «Макс. опасность» — для строки-заголовка группы ОС.
@@ -212,18 +228,16 @@ export function HostsPage() {
             </td>
           </>
         )}
-        {!h.scanned ? (
-          <>
-            <td colSpan={2} className="faint" title="Хост заведён вручную и ещё не сканировался">
-              не сканировался
-            </td>
-            <td className="right num faint">—</td>
-          </>
-        ) : h.inRun ? (
+        {h.inRun ? (
           <>
             <td>{h.total ? <SeverityBadge severity={h.maxSeverity} /> : <span className="faint">нет</span>}</td>
             <td style={{ width: 180 }}>
               <SeverityStack counts={h.counts} />
+              {!run && h.checkedRunId !== null && (
+                <small className="faint" style={{ display: "block", marginTop: 2 }} title={LATEST_HINT}>
+                  {h.latestRunIds.length > 1 ? `по прогонам ${h.latestRunIds.map((id) => `№${id}`).join(", ")}` : `по прогону №${h.checkedRunId}`}
+                </small>
+              )}
             </td>
             <td className="right num" style={{ fontWeight: 600 }}>
               {h.total}
@@ -231,8 +245,8 @@ export function HostsPage() {
           </>
         ) : (
           <>
-            <td colSpan={2} className="faint" title="Хост не сканировался в выбранном прогоне">
-              не в прогоне №{run?.id}
+            <td colSpan={2} className="faint" title={notCheckedHint(h)}>
+              {h.scanned ? "уязвимости не проверялись" : h.asset?.source && h.asset.source !== "manual" ? "найден, не проверялся" : "не сканировался"}
             </td>
             <td className="right num faint">—</td>
           </>
@@ -304,7 +318,7 @@ export function HostsPage() {
               <Plus size={16} /> Добавить актив
             </button>
           )}
-          {runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} />}
+          {runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} latestLabel="Последние данные" />}
         </div>
       </div>
       {error && <ErrorAlert error={error} />}
@@ -321,11 +335,9 @@ export function HostsPage() {
           <div className="card-head">
             <h2>
               {shown.length} {shown.length === hosts.length ? "" : `из ${hosts.length}`} {plural(hosts.length)}
-              {run && (
-                <span className="faint" style={{ fontWeight: 400, fontSize: 13, marginLeft: 8 }}>
-                  в прогоне №{run.id}: {inRun}
-                </span>
-              )}
+              <span className="faint" style={{ fontWeight: 400, fontSize: 13, marginLeft: 8 }}>
+                {run ? `в прогоне №${run.id} · всего в договоре ${allHosts.length}` : latest ? "· последние известные уязвимости" : ""}
+              </span>
             </h2>
             <div className="inline" style={{ gap: 13, flexWrap: "wrap" }}>
               <label className="check" style={{ alignItems: "center" }}>
@@ -416,6 +428,10 @@ export function HostsPage() {
 
           {firstLoad ? (
             <Loading />
+          ) : hosts.length === 0 && run ? (
+            <Empty title={`В прогоне №${run.id} хостов нет`} icon={<Server size={28} />}>
+              Хосты договора — в режиме «Последние данные».
+            </Empty>
           ) : hosts.length === 0 ? (
             <Empty title="Активов пока нет" icon={<Server size={28} />}>
               {canWrite ? "Активы появятся после первого прогона; можно и завести актив вручную." : "Активы появятся после первого прогона."}

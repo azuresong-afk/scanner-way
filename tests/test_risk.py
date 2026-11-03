@@ -204,9 +204,12 @@ def test_api_findings_carry_priority_and_asset_criticality_raises_it(api, sqlite
     assert base and base[0]["priority"]["rank"] == 1
     before = base[0]["priority"]["score"]
 
-    r = api.c.post(f"/engagements/{eid}/assets", headers=api.admin,
-                   json={"address": "10.0.0.1", "criticality": "critical"})
-    assert r.status_code == 201
+    # найденный прогоном хост уже актив (0022) — меняем его критичность
+    asset = next(a for a in api.c.get(f"/engagements/{eid}/assets", headers=api.admin).json()
+                 if a["address"] == "10.0.0.1")
+    r = api.c.patch(f"/engagements/{eid}/assets/{asset['id']}", headers=api.admin,
+                    json={"criticality": "critical"})
+    assert r.status_code == 200
     after = next(f for f in api.c.get(f"/runs/{run['id']}/findings", headers=op).json()
                  if f["priority"])["priority"]
     assert after["score"] >= before

@@ -34,7 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from scanner.core.audit import AuditSink
-from scanner.core.db import AssetRow, PortScanRow
+from scanner.core.db import PortScanRow
 from scanner.core.ratelimit import RateProfile, get_profile
 
 log = logging.getLogger(__name__)
@@ -203,24 +203,14 @@ def subprocess_runner(cmd: list[str], timeout: float, stop: threading.Event) -> 
 def register_assets(session: Session, engagement_id: int, hosts: Iterable[str], *,
                     hostnames: Mapping[str, str] | None = None,
                     created_by: int | None = None) -> int:
-    """Живые хосты → «Активы» (если адреса ещё нет в реестре). Возвращает число новых.
+    """Живые хосты → «Активы» (source=netscan). Возвращает число новых.
 
     Учётные записи не нужны: актив заводится по факту ответа хоста в сети,
-    глубокую проверку настраивают потом. Существующие активы не меняются."""
+    глубокую проверку настраивают потом. У существующих активов обновляется
+    только отметка «последний раз обнаружен» (assets.record_seen)."""
     from scanner.core import assets as asvc
-    hostnames = hostnames or {}
-    known = {asvc.host_key(a) for a in session.scalars(
-        select(AssetRow.address).where(AssetRow.engagement_id == engagement_id))}
-    created = 0
-    for h in dict.fromkeys(hosts):
-        key = asvc.host_key(h)
-        if key in known:
-            continue
-        asvc.create_asset(session, engagement_id, address=key,
-                          hostname=hostnames.get(h), created_by=created_by)
-        known.add(key)
-        created += 1
-    return created
+    return asvc.record_seen(session, engagement_id, hosts, source=asvc.SOURCE_NETSCAN,
+                            hostnames=hostnames, created_by=created_by)
 
 
 def summarize(results: Sequence[dict]) -> dict:

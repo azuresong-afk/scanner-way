@@ -4,7 +4,7 @@ import { Pencil, Wifi } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
-import type { AssetOut, FindingOut, PackageOut } from "../api/types";
+import type { AssetOut, FindingOut, PackageOut, ServiceOut } from "../api/types";
 import { AssetModal, CriticalityBadge } from "../components/AssetEditing";
 import { SeverityBars } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
@@ -13,11 +13,25 @@ import { RunPicker } from "../components/RunPicker";
 import { ServicesTable } from "../components/ServicesTable";
 import { SoftwareTable } from "../components/SoftwareTable";
 import { Empty, ErrorAlert, Kpi, Loading } from "../components/ui";
-import { byHost, isFalsePositive, isIssue, replaceFinding } from "../lib/stats";
+import { fmtDate } from "../lib/format";
+import { MODULE_LABEL } from "../lib/labels";
+import { byHost, emptyCounts, isFalsePositive, isIssue, replaceFinding } from "../lib/stats";
 import { useAsync } from "../lib/useAsync";
 import { useRunSelection } from "../lib/useRunSelection";
 
 type VulnView = "software" | "list";
+
+const SOURCE_LABEL: Record<string, string> = { manual: "", discovery: "прогоном", netscan: "сканированием портов" };
+
+interface HostData {
+  findings: FindingOut[];
+  services: ServiceOut[];
+  packages: PackageOut[];
+  /** Прогон выбранный, а без выбора — последний, где хост проверялся (null — не проверялся). */
+  runId: number | null;
+  /** Без выбора прогона: вид проверки → прогон, из которого её данные. */
+  moduleRuns: Record<string, number> | null;
+}
 const VIEWS: { id: VulnView; label: string }[] = [
   { id: "software", label: "По ПО" },
   { id: "list", label: "Списком" },
@@ -40,28 +54,44 @@ function saveView(v: VulnView) {
   }
 }
 
-/** Детальная информация по хосту: сервисы и все его уязвимости в выбранном прогоне. */
+/**
+ * Детальная информация по хосту: сервисы и уязвимости. Без выбранного прогона —
+ * последние известные данные по всем прогонам (по каждому виду проверки — из
+ * последнего прогона, где хост проверялся); с ?run=ID — данные этого прогона.
+ */
 export function HostDetailPage() {
   const host = decodeURIComponent(useParams().host ?? "");
-  const { runs, run, setRun, loading, error } = useRunSelection();
+  const { runs, run, latest, setRun, loading, error } = useRunSelection({ latest: true });
+  const { current } = useEngagement();
+  const eid = current?.id;
   const data = useAsync(
-    async () => {
-      const withPackages = run!.modules.includes("auth_inventory");
-      const [findings, services, packages] = await Promise.all([
-        api.findings(run!.id, { host }),
-        api.services(run!.id),
-        withPackages ? api.packages(run!.id, host) : Promise.resolve([]),
-      ]);
-      return { findings, services: services.filter((s) => s.host === host), packages };
+    async (): Promise<HostData> => {
+      if (run) {
+        const withPackages = run.modules.includes("auth_inventory");
+        const [findings, services, packages] = await Promise.all([
+          api.findings(run.id, { host }),
+          api.services(run.id),
+          withPackages ? api.packages(run.id, host) : Promise.resolve([]),
+        ]);
+        return { findings, services: services.filter((s) => s.host === host), packages, runId: run.id, moduleRuns: null };
+      }
+      const [lt, inventory] = await Promise.all([api.hostLatest(eid!, host), api.hosts(eid!)]);
+      const inv = inventory.find((h) => h.host === host);
+      const packages = inv?.packages_run_id ? await api.packages(inv.packages_run_id, host) : [];
+      return { findings: lt.findings, services: inv?.services ?? [], packages, runId: lt.checked_run_id, moduleRuns: lt.module_runs };
     },
-    [run?.id, host],
-    !!run,
+    [run?.id, host, eid],
+    !!run || (latest && !!eid),
   );
   const [open, setOpen] = useState<FindingOut | null>(null);
   const [view, setView] = useState<VulnView>(loadView);
   const { has } = useAuth();
-  const { current } = useEngagement();
-  const row = useMemo(() => (data.data ? byHost(data.data.findings.filter(isIssue), data.data.services)[0] : undefined), [data.data]);
+  const row = useMemo(() => {
+    if (!data.data) return undefined;
+    // без прогона хост с данными есть, даже если уязвимостей нет
+    const r = byHost(data.data.findings.filter(isIssue), data.data.services)[0];
+    return r ?? (data.data.runId !== null ? { host, counts: emptyCounts(), total: 0, maxSeverity: "info" as const, findings: [], services: [], summary: "" } : undefined);
+  }, [data.data, host]);
   const info = data.data?.findings.filter((f) => f.severity === "info" && !isFalsePositive(f)) ?? [];
   const falsePositives = data.data?.findings.filter(isFalsePositive) ?? [];
   // «По ПО» показывает и ложные срабатывания (не считая их) — чтобы отметку ПО можно было снять одной кнопкой
@@ -85,7 +115,7 @@ export function HostDetailPage() {
               <Wifi size={15} /> Проверить доступность
             </Link>
           )}
-          {runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} />}
+          {runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} latestLabel="Последние данные" />}
         </div>
       </div>
       {error && <ErrorAlert error={error} />}
@@ -93,16 +123,19 @@ export function HostDetailPage() {
       {data.error && <ErrorAlert error={data.error} onRetry={data.reload} />}
       {(loading && !runs.length) || (data.loading && !data.data) ? (
         <Loading />
-      ) : !run ? (
+      ) : !runs.length ? (
         <div className="card">
           <Empty title="Нет завершённых прогонов" />
         </div>
-      ) : !row ? (
+      ) : !row || data.data?.runId == null ? (
         <div className="card">
-          <Empty title="Хост не найден в этом прогоне" />
+          <Empty title={run ? "Хост не найден в этом прогоне" : "Хост ещё не проверялся"}>
+            {run ? "Выберите «Последние данные», чтобы увидеть последние известные уязвимости хоста." : "Уязвимости появятся после прогона, который проверит этот хост."}
+          </Empty>
         </div>
       ) : (
         <>
+          {data.data.moduleRuns && <LatestSources moduleRuns={data.data.moduleRuns} onPick={setRun} />}
           <section className="kpis">
             <Kpi label="Уязвимостей" value={row.total} />
             <Kpi label="Критических" value={row.counts.critical} tone={row.counts.critical ? "critical" : undefined} />
@@ -148,7 +181,7 @@ export function HostDetailPage() {
                 services={row.services}
                 onOpen={setOpen}
                 selected={open}
-                runId={run.id}
+                runId={data.data.runId}
                 host={host}
                 triage={has("triage_findings")}
                 onChanged={() => void data.reload()}
@@ -188,6 +221,29 @@ export function HostDetailPage() {
   );
 }
 
+/** Откуда последние данные хоста: прогон каждого вида проверки, со ссылкой на прогон. */
+function LatestSources({ moduleRuns, onPick }: { moduleRuns: Record<string, number>; onPick: (id: number) => void }) {
+  const byRun = new Map<number, string[]>();
+  for (const [module, id] of Object.entries(moduleRuns)) byRun.set(id, [...(byRun.get(id) ?? []), MODULE_LABEL[module] ?? module]);
+  const list = [...byRun.entries()].sort((a, b) => b[0] - a[0]);
+  return (
+    <p className="muted" style={{ margin: "0 0 13px", fontSize: 13 }}>
+      Последние известные данные
+      {list.length > 1 ? " — собраны из нескольких прогонов: " : ": "}
+      {list.map(([id, mods], i) => (
+        <span key={id}>
+          {i > 0 && "; "}
+          <button type="button" className="link-btn" onClick={() => onPick(id)} title={`Показать только прогон №${id}`}>
+            прогон №{id}
+          </button>{" "}
+          <span className="faint">({mods.sort().join(", ")})</span>
+        </span>
+      ))}
+      . Если в новом прогоне хост был недоступен или не было учётной записи, остаются данные прошлого.
+    </p>
+  );
+}
+
 /**
  * Учётные атрибуты хоста (бывшая вкладка «Активы», R7): критичность для
  * приоритета R6, владелец и группы для уведомлений R9 и разрезов отчётов.
@@ -210,6 +266,14 @@ function HostAccounting({ engagementId, host, canWrite }: { engagementId: number
           <small className="faint">Владелец</small>
           <span>{asset?.owner ?? <span className="faint">—</span>}</span>
         </span>
+        {asset?.last_seen_at && (
+          <span className="stack" style={{ gap: 2 }} title={asset.first_seen_at ? `Впервые обнаружен ${fmtDate(asset.first_seen_at)}` : undefined}>
+            <small className="faint">Обнаружен</small>
+            <span>
+              {fmtDate(asset.last_seen_at)} <small className="faint">{SOURCE_LABEL[asset.source ?? "manual"]}</small>
+            </span>
+          </span>
+        )}
         {asset?.hostname && (
           <span className="stack" style={{ gap: 2 }}>
             <small className="faint">Имя</small>

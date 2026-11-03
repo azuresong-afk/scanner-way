@@ -143,9 +143,16 @@ export function hostRowsFromCounts(counts: HostCountsOut[], services: ServiceOut
 }
 
 export interface InventoryRow extends HostRow {
-  /** Хост был в выбранном прогоне (иначе счётчики не применимы). */
+  /**
+   * Счётчики применимы: хост был в выбранном прогоне, а без выбора прогона —
+   * хоть раз проверялся (последние известные данные).
+   */
   inRun: boolean;
   lastRunId: number | null;
+  /** Последний прогон, где хост проверялся (для режима «Последние данные»). */
+  checkedRunId: number | null;
+  /** Прогоны, из которых собраны последние данные хоста. */
+  latestRunIds: number[];
   /** Семейство ОС; "unknown" — не определена. */
   osFamily: string;
   osLabel: string;
@@ -182,9 +189,18 @@ export function groupByOs<T extends InventoryRow>(rows: T[]): OsGroup<T>[] {
   return [...map.values()].sort((a, b) => rank(a.family) - rank(b.family) || a.label.localeCompare(b.label));
 }
 
+/** Строка из последних известных данных хоста (серверный расчёт по покрытию). */
+function latestRow(h: InventoryHostOut): HostRow | undefined {
+  if (h.checked_run_id == null) return undefined;
+  const counts = { ...emptyCounts(), ...(h.latest_counts ?? {}) };
+  const maxSeverity: Severity = SEVERITIES.find((s) => s !== "info" && counts[s] > 0) ?? "info";
+  return { host: h.host, counts, total: h.latest_total ?? 0, maxSeverity, findings: [], services: [], summary: "" };
+}
+
 /**
- * Строки вкладки «Хосты»: постоянный список инвентаря (порядок по IP),
- * а счётчики уязвимостей — из находок выбранного прогона.
+ * Строки вкладки «Активы»: постоянный список инвентаря (порядок по IP).
+ * Счётчики уязвимостей — из находок выбранного прогона, а без прогона
+ * (runId = null) — последние известные по каждому хосту.
  */
 export function inventoryRows(inventory: InventoryHostOut[], findings: FindingOut[] | HostRow[], runId: number | null): InventoryRow[] {
   // HostRow[] — готовые счётчики (серверная сводка прогона), иначе — находки
@@ -193,7 +209,7 @@ export function inventoryRows(inventory: InventoryHostOut[], findings: FindingOu
   return [...inventory]
     .sort((a, b) => compareIp(a.host, b.host))
     .map((h) => {
-      const r = perHost.get(h.host);
+      const r = runId === null ? latestRow(h) : perHost.get(h.host);
       const base = byHost([], h.services)[0];
       return {
         host: h.host,
@@ -203,7 +219,9 @@ export function inventoryRows(inventory: InventoryHostOut[], findings: FindingOu
         findings: r?.findings ?? [],
         services: base?.services ?? [],
         summary: base?.summary ?? "",
-        inRun: runId !== null && (h.run_ids.includes(runId) || !!r),
+        inRun: runId === null ? !!r : h.run_ids.includes(runId) || !!r,
+        checkedRunId: h.checked_run_id ?? null,
+        latestRunIds: h.latest_run_ids ?? [],
         lastRunId: h.run_ids.length ? h.run_ids[h.run_ids.length - 1] : null,
         osFamily: h.os_family ?? "unknown",
         osLabel: h.os_family_label ?? OS_FAMILY_LABEL[h.os_family ?? "unknown"] ?? h.os_family ?? "ОС не определена",
@@ -244,6 +262,8 @@ export function hostListRows(inventory: InventoryHostOut[], assets: AssetOut[], 
       summary: "",
       inRun: false,
       lastRunId: a.last_run_id,
+      checkedRunId: a.checked_run_id ?? null,
+      latestRunIds: [],
       osFamily: family,
       osLabel: a.os_family_label ?? OS_FAMILY_LABEL[family] ?? "ОС не определена",
       osName: a.os_guess,
