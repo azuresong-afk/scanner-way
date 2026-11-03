@@ -96,6 +96,24 @@ def _runs(p: InstalledPackage, release: str) -> bool:
                                    or got.startswith(release + "."))
 
 
+def _by_abi(images: Sequence[InstalledPackage], release: str) -> list[InstalledPackage]:
+    """Запасной путь для dpkg, когда имя пакета не повторяет ``uname -r``
+    (Astra Linux: ``linux-image-5.15-generic`` версии ``5.15.0-70.astra2…`` при
+    ``uname -r`` = ``5.15.0-70-generic``): ABI из uname — начало версии пакета,
+    вариант сборки (``-generic``) — конец имени."""
+    a, fl = abi(release), flavor(release)
+    if not a:
+        return []
+    out = []
+    for p in images:
+        if p.manager != "dpkg" or (fl and not p.name.endswith(fl)):
+            continue
+        ver = _EPOCH_RE.sub("", p.version)
+        if ver == a or (ver.startswith(a) and ver[len(a)] in ".~+-"):
+            out.append(p)
+    return out
+
+
 def flavor(release: str | None) -> str:
     """Вариант сборки ядра: ``5.15.0-89-generic`` -> ``-generic``."""
     m = _ABI_RE.match(release or "")
@@ -144,7 +162,7 @@ def kernel_state(release: str | None, packages: Sequence[InstalledPackage]) -> K
                      manager=next(iter(managers)) if len(managers) == 1 else None)
     if not release:
         return st
-    st.running = [p for p in images if _runs(p, release)]
+    st.running = [p for p in images if _runs(p, release)] or _by_abi(images, release)
     if st.running:
         st.manager = st.running[0].manager
     run = st.package

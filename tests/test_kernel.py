@@ -350,3 +350,44 @@ def test_sql_and_caching_store_prefix_lookup():
     assert cached.with_prefix("ubuntu", "jammy", "uname:") == got
     mem = InMemoryAdvisoryStore(ubuntu_records())
     assert set(mem.with_prefix("ubuntu", "jammy", "uname:")) == set(got)
+
+
+# ---------- страница хоста: находки ядра видны как ПО «Ядро Linux» ----------
+
+def test_kernel_findings_grouped_as_kernel_software_on_host_page():
+    from scanner.core.software import software_of
+
+    found, _ = run(DEBIAN_HOST, InMemoryAdvisoryStore(DEB_KERNEL))
+    for vid in ("CVE-2024-1086", "CVE-2024-2222", "KERNEL-REBOOT-PENDING"):
+        sw = software_of(found[vid])
+        assert sw is not None and sw.source == "package", vid
+        assert (sw.name, sw.version) == ("Ядро Linux", "6.1.0-18-amd64"), vid
+    # «не проверено» — среди уязвимостей хоста (не info), в той же группе
+    found2, _ = run(DEBIAN_HOST, InMemoryAdvisoryStore([]))
+    f = found2["INFO:kernel-unchecked"]
+    assert f.severity is Severity.LOW
+    assert software_of(f).name == "Ядро Linux"
+
+
+def test_vendor_added_package_finding_has_software():
+    from scanner.core.software import software_of
+
+    recs = [Advisory("debian", "bookworm", "openssl", "CVE-2099-7777", FIXED,
+                     "3.0.15-1~deb12u1", "DSA-9999-1")]
+    found, _ = run(DEBIAN_HOST, InMemoryAdvisoryStore(recs))
+    f = found["CVE-2099-7777"]
+    sw = software_of(f)
+    assert (sw.name, sw.version) == ("OpenSSL", "3.0.11")
+    assert "по бюллетеню вендора" in f.evidence and "DSA-9999-1" in f.evidence
+
+
+def test_astra_kernel_package_named_by_series_not_by_uname():
+    pkgs = [InstalledPackage("linux-image-5.15-generic", "5.15.0-70.astra2+ci11", "dpkg"),
+            InstalledPackage("linux-image-5.10-generic", "5.10.0-1057.astra1", "dpkg"),
+            InstalledPackage("linux-image-5.15-lowlatency", "5.15.0-70.astra2+ci11", "dpkg")]
+    st = kn.kernel_state("5.15.0-70-generic", pkgs)
+    assert [p.name for p in st.running] == ["linux-image-5.15-generic"]
+    # имя совпадает с uname -r — главный путь, запасной не нужен
+    deb = [InstalledPackage("linux-image-6.1.0-18-amd64", "6.1.76-1", "dpkg")]
+    assert kn.kernel_state("6.1.0-18-amd64", deb).package is deb[0]
+    assert kn.kernel_state("6.1.0-19-amd64", deb).package is None
