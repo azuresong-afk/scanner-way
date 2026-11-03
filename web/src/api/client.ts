@@ -53,6 +53,8 @@ import type {
   ScheduleIn,
   ScheduleOut,
   ServiceOut,
+  SoftwareFalsePositiveIn,
+  SoftwareFalsePositiveOut,
   TokenOut,
   UserCreate,
   UserOut,
@@ -300,6 +302,11 @@ export const api = {
   markFalsePositive: (findingId: number, reason: string | null) =>
     json<FindingOut>(`/findings/${findingId}/false-positive`, { method: "PUT", ...body({ reason }) }),
   unmarkFalsePositive: (findingId: number) => json<FindingOut>(`/findings/${findingId}/false-positive`, { method: "DELETE" }),
+  /** Все уязвимости ПО на хосте (или на всех хостах прогона) — в ложные срабатывания; dry_run — только посчитать. */
+  markSoftwareFalsePositive: (runId: number, data: SoftwareFalsePositiveIn) =>
+    json<SoftwareFalsePositiveOut>(`/runs/${runId}/false-positives/by-software`, { method: "POST", ...body(data) }),
+  unmarkSoftwareFalsePositive: (runId: number, data: SoftwareFalsePositiveIn) =>
+    json<SoftwareFalsePositiveOut>(`/runs/${runId}/false-positives/by-software/unmark`, { method: "POST", ...body(data) }),
   services: (runId: number) => json<ServiceOut[]>(`/runs/${runId}/services`),
   /** Пакеты, собранные инвентаризацией по учётной записи. */
   packages: (runId: number, host?: string) =>

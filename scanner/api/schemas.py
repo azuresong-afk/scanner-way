@@ -644,3 +644,36 @@ class FixPlanOut(BaseModel):
     kinds: dict[str, int]                  # вид -> число действий
     os: dict[str, int]                     # ОС -> число действий
     severities: dict[str, int]             # уровень -> число действий
+
+
+class SoftwareFalsePositiveIn(BaseModel):
+    """Отметить (снять) «ложное срабатывание» сразу у всех уязвимостей ПО.
+
+    ПО — как в группировке «По ПО» на странице хоста: название (без учёта
+    регистра) и версия. По умолчанию — на одном хосте; ``all_hosts`` — на всех
+    хостах прогона с тем же ПО той же версии. ``dry_run`` только считает."""
+    software: str = Field(min_length=1, max_length=300)
+    version: str | None = Field(default=None, max_length=200)
+    host: str | None = Field(default=None, max_length=64)
+    all_hosts: bool = False
+    reason: str | None = Field(default=None, max_length=2000)
+    dry_run: bool = False
+
+    @field_validator("reason", "version", "host")
+    @classmethod
+    def _strip(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        return v or None
+
+    @model_validator(mode="after")
+    def _scope(self) -> SoftwareFalsePositiveIn:
+        if not self.all_hosts and not self.host:
+            raise ValueError("укажите host или all_hosts=true")
+        return self
+
+
+class SoftwareFalsePositiveOut(BaseModel):
+    matched: int        # уязвимостей этого ПО в охвате
+    changed: int        # отмечено (снято) этим запросом
+    hosts: int          # хостов, где ПО найдено
+    dry_run: bool

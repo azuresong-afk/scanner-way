@@ -145,3 +145,91 @@ def test_build_report_without_marks_has_no_appendix():
         f.dedup_key(): FalsePositiveMark(f.dedup_key(), reason=None, marked_by="op")})
     assert marked.summary.total == 0 and len(marked.false_positives) == 1
     assert "Ложные срабатывания" in ReportRenderer().render_html(marked)
+
+
+# ---------- всё ПО одной кнопкой ----------
+def _sw(api, run_id, headers, **body):
+    payload = {"software": "openssh", "version": "7.4", **body}
+    return api.c.post(f"/runs/{run_id}/false-positives/by-software", headers=headers,
+                      json=payload)
+
+
+def _marked(api, run_id, headers):
+    return {(x["host"], x["vuln_id"]) for x in
+            api.c.get(f"/runs/{run_id}/findings", headers=headers).json()
+            if x["false_positive"]}
+
+
+def test_mark_all_findings_of_software_on_host(api, sqlite_factory):
+    eid = api.engagement("10.0.0.0/24")
+    op = api.user("op", "operator")
+    run_id = _run(api, eid, op, ["10.0.0.1", "10.0.0.2"]).json()["id"]
+
+    # предпросмотр ничего не меняет
+    r = _sw(api, run_id, op, host="10.0.0.1", dry_run=True)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"matched": 2, "changed": 2, "hosts": 1, "dry_run": True}
+    assert _marked(api, run_id, op) == set()
+
+    r = _sw(api, run_id, op, host="10.0.0.1", reason="ПО не используется")
+    assert r.json() == {"matched": 2, "changed": 2, "hosts": 1, "dry_run": False}
+    assert _marked(api, run_id, op) == {("10.0.0.1", "CVE-2016-6210"),
+                                        ("10.0.0.1", "CVE-2016-10009")}
+    # info-находки (host up) не трогаются, второй хост тоже
+    findings = api.c.get(f"/runs/{run_id}/findings", headers=op).json()
+    assert all(f["false_positive"] is None for f in findings if f["severity"] == "info")
+    one = next(f for f in findings if f["host"] == "10.0.0.1" and f["false_positive"])
+    assert one["false_positive"]["reason"] == "ПО не используется"
+
+    # повтор — уже всё отмечено
+    assert _sw(api, run_id, op, host="10.0.0.1").json()["changed"] == 0
+
+    with sqlite_factory() as s:
+        rows = list(s.scalars(select(AuditLogRow).where(
+            AuditLogRow.action == "false_positive_mark_software")))
+    assert len(rows) == 1
+    d = rows[0].details
+    assert (d["software"], d["version"], d["host"], d["count"]) == \
+        ("openssh", "7.4", "10.0.0.1", 2)
+    assert {f["vuln_id"] for f in d["findings"]} == {"CVE-2016-6210", "CVE-2016-10009"}
+
+    # снять — тоже одной кнопкой
+    r = api.c.post(f"/runs/{run_id}/false-positives/by-software/unmark", headers=op,
+                   json={"software": "OpenSSH", "version": "7.4", "host": "10.0.0.1"})
+    assert r.json()["changed"] == 2
+    assert _marked(api, run_id, op) == set()
+    with sqlite_factory() as s:
+        assert s.scalar(select(AuditLogRow).where(
+            AuditLogRow.action == "false_positive_unmark_software")) is not None
+
+
+def test_mark_software_on_all_hosts_and_next_runs(api):
+    eid = api.engagement("10.0.0.0/24")
+    op = api.user("op", "operator")
+    run_id = _run(api, eid, op, ["10.0.0.1", "10.0.0.2"]).json()["id"]
+    r = _sw(api, run_id, op, all_hosts=True)
+    assert r.json() == {"matched": 4, "changed": 4, "hosts": 2, "dry_run": False}
+    nxt = _run(api, eid, op, ["10.0.0.1", "10.0.0.2"]).json()["id"]
+    assert len(_marked(api, nxt, op)) == 4
+
+
+def test_software_mark_matches_version_and_validates(api):
+    eid = api.engagement("10.0.0.0/24")
+    op = api.user("op", "operator")
+    run_id = _run(api, eid, op, ["10.0.0.1"]).json()["id"]
+    # другая версия — ничего не совпало
+    r = _sw(api, run_id, op, host="10.0.0.1", version="9.6")
+    assert r.json()["matched"] == 0
+    # без хоста и без all_hosts — ошибка
+    assert _sw(api, run_id, op).status_code == 422
+    assert _sw(api, run_id, op, host="not-an-ip").status_code == 422
+    assert _sw(api, 9999, op, host="10.0.0.1").status_code == 404
+
+
+def test_software_mark_requires_triage_right(api):
+    eid = api.engagement("10.0.0.0/24")
+    op = api.user("op", "operator")
+    aud = api.user("aud", "auditor")
+    run_id = _run(api, eid, op, ["10.0.0.1"]).json()["id"]
+    assert _sw(api, run_id, aud, host="10.0.0.1").status_code == 403
+    assert _marked(api, run_id, op) == set()

@@ -345,6 +345,23 @@ export interface RunCreated extends RunOut {
 }
 
 /** Отметка «ложное срабатывание» (действует во всех прогонах договора). */
+/** Массовая отметка «ложное срабатывание» всех уязвимостей ПО. */
+export interface SoftwareFalsePositiveIn {
+  software: string;
+  version: string | null;
+  host?: string | null;
+  all_hosts?: boolean;
+  reason?: string | null;
+  dry_run?: boolean;
+}
+
+export interface SoftwareFalsePositiveOut {
+  matched: number;
+  changed: number;
+  hosts: number;
+  dry_run: boolean;
+}
+
 export interface FalsePositiveMark {
   reason: string | null;
   marked_by: string | null;
