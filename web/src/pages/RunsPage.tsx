@@ -12,7 +12,7 @@ import { fmtDate, fmtDuration } from "../lib/format";
 import { isFinished, isRetryable, RATE_PROFILES, RUN_STATUS_LABEL } from "../lib/labels";
 import { useAsync, useInterval } from "../lib/useAsync";
 
-const FILTERS: (RunStatus | "all")[] = ["all", "running", "done", "stopped", "interrupted", "failed"];
+const FILTERS: (RunStatus | "all")[] = ["all", "running", "done", "partial", "stopped", "interrupted", "failed"];
 const PAGE = 25;
 
 export function RunsPage() {

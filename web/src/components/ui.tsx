@@ -38,6 +38,7 @@ const RUN_PILL: Record<RunStatus, string> = {
   pending: "pill-muted pill-running",
   running: "pill-info pill-running",
   done: "pill-ok",
+  partial: "pill-warn",
   failed: "pill-danger",
   stopped: "pill-muted",
   interrupted: "pill-warn",

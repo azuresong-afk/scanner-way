@@ -1,6 +1,6 @@
 // Русские подписи для значений API и справочники модулей/профилей.
 
-import type { Criticality, FindingStatus, RunOut, RunStatus, ScheduleOut, Severity, VulnEngine } from "../api/types";
+import type { Criticality, FindingStatus, FindingsSummary, RunOut, RunProfile, RunStatus, ScheduleOut, Severity, VulnEngine } from "../api/types";
 
 export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
 
@@ -31,15 +31,18 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
   pending: "В очереди",
   running: "Выполняется",
   done: "Завершён",
+  partial: "Частично",
   failed: "Ошибка",
   stopped: "Остановлен",
   interrupted: "Прерван",
 };
 
-export const FINISHED: RunStatus[] = ["done", "failed", "stopped", "interrupted"];
+export const FINISHED: RunStatus[] = ["done", "partial", "failed", "stopped", "interrupted"];
+/** Прогоны с результатом, пригодным для сравнения (базовые). */
+export const COMPARABLE: RunStatus[] = ["done", "partial"];
 export const isFinished = (s: RunStatus) => FINISHED.includes(s);
 /** Прогоны, которые можно повторить кнопкой «Повторить». */
-export const RETRYABLE: RunStatus[] = ["failed", "interrupted", "stopped"];
+export const RETRYABLE: RunStatus[] = ["failed", "partial", "interrupted", "stopped"];
 export const isRetryable = (s: RunStatus) => RETRYABLE.includes(s);
 
 export interface ModuleInfo {
@@ -79,6 +82,52 @@ export const MODULE_LABEL: Record<string, string> = {
   // Ставится автоматически вместе с аудитом конфигураций (COMPANION_MODULES на бэкенде),
   // как и auth_inventory — проверка пакетов по бюллетеням вендора по той же учётке.
   password_policy: "Парольная политика",
+  win_inventory: "Windows по WinRM",
+};
+
+/** Статус проверки модуля на хосте (scanner.core.coverage). */
+export const COVERAGE_LABEL: Record<string, string> = {
+  completed: "Выполнено",
+  not_applicable: "Неприменимо",
+  skipped: "Пропущено",
+  unreachable: "Хост недоступен",
+  no_credentials: "Нет учётки",
+  timeout: "Таймаут",
+  error: "Ошибка",
+};
+
+export const COVERAGE_PILL: Record<string, string> = {
+  completed: "pill-ok",
+  not_applicable: "pill-muted",
+  skipped: "pill-muted",
+  unreachable: "pill-danger",
+  no_credentials: "pill-warn",
+  timeout: "pill-warn",
+  error: "pill-danger",
+};
+
+export const HOST_COVERAGE_LABEL: Record<string, string> = {
+  checked: "Проверен",
+  partial: "Частично",
+  unreachable: "Недоступен — не проверен",
+  not_checked: "Не проверен",
+};
+
+export const CONFIDENCE_LABEL: Record<string, string> = {
+  high: "Подтверждено",
+  medium: "Вероятно",
+  low: "Не подтверждено",
+};
+
+export const SOURCE_LABEL: Record<string, string> = {
+  authenticated_package: "пакет на хосте",
+  vendor_advisory: "бюллетень вендора",
+  banner: "сетевой баннер",
+  nuclei: "проверка Nuclei",
+  config_audit: "аудит конфигурации",
+  cred_audit: "аудит паролей",
+  discovery: "обнаружение",
+  windows: "инвентаризация Windows",
 };
 
 /** Модули поиска уязвимостей — выбираются движком, а не флажками. */
@@ -275,3 +324,21 @@ export const CRITICALITY_LABEL: Record<Criticality, string> = {
   medium: "Средняя",
   low: "Низкая",
 };
+
+/** Ничего не проверено: нельзя писать «уязвимостей не найдено». */
+export function nothingChecked(summary: FindingsSummary | null | undefined): boolean {
+  const c = summary?.coverage;
+  return !!c && c.hosts > 0 && c.hosts_checked + c.hosts_partial === 0;
+}
+
+
+/** Движок и модули-флажки по готовому профилю проверки. */
+export function applyProfile(p: RunProfile): { engine: EngineInfo["id"]; modules: string[] } {
+  const v = p.modules.includes("vuln");
+  const a = p.modules.includes("auth_inventory") || p.modules.includes("win_inventory");
+  return {
+    engine: v && a ? "both" : v ? "nuclei" : a ? "credentialed" : "none",
+    modules: p.modules.filter((m) => !["vuln", "auth_inventory", "win_inventory"].includes(m)),
+  };
+}
+

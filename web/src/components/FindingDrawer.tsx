@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import type { FindingOut } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { fmtDateFull } from "../lib/format";
-import { FINDING_TYPE_LABEL, MODULE_LABEL } from "../lib/labels";
+import { FINDING_TYPE_LABEL, MODULE_LABEL, CONFIDENCE_LABEL, SOURCE_LABEL } from "../lib/labels";
 import { bduUrl, cveUrl } from "../lib/refs";
 import { Drawer, FindingStatusPill, PriorityBadge, SeverityBadge } from "./ui";
 
@@ -36,6 +36,11 @@ export function FindingDrawer({
           {finding.cvss !== null && <span className="muted">CVSS {finding.cvss.toFixed(1)}</span>}
           <FindingStatusPill status={finding.status} />
           {finding.false_positive && <span className="pill pill-muted">Ложное срабатывание</span>}
+          {finding.confidence === "low" && (
+            <span className="pill pill-warn" title="Определено по сетевому баннеру: дистрибутив мог исправить уязвимость бэкпортом">
+              Не подтверждено
+            </span>
+          )}
         </div>
       }
     >
@@ -106,6 +111,15 @@ export function FindingDrawer({
         <dd>{MODULE_LABEL[finding.module] ?? finding.module}</dd>
         <dt>Тип</dt>
         <dd>{FINDING_TYPE_LABEL[finding.finding_type] ?? finding.finding_type}</dd>
+        {finding.confidence && (
+          <>
+            <dt>Уверенность</dt>
+            <dd>
+              {CONFIDENCE_LABEL[finding.confidence] ?? finding.confidence}
+              {finding.source ? ` — ${SOURCE_LABEL[finding.source] ?? finding.source}` : ""}
+            </dd>
+          </>
+        )}
         <dt>Обнаружено</dt>
         <dd>{fmtDateFull(finding.detected_at)}</dd>
       </dl>

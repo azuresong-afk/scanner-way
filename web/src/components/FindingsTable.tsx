@@ -98,6 +98,11 @@ export function FindingsTable({
                   >
                     {f.title}
                   </button>
+                  {f.confidence === "low" && (
+                    <span className="pill pill-warn" style={{ marginLeft: 6 }} title="По сетевому баннеру — не подтверждено проверкой пакетов">
+                      не подтверждено
+                    </span>
+                  )}
                 </td>
                 {!hideHost && (
                   <td className="mono nowrap">

@@ -32,6 +32,10 @@ import type {
   EngagementIn,
   EngagementOut,
   FeedOut,
+  FeedReadiness,
+  RunProfile,
+  RunPlan,
+  CoverageOut,
   FeedScheduleIn,
   FindingOut,
   FindingQuery,
@@ -282,6 +286,17 @@ export const api = {
   feeds: () => json<FeedOut[]>("/feeds"),
   updateFeed: (source: string, data: FeedScheduleIn) => json<FeedOut>(`/feeds/${source}`, { method: "PUT", ...body(data) }),
   runFeedNow: (source: string) => json<FeedOut>(`/feeds/${source}/run`, { method: "POST" }),
+  feedReadiness: () => json<FeedReadiness>("/feeds/readiness"),
+  /** Загрузить бюллетени одного выпуска ОС (например debian:trixie). */
+  loadRelease: (family: string, release: string) =>
+    json<FeedOut>("/feeds/advisories/releases", { method: "POST", ...body({ family, release }) }),
+  /** Загрузить выгрузку БДУ (vullist.xlsx) из браузера. */
+  uploadBdu: (file: Blob) =>
+    json<FeedOut>("/feeds/bdu/upload", { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } }),
+  runProfiles: () => json<RunProfile[]>("/run-profiles"),
+  planRun: (engagementId: number, data: RunCreate) =>
+    json<RunPlan>(`/engagements/${engagementId}/runs/plan`, { method: "POST", ...body(data) }),
+  runCoverage: (runId: number) => json<CoverageOut>(`/runs/${runId}/coverage`),
   runScheduleNow: (id: number) => json<ScheduleOut>(`/schedules/${id}/run`, { method: "POST" }),
   deleteSchedule: (id: number) => request(`/schedules/${id}`, { method: "DELETE" }).then(() => undefined),
   checkReachability: (engagementId: number, data: ReachabilityIn) =>

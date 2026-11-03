@@ -76,3 +76,12 @@ export function localToIso(v: string): string | undefined {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 }
+
+/** «2 ч 05 мин», «4 мин», «40 с». */
+export function fmtEta(sec: number): string {
+  if (sec < 60) return `${Math.max(1, Math.round(sec))} с`;
+  const m = Math.round(sec / 60);
+  if (m < 60) return `${m} мин`;
+  return `${Math.floor(m / 60)} ч ${String(m % 60).padStart(2, "0")} мин`;
+}
+
