@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _alembic_cfg():
     from alembic.config import Config
+
+    from scanner.core.dbsafety import assert_disposable
+    # миграции/откат — только во временной тестовой базе (не в рабочей)
+    assert_disposable(PG_URL)
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "alembic"))
     cfg.set_main_option("sqlalchemy.url", PG_URL)

@@ -1,8 +1,12 @@
 """Общие фикстуры БД: SQLite в памяти (по умолчанию) и опционально Postgres.
 
 Postgres-тесты запускаются, только если задан SCANNER_TEST_DATABASE_URL
-(например, в CI с сервисом postgres:16). База должна быть пустой: тест сам
-применяет миграции Alembic и откатывает их в конце.
+(например, в CI с сервисом postgres:16). Тесты применяют и откатывают все
+миграции, поэтому в базе из этого адреса они НЕ работают: при старте сессии по
+нему создаётся отдельная пустая временная база (scanner_test_tmp_…, помечена
+комментарием), PG_URL указывает на неё, а в конце она удаляется. Нет права
+CREATE DATABASE — сессия завершается с ошибкой до любых изменений
+(scanner.core.dbsafety). Даже направленные на рабочую БД, тесты её не трогают.
 """
 from __future__ import annotations
 
@@ -14,12 +18,33 @@ from sqlalchemy.pool import StaticPool
 
 from scanner.core.db import Base, make_session_factory
 
-PG_URL = os.environ.get("SCANNER_TEST_DATABASE_URL")
+# Адрес сервера из окружения (только для CREATE/DROP DATABASE) и адрес
+# временной базы, в которой работают тесты. PG_URL заполняется в
+# pytest_configure — до импорта тестовых модулей (они берут его при импорте).
+PG_SERVER_URL = os.environ.get("SCANNER_TEST_DATABASE_URL")
+PG_URL: str | None = None
 
 
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "e2e: сквозной сценарий на живом стеке Docker (scripts/e2e.sh)")
+    global PG_URL
+    if PG_SERVER_URL and PG_URL is None and not hasattr(config, "workerinput"):
+        from scanner.core.dbsafety import UnsafeDatabaseError, create_temp_database
+        try:
+            PG_URL = create_temp_database(PG_SERVER_URL)
+        except UnsafeDatabaseError as e:
+            pytest.exit(f"PostgreSQL-тесты не запущены: {e}", returncode=3)
+
+
+def pytest_unconfigure(config):
+    global PG_URL
+    if PG_SERVER_URL and PG_URL:
+        from scanner.core.dbsafety import drop_temp_database
+        try:
+            drop_temp_database(PG_SERVER_URL, PG_URL)
+        finally:
+            PG_URL = None
 
 
 @pytest.fixture
