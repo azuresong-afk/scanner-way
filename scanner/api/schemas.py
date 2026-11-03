@@ -580,3 +580,67 @@ class ComplianceProfileOut(BaseModel):
     added: list[str]
     in_report: bool
     updated_at: datetime | None = None
+
+
+# ---------- План исправлений («Находки» → «Что исправить») ----------
+
+class FixFindingOut(BaseModel):
+    id: int
+    label: str                             # CVE / правило
+    severity: str
+
+
+class FixHostOut(BaseModel):
+    host: str
+    installed: str | None                  # установленная версия пакета / ядра / ПО
+    note: str | None                       # «только перезагрузка» и т. п.
+    ports: list[int]
+    findings: list[FixFindingOut]
+
+
+class FixPriorityOut(BaseModel):
+    score: float
+    label: str
+    label_ru: str
+    rank: int | None
+
+
+class FixTaskOut(BaseModel):
+    """Одно действие исправления: что сделать, на каких хостах, какими командами."""
+    key: str
+    kind: str          # package | package_nofix | package_upgrade | kernel | software | config | cred | vuln | other
+    kind_label: str
+    title: str
+    os: str | None
+    os_family: str | None
+    manager: str | None
+    packages: list[str]
+    fixed_version: str | None
+    software: str | None
+    steps: list[str]
+    commands: list[str]
+    verify: list[str]
+    reboot: bool
+    details: str | None
+    details_source: str | None
+    severity: str
+    priority: FixPriorityOut | None
+    cves: list[str]
+    bdu_ids: list[str]
+    advisories: list[str]
+    references: list[str]
+    hosts: list[FixHostOut]
+    host_count: int
+    finding_count: int
+
+
+class FixPlanOut(BaseModel):
+    total: int                             # действий по фильтру
+    items: list[FixTaskOut]
+    tasks: int                             # всего действий в прогоне
+    hosts: int                             # хостов, которым есть что исправить
+    findings: int                          # находок, покрытых действиями
+    false_positives: int                   # исключено как ложные срабатывания
+    kinds: dict[str, int]                  # вид -> число действий
+    os: dict[str, int]                     # ОС -> число действий
+    severities: dict[str, int]             # уровень -> число действий

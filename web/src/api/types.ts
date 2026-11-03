@@ -683,3 +683,75 @@ export interface ComplianceSummary {
   failures: ComplianceControl[];
   manual: { id: string; title: string; group: string; group_title: string }[];
 }
+
+// ---------- План исправлений («Находки» → «Что исправить») ----------
+
+export type FixKind =
+  | "package"
+  | "package_nofix"
+  | "package_upgrade"
+  | "kernel"
+  | "software"
+  | "config"
+  | "cred"
+  | "vuln"
+  | "other";
+
+export interface FixHostOut {
+  host: string;
+  /** Установленная версия пакета / работающее ядро / версия ПО. */
+  installed: string | null;
+  note: string | null;
+  ports: number[];
+  findings: { id: number; label: string; severity: Severity }[];
+}
+
+export interface FixTaskOut {
+  key: string;
+  kind: FixKind;
+  kind_label: string;
+  title: string;
+  os: string | null;
+  os_family: string | null;
+  manager: string | null;
+  packages: string[];
+  fixed_version: string | null;
+  software: string | null;
+  steps: string[];
+  commands: string[];
+  verify: string[];
+  reboot: boolean;
+  details: string | null;
+  details_source: string | null;
+  severity: Severity;
+  priority: { score: number; label: PriorityOut["label"]; label_ru: string; rank: number | null } | null;
+  cves: string[];
+  bdu_ids: string[];
+  advisories: string[];
+  references: string[];
+  hosts: FixHostOut[];
+  host_count: number;
+  finding_count: number;
+}
+
+export interface FixPlanOut {
+  total: number;
+  items: FixTaskOut[];
+  tasks: number;
+  hosts: number;
+  findings: number;
+  false_positives: number;
+  kinds: Partial<Record<FixKind, number>>;
+  os: Record<string, number>;
+  severities: Partial<Record<Severity, number>>;
+}
+
+export interface FixQuery {
+  severity?: Severity[];
+  kind?: string[];
+  os?: string[];
+  host?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}

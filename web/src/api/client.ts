@@ -36,6 +36,8 @@ import type {
   FindingOut,
   FindingQuery,
   FindingsSummary,
+  FixPlanOut,
+  FixQuery,
   InventoryHostOut,
   MeOut,
   PackageOut,
@@ -291,6 +293,9 @@ export const api = {
   findings: (runId: number, params: FindingQuery = {}) => json<FindingOut[]>(`/runs/${runId}/findings${listQuery(params)}`),
   findingsPage: (runId: number, params: FindingQuery) => page<FindingOut>(`/runs/${runId}/findings${listQuery(params)}`),
   findingsSummary: (runId: number) => json<FindingsSummary>(`/runs/${runId}/findings/summary`),
+  /** План исправлений: находки, собранные в действия с командами по ОС хостов. */
+  fixes: (runId: number, params: FixQuery = {}) => json<FixPlanOut>(`/runs/${runId}/fixes${listQuery(params)}`),
+  finding: (id: number) => json<FindingOut>(`/findings/${id}`),
   /** Отметить находку хоста как ложное срабатывание (действует и в следующих прогонах). */
   markFalsePositive: (findingId: number, reason: string | null) =>
     json<FindingOut>(`/findings/${findingId}/false-positive`, { method: "PUT", ...body({ reason }) }),
