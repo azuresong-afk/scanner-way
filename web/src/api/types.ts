@@ -427,7 +427,7 @@ export interface RunOut {
   options?: { no_ping?: boolean; profile?: string };
   /** Предупреждения о неполноте результата («Бэкпорты не учтены» и др.). */
   warnings?: RunWarning[];
-  /** Ход идущего прогона; null — в очереди или прогон до миграции 0024. */
+  /** Ход идущего прогона; null — в очереди или прогон до миграции 0023. */
   progress?: RunProgress | null;
 }
 

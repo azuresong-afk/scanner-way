@@ -288,7 +288,7 @@ class RunOut(_Orm):
     # («Бэкпорты не учтены», находки только по баннерам) — миграция 0020.
     options: dict = Field(default_factory=dict)
     warnings: list[dict] = Field(default_factory=list)
-    # Ход идущего прогона (миграция 0024): stage, stage_index, stages,
+    # Ход идущего прогона (миграция 0023): stage, stage_index, stages,
     # hosts_done, hosts_total, percent, updated_at. NULL — в очереди / старый.
     progress: dict | None = None
 

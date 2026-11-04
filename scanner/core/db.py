@@ -225,7 +225,7 @@ class ScanRun(Base):
     options: Mapped[dict] = mapped_column(Jsonb, default=dict)
     # Ограничения достоверности (миграция 0020): [{kind, host, message, …}].
     warnings: Mapped[list[dict]] = mapped_column(Jsonb, default=list)
-    # Ход идущего прогона (миграция 0024): этап, хостов готово/всего, процент.
+    # Ход идущего прогона (миграция 0023): этап, хостов готово/всего, процент.
     progress: Mapped[dict | None] = mapped_column(Jsonb)
 
 
