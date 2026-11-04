@@ -20,8 +20,9 @@
 """
 from __future__ import annotations
 
+import contextlib
 import ipaddress
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 COMPLETED = "completed"
@@ -86,6 +87,8 @@ class Coverage:
         self._e: dict[tuple[str, str], CoverageEntry] = {}
         for e in entries:
             self._e[(_host(e.host), e.module)] = e
+        # Наблюдатель отметок (хост, модуль) — для прогресса прогона в интерфейсе.
+        self.listener: Callable[[str, str], None] | None = None
 
     def mark(self, host: str, module: str, status: str, reason: str | None = None, *,
              force: bool = False) -> None:
@@ -97,6 +100,10 @@ class Coverage:
             return
         self._e[key] = CoverageEntry(key[0], module, status,
                                      (reason or None) and str(reason)[:1000])
+        if self.listener is not None:
+            # прогресс не должен ломать модуль
+            with contextlib.suppress(Exception):
+                self.listener(key[0], module)
 
     def get(self, host: str, module: str) -> CoverageEntry | None:
         return self._e.get((_host(host), module))

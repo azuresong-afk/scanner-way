@@ -332,6 +332,89 @@ def finalize_coverage(ctx: ScanContext, module_names: Iterable[str],
                 ctx.coverage.mark(h, m, cv.COMPLETED)
 
 
+# ========== Прогресс прогона ==========
+STAGE_SAVING = "saving"      # после модулей: запись результатов, сравнение, нормативы
+PROGRESS_MIN_INTERVAL = 2.0  # секунд между записями прогресса в БД
+
+
+class RunProgress:
+    """Ход прогона для интерфейса: текущий этап (модуль), сколько хостов он
+    уже отработал из всех хостов прогона, и общий процент.
+
+    Хост этапа считается готовым, когда модуль отметил его в покрытии
+    (completed / unreachable / timeout / …). Процент — доля пар
+    «этап × хост»: (этапов позади × хостов + готово на этапе) / (этапов ×
+    хостов), до конца прогона не больше 99. Снимки уходят в ``sink`` не чаще
+    ``min_interval`` секунд; смена этапа и его конец отправляются сразу.
+    Ошибка ``sink`` поглощается — прогресс не влияет на итог прогона."""
+
+    def __init__(self, sink: Callable[[dict], None], stages: list[str], hosts: int, *,
+                 min_interval: float = PROGRESS_MIN_INTERVAL,
+                 clock: Callable[[], float] | None = None):
+        import time
+        self.sink = sink
+        self.stages = list(stages)
+        self.hosts = max(int(hosts), 0)
+        self.min_interval = min_interval
+        self.clock = clock or time.monotonic
+        self._lock = threading.Lock()
+        self._index = 0           # 0 — ещё не начат ни один этап
+        self._stage: str | None = None
+        self._done: set[str] = set()
+        self._last = float("-inf")
+
+    def snapshot(self) -> dict:
+        k = max(len(self.stages), 1)
+        n = self.hosts
+        if self._stage == STAGE_SAVING:
+            percent, done = 99, n
+        elif n == 0:
+            percent, done = int(100 * max(self._index - 1, 0) / k), 0
+        else:
+            done = min(len(self._done), n)
+            percent = int(100 * ((max(self._index - 1, 0)) * n + done) / (k * n))
+        return {"stage": self._stage, "stage_index": min(self._index, len(self.stages)),
+                "stages": len(self.stages), "hosts_done": done, "hosts_total": n,
+                "percent": min(percent, 99),
+                "updated_at": datetime.now(UTC).isoformat(timespec="seconds")}
+
+    def _emit(self, force: bool) -> None:
+        now = self.clock()
+        if not force and now - self._last < self.min_interval:
+            return
+        self._last = now
+        try:
+            self.sink(self.snapshot())
+        except Exception:
+            log.exception("scan run progress update failed")
+
+    def begin(self, module: str) -> None:
+        with self._lock:
+            self._index += 1
+            self._stage = module
+            self._done = set()
+            self._emit(True)
+
+    def mark(self, host: str, module: str) -> None:
+        with self._lock:
+            if module != self._stage or host in self._done:
+                return
+            self._done.add(host)
+            self._emit(False)
+
+    def end_stage(self, hosts: Iterable[str]) -> None:
+        """Этап закончился: все хосты прогона для него отработаны."""
+        with self._lock:
+            self._done = set(hosts)
+            self._emit(True)
+
+    def saving(self) -> None:
+        with self._lock:
+            self._stage = STAGE_SAVING
+            self._index = len(self.stages)
+            self._emit(True)
+
+
 class Orchestrator:
     def __init__(self, gate: AllowlistGate, audit: AuditSink, *,
                  should_stop: Callable[[], bool] | None = None,
@@ -356,7 +439,8 @@ class Orchestrator:
                      rate: RateProfile,
                      credentials: list[HostCredential] | None = None,
                      cred_candidates: list[tuple[str, str]] | None = None,
-                     options: Mapping[str, object] | None = None) -> RunOutcome:
+                     options: Mapping[str, object] | None = None,
+                     progress: Callable[[dict], None] | None = None) -> RunOutcome:
         """Гейт + модули по порядку. Ошибка модуля не прерывает остальные."""
         plan = plan_targets(self.gate, requested_targets)
         out = RunOutcome(allowed=plan.allowed, denied=plan.denied)
@@ -373,6 +457,10 @@ class Orchestrator:
                           credentials=list(credentials or []),
                           cred_candidates=list(cred_candidates or []),
                           options=dict(options or {}))
+        tracker = (RunProgress(progress, [m.name for m in modules], len(ctx.targets))
+                   if progress is not None else None)
+        if tracker is not None:
+            ctx.coverage.listener = tracker.mark
         ran: set[str] = set()
         for module in modules:
             if self.should_stop():
@@ -383,6 +471,8 @@ class Orchestrator:
                 self.events(ev.module_skip(module.name))
                 break
             ran.add(module.name)
+            if tracker is not None:
+                tracker.begin(module.name)
             self.audit.record(subject="scanner", action="module_start",
                               target=module.name, result="ok",
                               details={"scan_run_id": scan_run_id,
@@ -391,6 +481,8 @@ class Orchestrator:
             try:
                 found = module.run(ctx)
             except Exception as e:  # noqa: BLE001 — модуль сторонний, прогон продолжается
+                if tracker is not None:
+                    tracker.end_stage(ctx.targets)
                 out.errors[module.name] = f"{type(e).__name__}: {e}"[:500]
                 self.audit.record(subject="scanner", action="module_finish",
                                   target=module.name, result="error",
@@ -398,6 +490,8 @@ class Orchestrator:
                                            "error": out.errors[module.name]})
                 self.events(ev.module_error(module.name, out.errors[module.name]))
                 continue
+            if tracker is not None:
+                tracker.end_stage(ctx.targets)
             out.findings.extend(found)
             ctx.completed.add(module.name)
             self.audit.record(subject="scanner", action="module_finish",
@@ -405,6 +499,9 @@ class Orchestrator:
                               details={"scan_run_id": scan_run_id,
                                        "findings": len(found)})
             self.events(ev.module_finish(module.name, len(found)))
+        ctx.coverage.listener = None
+        if tracker is not None:
+            tracker.saving()
         finalize_coverage(ctx, [m.name for m in modules], out.errors, ran)
         out.coverage = ctx.coverage
         from scanner.core.confidence import (
@@ -847,6 +944,10 @@ class RunService:
                 "run_stop", ev.SUBJECT_RUN, f"остановка по запросу: {actor}")])
         return status
 
+    def _save_progress(self, scan_run_id: int, snap: dict) -> None:
+        with session_scope(self.sessions) as s:
+            repo.set_scan_run_progress(s, scan_run_id, snap)
+
     def _status(self, scan_run_id: int) -> str | None:
         with session_scope(self.sessions) as s:
             run = repo.get_scan_run(s, scan_run_id)
@@ -953,7 +1054,8 @@ class RunService:
         out = orch.run_detailed(engagement_id=engagement_id, scan_run_id=scan_run_id,
                                 requested_targets=requested_targets, modules=modules,
                                 rate=rate, credentials=credentials,
-                                cred_candidates=cred_candidates, options=run_options)
+                                cred_candidates=cred_candidates, options=run_options,
+                                progress=lambda snap: self._save_progress(scan_run_id, snap))
         del credentials, cred_candidates    # секреты больше не нужны
 
         with session_scope(self.sessions) as s:

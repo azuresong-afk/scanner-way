@@ -427,6 +427,20 @@ export interface RunOut {
   options?: { no_ping?: boolean; profile?: string };
   /** Предупреждения о неполноте результата («Бэкпорты не учтены» и др.). */
   warnings?: RunWarning[];
+  /** Ход идущего прогона; null — в очереди или прогон до миграции 0023. */
+  progress?: RunProgress | null;
+}
+
+/** Ход идущего прогона: этап (модуль), хостов готово из всех, общий процент. */
+export interface RunProgress {
+  /** Модуль этапа или "saving" — запись результатов после модулей. */
+  stage: string | null;
+  stage_index: number;
+  stages: number;
+  hosts_done: number;
+  hosts_total: number;
+  percent: number;
+  updated_at: string;
 }
 
 /** Страница списка: элементы и общее число по фильтру (X-Total-Count). */

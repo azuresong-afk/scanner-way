@@ -439,6 +439,16 @@ def claim_scan_run(session: Session, scan_run_id: int, worker_id: str) -> bool:
     return res.rowcount == 1
 
 
+def set_scan_run_progress(session: Session, scan_run_id: int, progress: dict | None) -> None:
+    """Снимок хода прогона (scanner.core.orchestrator.RunProgress). Пишется
+    только у активного прогона — остановленный или завершённый не трогаем."""
+    session.execute(
+        update(ScanRun)
+        .where(ScanRun.id == scan_run_id, ScanRun.status.in_(ACTIVE_RUN_STATUSES))
+        .values(progress=progress)
+        .execution_options(synchronize_session=False))
+
+
 def touch_scan_runs(session: Session, run_ids: Iterable[int], worker_id: str) -> int:
     """Отметка «жив» для активных прогонов, которые ведёт этот процесс."""
     ids = list(run_ids)
