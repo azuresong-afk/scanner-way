@@ -2,16 +2,19 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, Radar, RotateCcw, Check, Server } from "lucide-react";
 import { api } from "../api/client";
-import type { FindingOut, FindingsSummary, RunOut, ServiceOut, Severity } from "../api/types";
+import type { AssetOut, FindingOut, FindingsSummary, FixPlanOut, RunOut, ServiceOut, Severity } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { SeverityStack } from "../components/charts/SeverityBars";
 import { TrendChart, type TrendPoint } from "../components/charts/TrendChart";
 import { FindingDrawer } from "../components/FindingDrawer";
+import { SummaryV2 } from "../components/SummaryV2";
 import { Empty, ErrorAlert, Loading, RefTags, RunName, RunStatusPill, SeverityBadge } from "../components/ui";
-import { fmtDate, fmtDelta, fmtNumber, plural } from "../lib/format";
+import { fmtDate, fmtDelta, fmtNumber, parseDate, plural } from "../lib/format";
 import { isFinished, SEVERITY_LABEL, runName } from "../lib/labels";
 import { hostRowsFromCounts, type HostRow, type RunSummary } from "../lib/stats";
+import { FIX_FIRST, summaryHeadline, type RunColumn } from "../lib/summary";
+import { useSummaryLook, type SummaryLook } from "../lib/summaryLook";
 import { useAsync } from "../lib/useAsync";
 
 const TREND_RUNS = 10;
@@ -26,6 +29,18 @@ interface DashData {
   top: FindingOut[];
   services: ServiceOut[];
   trend: TrendPoint[];
+  /** Те же прогоны по уровням — для графика столбцами в новом виде. */
+  columns: RunColumn[];
+  /** Первые действия плана «Что исправить»; null — план недоступен. */
+  fixes: FixPlanOut | null;
+  /** «Активы» проекта — имена хостов; пусто, если недоступны. */
+  assets: AssetOut[];
+}
+
+/** «04.11» — короткая дата под столбцом. */
+function shortDate(s: string | null | undefined): string {
+  const d = parseDate(s);
+  return d ? `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}` : "—";
 }
 
 /** Сводка для героя и плиток из серверных счётчиков двух последних прогонов. */
@@ -52,15 +67,26 @@ async function loadDashboard(engagementId: number): Promise<DashData> {
   const summaries = await Promise.all(recent.map((r) => api.findingsSummary(r.id)));
   const latest = recent[recent.length - 1] ?? null;
   const previous = recent[recent.length - 2] ?? null;
-  const [services, top] = await Promise.all([
+  const [services, top, fixes, assets] = await Promise.all([
     latest ? api.services(latest.id) : Promise.resolve([]),
     latest
       ? api.findings(latest.id, { include_info: false, false_positives: "exclude", sort: "severity", limit: 8 })
       : Promise.resolve([]),
+    // план и имена хостов — дополнение: их ошибка не ломает сводку
+    latest ? api.fixes(latest.id, { limit: FIX_FIRST }).catch(() => null) : Promise.resolve(null),
+    api.assets(engagementId).catch(() => [] as AssetOut[]),
   ]);
   const trend = recent.map((r, i) => {
     const c = summaries[i].counts;
     return { label: `№${r.id}`, sub: fmtDate(r.started_at ?? r.created_at), all: summaries[i].open, severe: c.critical + c.high };
+  });
+  const columns = recent.map((r, i) => {
+    const c = summaries[i].counts;
+    return {
+      label: `№${r.id}`,
+      sub: shortDate(r.started_at ?? r.created_at),
+      counts: { critical: c.critical, high: c.high, medium: c.medium, low: c.low },
+    };
   });
   return {
     runs,
@@ -71,6 +97,9 @@ async function loadDashboard(engagementId: number): Promise<DashData> {
     top,
     services,
     trend,
+    columns,
+    fixes,
+    assets,
   };
 }
 
@@ -305,12 +334,31 @@ function ChangeTiles({ s, latest, d }: { s: RunSummary; latest: RunOut; d: DashD
   );
 }
 
+const LOOKS: { id: SummaryLook; label: string }[] = [
+  { id: "new", label: "Новый" },
+  { id: "classic", label: "Прежний" },
+];
+
+/** Переключатель вида сводки: прежний оставлен на всякий случай. */
+function LookToggle({ look, onChange }: { look: SummaryLook; onChange: (v: SummaryLook) => void }) {
+  return (
+    <div className="seg seg-sm" role="radiogroup" aria-label="Вид сводки">
+      {LOOKS.map((l) => (
+        <button key={l.id} type="button" role="radio" aria-checked={look === l.id} onClick={() => onChange(l.id)}>
+          {l.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function DashboardPage() {
   const { has } = useAuth();
   const { current, loading: engLoading, error: engError } = useEngagement();
   const navigate = useNavigate();
   const data = useAsync(() => loadDashboard(current!.id), [current?.id], !!current);
   const [open, setOpen] = useState<FindingOut | null>(null);
+  const [look, setLook] = useSummaryLook();
 
   const d = data.data;
   const summary = useMemo(() => (d && d.latest && d.summary ? toRunSummary(d.summary, d.prevSummary) : null), [d]);
@@ -331,6 +379,7 @@ export function DashboardPage() {
   }
 
   const latest = d?.latest;
+  const headline = look === "new" && d && summary ? summaryHeadline(summary, d.fixes) : "";
 
   return (
     <>
@@ -341,7 +390,17 @@ export function DashboardPage() {
             {latest ? ` · последний прогон №${latest.id}, ${fmtDate(latest.finished_at ?? latest.started_at)}` : ""}
           </span>
           <h1>Сводка по проекту</h1>
+          {headline && (
+            <p className="summary-headline">
+              <b>Главное:</b> {headline}
+            </p>
+          )}
         </div>
+        {d && latest && (
+          <div className="actions">
+            <LookToggle look={look} onChange={setLook} />
+          </div>
+        )}
       </div>
 
       {active.map((r) => (
@@ -371,7 +430,21 @@ export function DashboardPage() {
         </div>
       )}
 
-      {d && latest && summary && (
+      {d && latest && summary && look === "new" && (
+        <SummaryV2
+          s={summary}
+          latest={latest}
+          previous={d.previous}
+          prevCounts={d.prevSummary?.counts ?? null}
+          runs={d.runs}
+          columns={d.columns}
+          fixes={d.fixes}
+          hosts={hosts}
+          assets={d.assets}
+        />
+      )}
+
+      {d && latest && summary && look === "classic" && (
         <>
           <section className="row">
             <HeroCard s={summary} latest={latest} d={d} nav={navigate} />

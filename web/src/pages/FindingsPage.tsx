@@ -74,6 +74,11 @@ export function FindingsPage() {
     if (q !== urlQ) update({ q: q || null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
+  // запрос сменился снаружи (переход из быстрого поиска) — поле поиска следует за адресом
+  useEffect(() => {
+    if (urlQ !== query.trim()) setQuery(urlQ);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlQ]);
 
   const filter: FindingQuery = {
     severity: severities,

@@ -1066,3 +1066,63 @@ export interface FixQuery {
   limit?: number;
   offset?: number;
 }
+
+// --- быстрый поиск по проекту (Ctrl+K) ---------------------------------------
+export interface SearchHost {
+  host: string;
+  hostname: string | null;
+  os: string | null;
+  criticality: string | null;
+  vulns: number;
+  max_severity: Severity | null;
+  /** Найдено по установленному ПО: «openssh-server 1:9.2p1-2». */
+  match: string | null;
+}
+export interface SearchSoftware {
+  name: string;
+  versions: string[];
+  host_count: number;
+  vulnerable_hosts: number;
+  vulns: number;
+  hosts: string[];
+  source: "package" | "service";
+}
+export interface SearchVuln {
+  id: string;
+  title: string;
+  cves: string[];
+  bdu_ids: string[];
+  severity: Severity;
+  host_count: number;
+  hosts: string[];
+}
+export interface SearchAction {
+  key: string;
+  title: string;
+  kind_label: string;
+  severity: Severity;
+  os: string | null;
+  host_count: number;
+  finding_count: number;
+  priority: number | null;
+}
+export interface SearchCommand {
+  key: string;
+  title: string;
+  os: string | null;
+  command: string;
+  commands: string[];
+}
+export interface SearchOut {
+  q: string;
+  run_id: number | null;
+  run_name: string | null;
+  assets: number;
+  findings: number;
+  counts: { hosts: number; software: number; vulns: number; actions: number; commands: number };
+  hosts: SearchHost[];
+  software: SearchSoftware[];
+  vulns: SearchVuln[];
+  actions: SearchAction[];
+  commands: SearchCommand[];
+}

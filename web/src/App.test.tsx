@@ -236,7 +236,7 @@ describe("модуль cred_audit в форме запуска", () => {
   });
 });
 
-it("сводка показывает открытые уязвимости и изменения к прошлому прогону", async () => {
+it("сводка: новый вид с «Главное» и графиком по прогонам, прежний — по переключателю", async () => {
   setToken("t");
   const run = (id: number) => ({
     id, engagement_id: 1, modules: ["discovery", "vuln"], rate_profile: "gentle", status: "done",
@@ -254,11 +254,41 @@ it("сводка показывает открытые уязвимости и �
     "GET /runs/2/findings/summary": { ...summaryOf(run2), fixed: 1, previous_run_id: 1 },
     "GET /runs/1/services": [],
     "GET /runs/2/services": [],
+    "GET /runs/2/fixes": {
+      total: 2, tasks: 2, hosts: 2, findings: 2, false_positives: 0, kinds: {}, os: {}, severities: {},
+      items: [
+        {
+          key: "pkg:log4j", kind: "package", kind_label: "Обновить пакет", title: "Обновить log4j", os: null, os_family: null,
+          manager: null, packages: ["log4j"], fixed_version: "2.17.1", software: null, steps: [], commands: [], verify: [],
+          reboot: false, details: null, details_source: null, severity: "critical",
+          priority: { score: 97, label: "critical", label_ru: "Критический", rank: 1 },
+          cves: ["CVE-2021-44228"], bdu_ids: ["BDU:2021-05969"], advisories: [], references: [], hosts: [],
+          host_count: 1, finding_count: 1,
+        },
+      ],
+    },
+    "GET /engagements/1/assets": [{ id: 1, engagement_id: 1, address: "10.0.0.1", hostname: "astra-db01", os_family_label: "Astra Linux" }],
   });
   renderApp("/");
   await screen.findByRole("heading", { name: "Сводка по проекту" });
   expect(await screen.findByText("открытые уязвимости на 2 хостах")).toBeInTheDocument();
   expect(screen.getByText("без изменений к прогону №1")).toBeInTheDocument();
+
+  // новый вид («Сводка 2.0»): «Главное», крупные плитки уровней, первые действия, график столбцами
+  expect(await screen.findByText(/первым стоит сделать «Обновить log4j»: закроет 1 находку на 1 хосте\. Новых уязвимостей: 1\./)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Критический: 1, 50% открытых/ })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Обновить log4j" })).toHaveAttribute("href", "/findings?run=2&q=%D0%9E%D0%B1%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D1%8C%20log4j");
+  const cols = screen.getByRole("list", { name: "Открытые уязвимости по уровням в каждом прогоне" });
+  expect(within(cols).getAllByRole("listitem")).toHaveLength(2);
+  expect(screen.getByText("astra-db01")).toBeInTheDocument();
+  // плиток «Новые / Закрытые / Регрессии» и матрицы риска в новом виде нет
+  expect(screen.queryByText("Регрессии")).not.toBeInTheDocument();
+  expect(screen.queryByText("Матрица риска")).not.toBeInTheDocument();
+
+  // прежний вид оставлен: переключатель на странице, выбор запоминается
+  await userEvent.click(screen.getByRole("radio", { name: "Прежний" }));
+  expect(localStorage.getItem("scanner.summaryLook")).toBe("classic");
+  expect(screen.queryByText(/^Главное:/)).not.toBeInTheDocument();
   const tile = (label: string) => screen.getByText(label).closest(".change-tile") as HTMLElement;
   expect(within(tile("Новые")).getByText("1")).toBeInTheDocument();
   expect(within(tile("Закрытые")).getByText("1")).toBeInTheDocument();

@@ -23,6 +23,7 @@ import { useAuth, type Perm } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { useTheme } from "../theme/ThemeContext";
 import { ROLE_LABEL } from "../lib/labels";
+import { QuickSearch } from "./QuickSearch";
 import { RunProgressChip } from "./RunProgressChip";
 
 interface NavItem {
@@ -159,6 +160,7 @@ export function Layout() {
             <Menu size={20} />
           </button>
           <EngagementPicker />
+          <QuickSearch />
           <RunProgressChip />
           <span className="spacer" />
           <span className="faint hide-sm" style={{ fontSize: 12 }}>
