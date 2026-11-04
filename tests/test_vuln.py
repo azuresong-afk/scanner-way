@@ -261,6 +261,8 @@ def test_run_keeps_partial_findings_on_timeout():
     assert any(f.vuln_id == "CVE-2021-44228" for f in findings)
     marker = [f for f in findings if f.vuln_id == "INFO:vuln-scan-timeout"]
     assert len(marker) == 1 and marker[0].host == "10.0.0.5"
+    # хост пачки — пробел покрытия, иначе прогон ушёл бы в «done» как полностью проверенный
+    assert ctx.coverage.get("10.0.0.5", "vuln").status == "timeout"
     assert any(r["action"] == "nuclei_exec" and r["result"] == "timeout"
                for r in ctx.audit.records)
 

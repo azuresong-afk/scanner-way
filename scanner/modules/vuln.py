@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from scanner.core import coverage as cv
 from scanner.core.models import Finding, FindingType, ServiceInfo, Severity
 from scanner.core.ratelimit import RateProfile
 from scanner.modules.base import ScanContext, ScanModule
@@ -422,6 +423,9 @@ class VulnModule(ScanModule):
                                  details=f"{e}; findings={len(batch_findings)}")
                 findings.extend(self._enrich(batch_findings))
                 for host in dict.fromkeys(_input_host(line) for line in batch):
+                    # Без отметки finalize_coverage счёл бы хост проверенным, и
+                    # прогон завершился бы как «done» без пробела в покрытии.
+                    ctx.coverage.mark(host, self.name, cv.TIMEOUT, str(e))
                     findings.append(Finding(
                         module=self.name, host=host, finding_type=FindingType.INFO,
                         title="Поиск уязвимостей прерван по таймауту — результаты неполные",

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Iterable
 
@@ -14,6 +15,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from scanner.feeds.store import kev
+
+log = logging.getLogger(__name__)
 
 CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")
 
@@ -54,5 +57,7 @@ def lookup_kev(engine: Engine, cves: Iterable[str]) -> frozenset[str]:
                 q = select(kev.c.cve).where(kev.c.cve.in_(ids[i:i + 500]))
                 found.update(r[0] for r in conn.execute(q))
     except SQLAlchemyError:
+        log.warning("KEV: не удалось прочитать справочник — приоритизация без KEV",
+                    exc_info=True)
         return frozenset()
     return frozenset(found)
