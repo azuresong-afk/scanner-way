@@ -440,6 +440,12 @@ export interface RunProgress {
   hosts_done: number;
   hosts_total: number;
   percent: number;
+  /** Сколько прогон уже идёт, с (на момент снимка). */
+  elapsed_seconds?: number;
+  /** Примерно осталось, с (на момент снимка); null — оценить пока нельзя. */
+  eta_seconds?: number | null;
+  /** Длительность завершённых этапов, с. */
+  stage_seconds?: Record<string, number>;
   updated_at: string;
 }
 

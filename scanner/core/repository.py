@@ -449,6 +449,21 @@ def set_scan_run_progress(session: Session, scan_run_id: int, progress: dict | N
         .execution_options(synchronize_session=False))
 
 
+def recent_run_progress(session: Session, *, engagement_id: int, before_id: int,
+                        rate_profile: str | None = None, limit: int = 10) -> list[dict]:
+    """Снимки прогресса последних завершённых прогонов проекта (новые первыми;
+    с тем же профилем нагрузки — раньше остальных): по ним оценивается, сколько
+    займут этапы нового прогона."""
+    rows = session.execute(
+        select(ScanRun.progress, ScanRun.rate_profile)
+        .where(ScanRun.engagement_id == engagement_id, ScanRun.id < before_id,
+               ScanRun.status.in_(("done", "partial")), ScanRun.progress.is_not(None))
+        .order_by(ScanRun.id.desc()).limit(limit)).all()
+    same = [p for p, rp in rows if rp == rate_profile]
+    other = [p for p, rp in rows if rp != rate_profile]
+    return [p for p in same + other if isinstance(p, dict)]
+
+
 def touch_scan_runs(session: Session, run_ids: Iterable[int], worker_id: str) -> int:
     """Отметка «жив» для активных прогонов, которые ведёт этот процесс."""
     ids = list(run_ids)

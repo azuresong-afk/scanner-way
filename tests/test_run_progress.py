@@ -27,9 +27,10 @@ def test_tracker_counts_hosts_per_stage_and_overall_percent():
     snaps: list[dict] = []
     t = RunProgress(snaps.append, ["discovery", "auth_inventory"], 4, min_interval=0)
     t.begin("discovery")
-    assert snaps[-1] | {"updated_at": None} == {
+    assert {k: v for k, v in snaps[-1].items()
+            if k not in ("updated_at", "elapsed_seconds", "eta_seconds")} == {
         "stage": "discovery", "stage_index": 1, "stages": 2, "hosts_done": 0,
-        "hosts_total": 4, "percent": 0, "updated_at": None}
+        "hosts_total": 4, "percent": 0, "stage_seconds": {}}
     t.mark("10.0.0.1", "discovery")
     t.mark("10.0.0.1", "discovery")          # повторная отметка не считается
     t.mark("10.0.0.2", "other")              # чужой модуль не считается
@@ -114,3 +115,70 @@ def test_run_stores_progress_while_running(sqlite_factory):
         run = s.get(ScanRun, run_id)
         assert run.status in {"done", "partial"}
         assert run.progress["stage"] == STAGE_SAVING          # последний снимок
+
+
+def test_eta_uses_live_stage_speed_and_history_for_next_stages():
+    snaps: list[dict] = []
+    now = [0.0]
+    t = RunProgress(snaps.append, ["discovery", "auth_inventory"], 10, min_interval=0,
+                    clock=lambda: now[0], history={"auth_inventory": 6.0})
+    t.begin("discovery")
+    assert snaps[-1]["eta_seconds"] is None or snaps[-1]["eta_seconds"] >= 60
+    now[0] = 20.0
+    for i in range(5):                          # 5 из 10 хостов за 20 с → ещё 20 с
+        t.mark(f"10.0.0.{i}", "discovery")
+    # + следующий этап по истории: 6 с/хост × 10 хостов = 60 с
+    assert snaps[-1]["eta_seconds"] == 80
+    assert snaps[-1]["elapsed_seconds"] == 20
+    now[0] = 40.0
+    t.end_stage([f"10.0.0.{i}" for i in range(10)])
+    assert snaps[-1]["stage_seconds"] == {"discovery": 40.0}
+    assert snaps[-1]["eta_seconds"] == 60
+    t.begin("auth_inventory")
+    now[0] = 70.0
+    for i in range(5):                          # своя скорость: 30 с на 5 хостов
+        t.mark(f"10.0.0.{i}", "auth_inventory")
+    assert snaps[-1]["eta_seconds"] == 30
+    t.saving()
+    assert snaps[-1]["eta_seconds"] is None
+
+
+def test_eta_without_history_uses_this_runs_stage_speed():
+    snaps: list[dict] = []
+    now = [0.0]
+    t = RunProgress(snaps.append, ["discovery", "vuln"], 4, min_interval=0, clock=lambda: now[0])
+    t.begin("discovery")
+    now[0] = 8.0
+    t.end_stage(["a", "b", "c", "d"])           # 2 с/хост — так же оцениваем vuln
+    assert snaps[-1]["eta_seconds"] == 8
+
+
+def test_stage_history_takes_newest_per_module():
+    from scanner.core.orchestrator import stage_history
+    rows = [{"hosts_total": 10, "stage_seconds": {"vuln": 50}},
+            None,
+            {"hosts_total": 5, "stage_seconds": {"vuln": 100, "discovery": 10}},
+            {"hosts_total": 0, "stage_seconds": {"config_audit": 10}}]
+    assert stage_history(rows) == {"vuln": 5.0, "discovery": 2.0}
+
+
+def test_next_run_gets_history_from_previous_run(sqlite_factory):
+    SNAPS.clear()
+    svc = RunService(sqlite_factory, DbAuditSink(sqlite_factory),
+                     registry={"discovery": Probe, "vuln": Second},
+                     executor=inline_executor(), vault=None, heartbeat_seconds=0)
+    with session_scope(sqlite_factory) as s:
+        eid = repo.create_engagement(s, name="ООО Ромашка")
+        repo.add_allowlist_entry(s, engagement_id=eid, cidr="10.0.0.0/24")
+        first = repo.create_scan_run(s, engagement_id=eid, modules=["discovery", "vuln"],
+                                     targets=["10.0.0.1"])
+    Probe.factory, Probe.run_id = sqlite_factory, first
+    svc.execute(first, ["10.0.0.1"])
+    stored = _stored(sqlite_factory, first)
+    assert set(stored["stage_seconds"]) == {"discovery", "vuln"}
+    with session_scope(sqlite_factory) as s:
+        second = repo.create_scan_run(s, engagement_id=eid, modules=["discovery", "vuln"],
+                                      targets=["10.0.0.1"])
+        rows = repo.recent_run_progress(s, engagement_id=eid, before_id=second,
+                                        rate_profile="gentle")
+    assert rows and rows[0]["stage_seconds"] == stored["stage_seconds"]

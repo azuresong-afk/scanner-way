@@ -335,6 +335,24 @@ def finalize_coverage(ctx: ScanContext, module_names: Iterable[str],
 # ========== Прогресс прогона ==========
 STAGE_SAVING = "saving"      # после модулей: запись результатов, сравнение, нормативы
 PROGRESS_MIN_INTERVAL = 2.0  # секунд между записями прогресса в БД
+ETA_MIN_PERCENT = 5          # оценка «по общей скорости» — не раньше этого процента
+
+
+def stage_history(progress_rows: Iterable[Mapping | None]) -> dict[str, float]:
+    """Секунд на хост по этапам из снимков прогресса прошлых прогонов (новые
+    первыми): для каждого модуля берётся самый свежий замер."""
+    out: dict[str, float] = {}
+    for p in progress_rows:
+        if not p:
+            continue
+        n = p.get("hosts_total") or 0
+        secs = p.get("stage_seconds") or {}
+        if n <= 0 or not isinstance(secs, Mapping):
+            continue
+        for m, v in secs.items():
+            if m not in out and isinstance(v, (int, float)) and v > 0:
+                out[m] = float(v) / n
+    return out
 
 
 class RunProgress:
@@ -350,9 +368,12 @@ class RunProgress:
 
     def __init__(self, sink: Callable[[dict], None], stages: list[str], hosts: int, *,
                  min_interval: float = PROGRESS_MIN_INTERVAL,
-                 clock: Callable[[], float] | None = None):
+                 clock: Callable[[], float] | None = None,
+                 history: Mapping[str, float] | None = None):
         import time
         self.sink = sink
+        # Секунд на хост по этапам из прошлых прогонов проекта (stage_history).
+        self.history = {m: float(v) for m, v in (history or {}).items() if v and v > 0}
         self.stages = list(stages)
         self.hosts = max(int(hosts), 0)
         self.min_interval = min_interval
@@ -362,6 +383,9 @@ class RunProgress:
         self._stage: str | None = None
         self._done: set[str] = set()
         self._last = float("-inf")
+        self._t0 = self.clock()
+        self._stage_t0 = self._t0
+        self._stage_secs: dict[str, float] = {}   # длительность завершённых этапов
 
     def snapshot(self) -> dict:
         k = max(len(self.stages), 1)
@@ -373,10 +397,55 @@ class RunProgress:
         else:
             done = min(len(self._done), n)
             percent = int(100 * ((max(self._index - 1, 0)) * n + done) / (k * n))
+        now = self.clock()
+        eta = self._eta(now, done)
+        if eta is None and self._stage != STAGE_SAVING and percent >= ETA_MIN_PERCENT:
+            # нет ни истории, ни замеров по этапам — по общей скорости прогона
+            eta = (now - self._t0) * (100 - percent) / percent
         return {"stage": self._stage, "stage_index": min(self._index, len(self.stages)),
                 "stages": len(self.stages), "hosts_done": done, "hosts_total": n,
                 "percent": min(percent, 99),
+                "elapsed_seconds": int(now - self._t0),
+                "eta_seconds": None if eta is None else round(eta),
+                "stage_seconds": {m: round(v, 1) for m, v in self._stage_secs.items()},
                 "updated_at": datetime.now(UTC).isoformat(timespec="seconds")}
+
+    def _eta(self, now: float, done: int) -> float | None:
+        """Сколько примерно осталось, с.
+
+        Текущий этап — по его собственной скорости (сек на готовый хост), пока
+        готовых хостов мало — вперемешку с прошлыми прогонами; будущие этапы —
+        по прошлым прогонам проекта (сек на хост × хостов), а без истории — по
+        средней скорости уже пройденных этапов этого прогона. Ничего нет —
+        None (тогда снимок берёт общую скорость прогона)."""
+        n = self.hosts
+        if self._stage is None or self._stage == STAGE_SAVING or n == 0:
+            return None
+        observed = [v / n for v in self._stage_secs.values()]
+        avg = sum(observed) / len(observed) if observed else None
+        el = max(now - self._stage_t0, 0.0)
+        left = n - done
+        hist = self.history.get(self._stage)
+        prior = hist if hist is not None else avg
+        if done > 0 and el > 0:
+            live = el / done * left
+            enough = max(2.0, n * 0.2)
+            if prior is not None and done < enough:
+                w = done / enough
+                cur = w * live + (1 - w) * max(prior * n - el, 0.0)
+            else:
+                cur = live
+        elif prior is not None:
+            cur = max(prior * n - el, 0.0)
+        else:
+            return None
+        total = cur
+        for m in self.stages[self._index:]:
+            per_host = self.history.get(m, avg)
+            if per_host is None:
+                return None
+            total += per_host * n
+        return total
 
     def _emit(self, force: bool) -> None:
         now = self.clock()
@@ -392,6 +461,7 @@ class RunProgress:
         with self._lock:
             self._index += 1
             self._stage = module
+            self._stage_t0 = self.clock()
             self._done = set()
             self._emit(True)
 
@@ -406,6 +476,8 @@ class RunProgress:
         """Этап закончился: все хосты прогона для него отработаны."""
         with self._lock:
             self._done = set(hosts)
+            if self._stage and self._stage != STAGE_SAVING:
+                self._stage_secs[self._stage] = self.clock() - self._stage_t0
             self._emit(True)
 
     def saving(self) -> None:
@@ -440,7 +512,8 @@ class Orchestrator:
                      credentials: list[HostCredential] | None = None,
                      cred_candidates: list[tuple[str, str]] | None = None,
                      options: Mapping[str, object] | None = None,
-                     progress: Callable[[dict], None] | None = None) -> RunOutcome:
+                     progress: Callable[[dict], None] | None = None,
+                     progress_history: Mapping[str, float] | None = None) -> RunOutcome:
         """Гейт + модули по порядку. Ошибка модуля не прерывает остальные."""
         plan = plan_targets(self.gate, requested_targets)
         out = RunOutcome(allowed=plan.allowed, denied=plan.denied)
@@ -457,7 +530,8 @@ class Orchestrator:
                           credentials=list(credentials or []),
                           cred_candidates=list(cred_candidates or []),
                           options=dict(options or {}))
-        tracker = (RunProgress(progress, [m.name for m in modules], len(ctx.targets))
+        tracker = (RunProgress(progress, [m.name for m in modules], len(ctx.targets),
+                               history=progress_history)
                    if progress is not None else None)
         if tracker is not None:
             ctx.coverage.listener = tracker.mark
@@ -1016,6 +1090,10 @@ class RunService:
             engagement_id = run.engagement_id
             names = list(run.modules)
             run_options = dict(run.options or {})
+            # скорость этапов в прошлых прогонах проекта — для «осталось ≈ …»
+            history = stage_history(repo.recent_run_progress(
+                s, engagement_id=run.engagement_id, before_id=scan_run_id,
+                rate_profile=run.rate_profile))
             rate = get_profile(run.rate_profile)
             # allowlist читается в момент запуска, а не постановки
             gate = repo.load_allowlist_gate(s, engagement_id)
@@ -1055,7 +1133,8 @@ class RunService:
                                 requested_targets=requested_targets, modules=modules,
                                 rate=rate, credentials=credentials,
                                 cred_candidates=cred_candidates, options=run_options,
-                                progress=lambda snap: self._save_progress(scan_run_id, snap))
+                                progress=lambda snap: self._save_progress(scan_run_id, snap),
+                                progress_history=history)
         del credentials, cred_candidates    # секреты больше не нужны
 
         with session_scope(self.sessions) as s:

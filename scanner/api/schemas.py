@@ -307,7 +307,8 @@ class RunOut(_Orm):
     options: dict = Field(default_factory=dict)
     warnings: list[dict] = Field(default_factory=list)
     # Ход идущего прогона (миграция 0023): stage, stage_index, stages,
-    # hosts_done, hosts_total, percent, updated_at. NULL — в очереди / старый.
+    # hosts_done, hosts_total, percent, elapsed_seconds, eta_seconds
+    # (примерно осталось, с; null — оценить пока нельзя), stage_seconds, updated_at. NULL — в очереди / старый.
     progress: dict | None = None
 
     @field_validator("options", "warnings", mode="before")
