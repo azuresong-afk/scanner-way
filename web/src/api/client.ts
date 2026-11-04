@@ -43,6 +43,7 @@ import type {
   FindingQuery,
   FindingsSummary,
   FixPlanOut,
+  SearchOut,
   FixQuery,
   HostLatestOut,
   InventoryHostOut,
@@ -342,6 +343,9 @@ export const api = {
     json<PackageOut[]>(`/runs/${runId}/packages${host ? `?host=${encodeURIComponent(host)}` : ""}`),
   /** Инвентарь договора — не зависит от прогона. */
   hosts: (engagementId: number) => json<InventoryHostOut[]>(`/engagements/${engagementId}/hosts`),
+  /** Быстрый поиск по проекту: хосты, ПО, CVE/БДУ, действия и команды плана исправлений. */
+  search: (engagementId: number, q: string, init?: RequestInit) =>
+    json<SearchOut>(`/engagements/${engagementId}/search${listQuery({ q, limit: 5 })}`, init),
   hostLatest: (engagementId: number, host: string) =>
     json<HostLatestOut>(`/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/latest`),
 
