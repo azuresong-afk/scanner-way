@@ -489,7 +489,6 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
   .engagement-picker { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
   .engagement-picker .select { width: 100%; max-width: none; min-width: 0; text-overflow: ellipsis; }
 }
-@media (max-width: 600px) { .engagement-picker > span { display: none; } }
 
 /* Плашка идущего прогона в шапке: ссылка на прогон, этап и полоса процента. */
 .run-chip {

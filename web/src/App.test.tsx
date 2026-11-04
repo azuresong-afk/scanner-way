@@ -82,7 +82,7 @@ it("меню идёт сверху вниз по ходу работы, служ
   ]);
   expect(within(nav).getByText("Администрирование")).toBeInTheDocument();
   expect(links.slice(9).map(([t]) => t)).toEqual(expect.arrayContaining(["Справочники", "Журнал аудита", "Пользователи и роли"]));
-  expect(screen.getByText("Проект")).toBeInTheDocument(); // подпись выбора проекта в шапке
+  expect(screen.getByRole("combobox", { name: "Проект" })).toBeInTheDocument(); // выбор проекта в шапке, без видимой подписи
 });
 
 it("администратор видит пользователей, но не кнопку запуска прогона", async () => {
