@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -22,11 +23,13 @@ from scanner.api.schemas import (
     PackageOut,
     RunCreate,
     RunCreated,
+    RunEventOut,
     RunOut,
     ServiceOut,
+    TrendRunOut,
 )
 from scanner.core import findings_query as fq
-from scanner.core import host_latest
+from scanner.core import host_latest, run_events
 from scanner.core import repository as repo
 from scanner.core.audit import AuditSink
 from scanner.core.db import ScanRun
@@ -226,6 +229,21 @@ def list_runs(engagement_id: int, response: Response,
     return rows
 
 
+@router.get("/engagements/{engagement_id}/trend", response_model=list[TrendRunOut])
+def runs_trend(engagement_id: int,
+               _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+               session: SessionDep,
+               days: Annotated[int | None, Query(ge=1, le=3660)] = None,
+               limit: Annotated[int | None, Query(ge=1, le=fq.TREND_LIMIT_MAX)] = None,
+               ) -> list[dict]:
+    """Открытые уязвимости по уровням в каждом прогоне — для графика «Сводки»
+    за период («10 прогонов», «3 месяца», «Год») одним запросом. days —
+    прогоны, начатые за последние N дней; limit — последние N прогонов."""
+    get_engagement(session, engagement_id)
+    since = datetime.now(UTC) - timedelta(days=days) if days else None
+    return fq.trend(session, engagement_id, since=since, limit=limit)
+
+
 @router.get("/engagements/{engagement_id}/hosts", response_model=list[InventoryHostOut])
 def list_hosts(engagement_id: int, _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
                session: SessionDep,
@@ -408,6 +426,19 @@ def run_coverage(run_id: int,
         hosts.append({"host": h, "status": cov.host_status(h), "modules": per})
     return CoverageOut(scan_run_id=run_id, status=run.status, summary=cov.summary(),
                        hosts=hosts, entries=cov.to_dicts(), legacy=legacy)
+
+
+@router.get("/runs/{run_id}/events", response_model=list[RunEventOut])
+def run_events_feed(run_id: int,
+                    _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                    session: SessionDep,
+                    limit: Annotated[int, Query(ge=1, le=run_events.LIST_LIMIT_MAX)] = 50,
+                    ) -> list[RunEventOut]:
+    """Лента прогона для «Сводки», новые сверху: начат/завершён, модули,
+    по хосту — новые и вернувшиеся уязвимости, закрытые, хост не проверен."""
+    _get_run(session, run_id)
+    return [RunEventOut.model_validate(r)
+            for r in run_events.list_events(session, run_id, limit)]
 
 
 @router.get("/runs/{run_id}/services", response_model=list[ServiceOut])

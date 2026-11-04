@@ -93,6 +93,19 @@ def host_key(host: object) -> str:
 
 # ---- чтение ------------------------------------------------------------
 
+def hostnames(session: Session, engagement_id: int) -> dict[str, str]:
+    """{адрес: имя} активов договора, у которых имя задано."""
+    out: dict[str, str] = {}
+    for address, name in session.execute(
+            select(AssetRow.address, AssetRow.hostname)
+            .where(AssetRow.engagement_id == engagement_id, AssetRow.hostname.is_not(None))):
+        try:
+            out[host_key(address)] = name
+        except ValueError:
+            continue
+    return out
+
+
 def _tags_map(session: Session, asset_ids: Sequence[int]) -> dict[int, list[str]]:
     out: dict[int, list[str]] = defaultdict(list)
     if asset_ids:

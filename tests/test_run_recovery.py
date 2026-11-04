@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from scanner.api.main import create_app
 from scanner.api.settings import ApiSettings
 from scanner.core import repository as repo
+from scanner.core import run_events
 from scanner.core.audit import DbAuditSink
 from scanner.core.db import AuditLogRow, FindingRow, HostResult, ScanRun, session_scope
 from scanner.core.models import Finding, FindingType, HostOs, ServiceInfo, Severity
@@ -141,6 +142,10 @@ def test_running_of_dead_process_becomes_interrupted(sqlite_factory):
     assert run.status == "interrupted" and run.finished_at is not None
     assert run.error_message == MSG_INTERRUPTED
     assert ("scan_finish", f"scan_run:{run_id}", "interrupted") in _actions(sqlite_factory)
+    with session_scope(sqlite_factory) as s:          # и в ленте «Сводки»
+        last = run_events.list_events(s, run_id, 1)[0]
+        assert (last.kind, last.message) == (
+            "run_finish", "прерван. исполнитель прогона перезапущен")
     # повторный проход ничего не меняет
     assert svc.recover_orphans() == {"interrupted": [], "requeued": []}
 

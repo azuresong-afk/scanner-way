@@ -259,6 +259,24 @@ class CoverageOut(BaseModel):
     legacy: bool = False       # прогон до миграции 0020: покрытие оценено
 
 
+class RunEventOut(_Orm):
+    """Событие ленты прогона (миграция 0024): subject — кто («Прогон», модуль,
+    имя хоста), message — что; host и severity — у событий по хосту."""
+    id: int
+    ts: datetime | None
+    kind: str
+    subject: str
+    host: str | None = None
+    severity: str | None = None
+    message: str
+
+    @field_validator("ts")
+    @classmethod
+    def _utc(cls, v: datetime | None) -> datetime | None:
+        # SQLite (тесты) отдаёт время без пояса; в БД оно всегда UTC
+        return v.replace(tzinfo=UTC) if v is not None and v.tzinfo is None else v
+
+
 class DeniedTargetOut(BaseModel):
     target: str
     reason: str
@@ -410,6 +428,22 @@ class HostCountsOut(BaseModel):
     host: str
     counts: dict[str, int]
     total: int
+
+
+class TrendRunOut(BaseModel):
+    """Прогон на графике «Сводки»: открытые находки по уровням (без ложных
+    срабатываний и информационных)."""
+    scan_run_id: int
+    status: str
+    started_at: datetime | None
+    finished_at: datetime | None
+    counts: dict[str, int]                 # critical/high/medium/low -> число
+
+    @field_validator("started_at", "finished_at")
+    @classmethod
+    def _utc(cls, v: datetime | None) -> datetime | None:
+        # SQLite (тесты) отдаёт время без пояса; в БД оно всегда UTC
+        return v.replace(tzinfo=UTC) if v is not None and v.tzinfo is None else v
 
 
 class FindingsSummaryOut(BaseModel):

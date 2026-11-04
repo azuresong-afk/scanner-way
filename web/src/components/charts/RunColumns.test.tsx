@@ -28,3 +28,17 @@ it("таблица повторяет данные графика", () => {
   const row = screen.getByRole("row", { name: /№131/ });
   expect(within(row).getAllByRole("cell").map((td) => td.textContent)).toEqual(["№131", "04.11", "9", "33", "74", "33", "149"]);
 });
+
+it("неделя или месяц: подпись периода и последнего прогона, под осью — не больше 12 подписей", () => {
+  const weeks: RunColumn[] = Array.from({ length: 20 }, (_, i) => ({
+    label: `w${i}`,
+    sub: `№${i + 1}`,
+    period: `Неделя ${i}`,
+    counts: { critical: 1, high: 0, medium: 0, low: 0 },
+  }));
+  const { container } = render(<RunColumns points={weeks} />);
+  expect(screen.getAllByRole("listitem")[19]).toHaveAccessibleName("Неделя 19, прогон №20: всего 1; критический 1, высокий 0, средний 0, низкий 0");
+  const shown = [...container.querySelectorAll(".runcols-x > span")].filter((s) => s.textContent);
+  expect(shown.length).toBeLessThanOrEqual(12);
+  expect(shown[shown.length - 1].textContent).toBe("w19№20");
+});

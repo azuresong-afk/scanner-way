@@ -670,3 +670,40 @@ def test_engagement_hosts_inventory_spans_all_runs(api):
     aud = api.user("aud", "auditor")
     assert api.c.get(f"/engagements/{eid}/hosts", headers=aud).status_code == 200
     assert api.c.get("/engagements/999/hosts", headers=op).status_code == 404
+
+
+# ---------- «Сводка»: лента прогона и тренд за период ----------
+def test_run_events_feed_and_trend(api, cves):
+    eid = api.engagement("10.0.0.0/24")
+    op = api.user("op", "operator")
+    aud = api.user("aud", "auditor")
+    first = _run(api, eid, op, ["10.0.0.1"]).json()["id"]
+    cves[:] = ["CVE-2016-6210", "CVE-2018-15473"]       # одна закрыта, одна новая
+    second = _run(api, eid, op, ["10.0.0.1"]).json()["id"]
+
+    r = api.c.get(f"/runs/{second}/events", headers=aud)
+    assert r.status_code == 200, r.text
+    feed = r.json()
+    assert feed[0]["kind"] == "run_finish"                      # новые сверху
+    assert feed[0]["message"] == "завершён, открытых 2, новых 1, закрыто 1"
+    assert feed[-1]["kind"] == "run_start"
+    assert feed[0]["ts"].endswith(("Z", "+00:00"))
+    new = next(e for e in feed if e["kind"] == "host_new")
+    assert (new["host"], new["severity"]) == ("10.0.0.1", "high")
+    assert "CVE-2018-15473" in new["message"]
+    assert len(api.c.get(f"/runs/{second}/events", headers=aud,
+                         params={"limit": 2}).json()) == 2
+    assert api.c.get(f"/runs/{second}/events", headers=aud,
+                     params={"limit": 0}).status_code == 422
+    assert api.c.get("/runs/999/events", headers=aud).status_code == 404
+    assert api.c.get(f"/runs/{second}/events").status_code == 401
+
+    t = api.c.get(f"/engagements/{eid}/trend", headers=aud)
+    assert t.status_code == 200, t.text
+    assert [x["scan_run_id"] for x in t.json()] == [first, second]
+    assert t.json()[1]["counts"] == {"critical": 0, "high": 2, "medium": 0, "low": 0}
+    assert [x["scan_run_id"] for x in api.c.get(
+        f"/engagements/{eid}/trend", headers=aud, params={"limit": 1}).json()] == [second]
+    assert len(api.c.get(f"/engagements/{eid}/trend", headers=aud,
+                         params={"days": 90}).json()) == 2
+    assert api.c.get("/engagements/999/trend", headers=aud).status_code == 404

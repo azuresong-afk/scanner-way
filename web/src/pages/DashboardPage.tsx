@@ -13,7 +13,7 @@ import { Empty, ErrorAlert, Loading, RefTags, RunName, RunStatusPill, SeverityBa
 import { fmtDate, fmtDelta, fmtNumber, parseDate, plural } from "../lib/format";
 import { isFinished, SEVERITY_LABEL, runName } from "../lib/labels";
 import { hostRowsFromCounts, type HostRow, type RunSummary } from "../lib/stats";
-import { FIX_FIRST, summaryHeadline, type RunColumn } from "../lib/summary";
+import { dayMonth, FIX_FIRST, summaryHeadline, type RunColumn } from "../lib/summary";
 import { useSummaryLook, type SummaryLook } from "../lib/summaryLook";
 import { useAsync } from "../lib/useAsync";
 
@@ -40,7 +40,7 @@ interface DashData {
 /** «04.11» — короткая дата под столбцом. */
 function shortDate(s: string | null | undefined): string {
   const d = parseDate(s);
-  return d ? `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}` : "—";
+  return d ? dayMonth(d) : "—";
 }
 
 /** Сводка для героя и плиток из серверных счётчиков двух последних прогонов. */
@@ -436,7 +436,9 @@ export function DashboardPage() {
           latest={latest}
           previous={d.previous}
           prevCounts={d.prevSummary?.counts ?? null}
-          runs={d.runs}
+          engagementId={current.id}
+          feedRun={d.runs[0] ?? latest}
+          onFeedFinished={() => void data.reload()}
           columns={d.columns}
           fixes={d.fixes}
           hosts={hosts}

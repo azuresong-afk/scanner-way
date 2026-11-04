@@ -11,6 +11,7 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from sqlalchemy import Select, String, and_, case, cast, exists, func, or_, select
 from sqlalchemy.orm import Session
@@ -257,6 +258,40 @@ def _ip_key(host: str):
         return (ip.version, int(ip))
     except ValueError:
         return (9, 0)
+
+
+# ---------- тренд по прогонам ----------
+# Прогоны на графике «Сводки»: завершённые, кроме «Ошибка» (как в веб-интерфейсе).
+TREND_STATUSES = ("done", "partial", "stopped", "interrupted")
+TREND_LEVELS = ("critical", "high", "medium", "low")
+TREND_LIMIT_MAX = 1000
+
+
+def trend(session: Session, engagement_id: int, *, since: datetime | None = None,
+          limit: int | None = None) -> list[dict]:
+    """Открытые находки по уровням в каждом прогоне договора — одним запросом
+    для графика «Сводки» за период. Как counts в summary: без ложных
+    срабатываний и информационных. Старые прогоны первыми; since — начатые не
+    раньше этого времени, limit — последние N из них."""
+    when = func.coalesce(ScanRun.started_at, ScanRun.created_at)
+    q = (select(ScanRun.id, ScanRun.status, when.label("ts"), ScanRun.finished_at)
+         .where(ScanRun.engagement_id == engagement_id, ScanRun.status.in_(TREND_STATUSES)))
+    if since is not None:
+        q = q.where(when >= since)
+    cap = min(int(limit or TREND_LIMIT_MAX), TREND_LIMIT_MAX)
+    runs = list(session.execute(q.order_by(ScanRun.id.desc()).limit(cap)).all())[::-1]
+    if not runs:
+        return []
+    by_run: dict[int, dict[str, int]] = {r.id: dict.fromkeys(TREND_LEVELS, 0) for r in runs}
+    for rid, sev, n in session.execute(
+            select(FindingRow.scan_run_id, FindingRow.severity, func.count())
+            .where(FindingRow.scan_run_id.in_(list(by_run)), FindingRow.severity != "info",
+                   ~_fp_exists(engagement_id))
+            .group_by(FindingRow.scan_run_id, FindingRow.severity)).all():
+        if sev in by_run[rid]:
+            by_run[rid][sev] = int(n)
+    return [{"scan_run_id": r.id, "status": r.status, "started_at": r.ts,
+             "finished_at": r.finished_at, "counts": by_run[r.id]} for r in runs]
 
 
 # ---------- прогоны договора ----------
