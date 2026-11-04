@@ -661,3 +661,26 @@ def test_policy_read_failure_does_not_break_audit(scap_dir, lynis_bundle, net_kw
     assert any(f.vuln_id == "LYNIS:SSH-7408" for f in findings)
     summary = next(f for f in findings if f.vuln_id == "INFO:config-audit")
     assert "парольная политика: файлы не прочитаны" in summary.evidence
+
+
+def test_gunzip_limited_rejects_bomb_and_keeps_normal_output():
+    from scanner.modules.config_audit import _gunzip_limited
+    assert _gunzip_limited(gzip.compress(b"<a/>"), 1024) == b"<a/>"
+    # несколько членов gzip подряд — как gzip.decompress
+    assert _gunzip_limited(gzip.compress(b"ab") + gzip.compress(b"cd"), 1024) == b"abcd"
+    with pytest.raises(ConfigAuditError):
+        _gunzip_limited(gzip.compress(b"\0" * 10_000), 1024)
+    with pytest.raises(EOFError):
+        _gunzip_limited(gzip.compress(b"<a/>" * 100)[:-12], 10_000)
+
+
+def test_openscap_xml_in_utf16_is_rejected():
+    xml = '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE x [<!ENTITY a "b">]><x/>'
+    with pytest.raises(ConfigAuditError):
+        parse_openscap_results(xml.encode("utf-16"), "10.0.0.5")
+
+
+def test_profile_with_leading_dash_is_rejected(tmp_path):
+    from scanner.modules.config_audit import _PROFILE_RE
+    assert _PROFILE_RE.match("xccdf_org.ssgproject.content_profile_cis")
+    assert not _PROFILE_RE.match("--remediate")

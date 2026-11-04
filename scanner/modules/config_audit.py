@@ -58,6 +58,7 @@ import tarfile
 import threading
 import time
 import xml.etree.ElementTree as ET
+import zlib
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -100,7 +101,8 @@ _BACKEND_LABEL = {OPENSCAP: "OpenSCAP", LYNIS: "Lynis"}
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 _MAX_DOCS = 5
 
-_PROFILE_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+# Без ведущего «-»: значение уходит в argv oscap и не должно читаться как опция.
+_PROFILE_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:-]*$")
 # Каталог, созданный `mktemp -d` на цели: только такой путь уходит в rm -rf.
 _TMPDIR_RE = re.compile(r"^/tmp/scanner-cfg\.[A-Za-z0-9]{8,}$")
 
@@ -466,7 +468,24 @@ def _children(el: ET.Element, name: str) -> list[ET.Element]:
     return [c for c in el if _local(c.tag) == name]
 
 
+def _gunzip_limited(data: bytes, limit: int) -> bytes:
+    """gzip.decompress с пределом распакованного размера (защита от gzip-бомбы с цели)."""
+    out = bytearray()
+    while data:
+        d = zlib.decompressobj(wbits=31)
+        out += d.decompress(data, limit + 1 - len(out))
+        if len(out) > limit or d.unconsumed_tail:
+            raise ConfigAuditError("openscap: результаты слишком велики")
+        if not d.eof:
+            raise EOFError("усечённый поток gzip")
+        data = d.unused_data
+    return bytes(out)
+
+
 def _safe_xml(data: bytes) -> ET.Element:
+    # Только ASCII-совместимый XML: в UTF-16 проверка DOCTYPE/ENTITY ниже не сработала бы.
+    if not data.removeprefix(b"\xef\xbb\xbf").lstrip().startswith(b"<"):
+        raise ConfigAuditError("XML результатов в неподдерживаемой кодировке — отклонено")
     head = data[:4096]
     if b"<!DOCTYPE" in head or b"<!ENTITY" in data:
         raise ConfigAuditError("XML результатов содержит DOCTYPE/ENTITY — отклонено")
@@ -927,11 +946,9 @@ class ConfigAuditModule(ScanModule):
                 raise ConfigAuditError(f"{backend}: вывод больше допустимого")
             if backend == OPENSCAP:
                 try:
-                    xml = gzip.decompress(res.stdout)
-                except (OSError, EOFError) as e:
+                    xml = _gunzip_limited(res.stdout, MAX_OUTPUT_BYTES * 4)
+                except (zlib.error, EOFError) as e:
                     raise ConfigAuditError(f"openscap: повреждённый вывод: {e}") from e
-                if len(xml) > MAX_OUTPUT_BYTES * 4:
-                    raise ConfigAuditError("openscap: результаты слишком велики")
                 findings, rem = parse_openscap_results(xml, host, self.name, facts)
             else:
                 findings, rem = parse_lynis_report(

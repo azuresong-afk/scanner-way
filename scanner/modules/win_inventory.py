@@ -40,6 +40,7 @@ Windows-аналог `auth_inventory`: вместо сетевых провер�
 from __future__ import annotations
 
 import ipaddress
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -78,6 +79,8 @@ from scanner.feeds.msrc import (
 from scanner.feeds.severity import max_severity, severity_from_cvss
 from scanner.modules.base import ScanContext, ScanModule
 from scanner.modules.config_audit import _Throttle
+
+log = logging.getLogger(__name__)
 
 MODULE = "win_inventory"
 PKG_MANAGER = "windows"
@@ -430,8 +433,8 @@ class WinInventoryModule(ScanModule):
         if self._matcher is not None:          # связать с БДУ ФСТЭК по CVE
             try:
                 self._matcher.enrich(f)
-            except Exception:  # noqa: BLE001 — справочник недоступен: находка остаётся по CVE
-                pass
+            except Exception:
+                log.warning("БДУ: не удалось обогатить находку %s", f.vuln_id, exc_info=True)
         evidence = [f"Продукт MSRC: {product or '—'}",
                     f"ОС хоста: {os.label}" + (f" ({os.version})" if os.version else "")]
         if gap.fix_kbs:
@@ -597,7 +600,9 @@ class WinInventoryModule(ScanModule):
         try:
             s = MsrcStore(engine)
             return s if s.count() else None     # пустой справочник -> «нет данных»
-        except Exception:  # noqa: BLE001 — таблицы нет/БД недоступна
+        except Exception:
+            log.warning("MSRC: справочник недоступен — хосты Windows без оценки обновлений",
+                        exc_info=True)
             return None
 
     def _run_matcher(self) -> _Matcher | None:
