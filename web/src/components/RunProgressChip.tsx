@@ -49,7 +49,7 @@ export function RunProgressChip() {
   // идущий важнее стоящего в очереди; среди идущих — самый новый
   const run = runs.find((r) => r.status === "running") ?? runs[0];
   const others = runs.length - 1;
-  const { main, stage, percent } = chipParts(run);
+  const { main, stage, percent, eta } = chipParts(run);
   const title = [main, stage, others > 0 ? `ещё ${others} ${plural(others, ["прогон", "прогона", "прогонов"])} в работе` : null]
     .filter(Boolean)
     .join(" · ");
@@ -58,7 +58,8 @@ export function RunProgressChip() {
       <span className={`run-chip-dot ${run.status}`} aria-hidden="true" />
       <span className="run-chip-text">{main}</span>
       <span className="run-chip-short">
-        №{run.id} · {percent != null ? `${percent}%` : run.status === "pending" ? "в очереди" : "идёт"}
+        {/* на телефоне: время, если оно известно (процент — на полосе), иначе процент */}
+        №{run.id} · {eta ?? (percent != null ? `${percent}%` : run.status === "pending" ? "в очереди" : "идёт")}
       </span>
       {stage && <span className="run-chip-stage hide-sm">{stage}</span>}
       {others > 0 && <span className="run-chip-more">+{others}</span>}

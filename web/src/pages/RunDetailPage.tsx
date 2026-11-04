@@ -10,6 +10,7 @@ import { FindingDrawer } from "../components/FindingDrawer";
 import { FindingsTable, type SortState } from "../components/FindingsTable";
 import { Pager } from "../components/Pager";
 import { ReportMenu } from "../components/ReportMenu";
+import { RunProgressPanel } from "../components/RunProgressPanel";
 import { CoverageTable, RunResultNotes } from "../components/RunCoverage";
 import { ServicesTable } from "../components/ServicesTable";
 import { Empty, ErrorAlert, Kpi, Loading, RunStatusPill } from "../components/ui";
@@ -153,7 +154,16 @@ export function RunDetailPage() {
         </dl>
       </section>
 
-      {!finished && (
+      {r.status === "running" && r.progress && (
+        <div className="card card-pad">
+          <RunProgressPanel run={r} />
+          <p className="faint" style={{ margin: "var(--s2) 0 0", fontSize: 13 }}>
+            Время примерное: по скорости текущего этапа и прошлым прогонам проекта. Результаты появятся после завершения.
+          </p>
+        </div>
+      )}
+
+      {!finished && !(r.status === "running" && r.progress) && (
         <div className="card">
           <Empty title={r.status === "pending" ? "Прогон в очереди" : "Идёт сканирование"} icon={<span className="spinner" style={{ width: 28, height: 28 }} />}>
             Результаты появятся после завершения. Страница обновляется автоматически.

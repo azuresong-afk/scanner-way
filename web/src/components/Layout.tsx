@@ -64,10 +64,8 @@ function EngagementPicker() {
   if (!engagements.length) return null;
   return (
     <label className="inline engagement-picker" style={{ gap: 8 }}>
-      <span className="faint" style={{ fontSize: 13 }}>
-        Проект
-      </span>
-      <select className="select" value={current?.id ?? ""} onChange={(e) => select(Number(e.target.value))}>
+      {/* подпись «Проект» убрана (выбор Антона): шапка в одну линию; имя поля — для экранных дикторов */}
+      <select className="select" aria-label="Проект" value={current?.id ?? ""} onChange={(e) => select(Number(e.target.value))}>
         {engagements.map((e) => (
           <option key={e.id} value={e.id}>
             {e.client ? `${e.client} · ${e.name}` : e.name}
