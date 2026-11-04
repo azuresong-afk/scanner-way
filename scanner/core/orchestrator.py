@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from scanner.core import assets
 from scanner.core import coverage as cv
 from scanner.core import repository as repo
+from scanner.core import run_events as ev
 from scanner.core.allowlist import AllowlistGate
 from scanner.core.audit import AuditSink
 from scanner.core.credentials import CredentialVault, HostCredential, load_vault
@@ -333,10 +334,13 @@ def finalize_coverage(ctx: ScanContext, module_names: Iterable[str],
 
 class Orchestrator:
     def __init__(self, gate: AllowlistGate, audit: AuditSink, *,
-                 should_stop: Callable[[], bool] | None = None):
+                 should_stop: Callable[[], bool] | None = None,
+                 events: Callable[[ev.Event], None] | None = None):
         self.gate = gate
         self.audit = audit
         self.should_stop = should_stop or (lambda: False)
+        # лента событий прогона для «Сводки» (scanner.core.run_events)
+        self.events = events or (lambda _e: None)
 
     def run(self, *, engagement_id: int, scan_run_id: int, requested_targets: list[str],
             modules: list[ScanModule], rate: RateProfile,
@@ -360,6 +364,7 @@ class Orchestrator:
             self.audit.record(subject="scanner", action="deny", target=d.target,
                               result=d.reason,
                               details={"scan_run_id": scan_run_id, "count": d.count})
+        self.events(ev.run_start(len(plan.allowed), [m.name for m in modules]))
         if not plan.allowed:
             return out
 
@@ -375,12 +380,14 @@ class Orchestrator:
                 self.audit.record(subject="scanner", action="module_skip",
                                   target=module.name, result="stopped",
                                   details={"scan_run_id": scan_run_id})
+                self.events(ev.module_skip(module.name))
                 break
             ran.add(module.name)
             self.audit.record(subject="scanner", action="module_start",
                               target=module.name, result="ok",
                               details={"scan_run_id": scan_run_id,
                                        "targets": len(ctx.targets), "rate": rate.name})
+            self.events(ev.module_start(module.name, len(ctx.targets)))
             try:
                 found = module.run(ctx)
             except Exception as e:  # noqa: BLE001 — модуль сторонний, прогон продолжается
@@ -389,6 +396,7 @@ class Orchestrator:
                                   target=module.name, result="error",
                                   details={"scan_run_id": scan_run_id,
                                            "error": out.errors[module.name]})
+                self.events(ev.module_error(module.name, out.errors[module.name]))
                 continue
             out.findings.extend(found)
             ctx.completed.add(module.name)
@@ -396,6 +404,7 @@ class Orchestrator:
                               target=module.name, result="ok",
                               details={"scan_run_id": scan_run_id,
                                        "findings": len(found)})
+            self.events(ev.module_finish(module.name, len(found)))
         finalize_coverage(ctx, [m.name for m in modules], out.errors, ran)
         out.coverage = ctx.coverage
         from scanner.core.confidence import (
@@ -810,6 +819,8 @@ class RunService:
                               target=f"scan_run:{run_id}", result="interrupted",
                               details={"reason": "executor_lost",
                                        "worker_id": self.worker_id})
+            ev.safe_add(self.sessions, run_id, [ev.run_finish(
+                "interrupted", message="исполнитель прогона перезапущен")])
             self._notify(run_id)
         for run_id, targets in requeued:
             self.audit.record(subject="scanner", action="scan_requeue",
@@ -831,6 +842,9 @@ class RunService:
         self.audit.record(subject=actor, action="scan_stop", target=f"scan_run:{scan_run_id}",
                           result="ok" if before in {"pending", "running"} else "noop",
                           details={"status_before": before})
+        if before in {"pending", "running"}:
+            ev.safe_add(self.sessions, scan_run_id, [ev.Event(
+                "run_stop", ev.SUBJECT_RUN, f"остановка по запросу: {actor}")])
         return status
 
     def _status(self, scan_run_id: int) -> str | None:
@@ -863,6 +877,8 @@ class RunService:
                             error_message=f"Внутренняя ошибка сканера: {e}"[:500])
             except Exception:  # БД недоступна; след уже в аудите
                 log.exception("scan_run %s: cannot mark as failed", scan_run_id)
+            ev.safe_add(self.sessions, scan_run_id, [ev.run_finish(
+                "failed", message=f"внутренняя ошибка сканера: {type(e).__name__}")])
             self._notify(scan_run_id)
             return "failed"
 
@@ -932,7 +948,8 @@ class RunService:
 
         modules = [self.registry[n]() for n in names]
         orch = Orchestrator(gate, self.audit,
-                            should_stop=lambda: self._status(scan_run_id) == "stopped")
+                            should_stop=lambda: self._status(scan_run_id) == "stopped",
+                            events=ev.recorder(self.sessions, scan_run_id))
         out = orch.run_detailed(engagement_id=engagement_id, scan_run_id=scan_run_id,
                                 requested_targets=requested_targets, modules=modules,
                                 rate=rate, credentials=credentials,
@@ -958,6 +975,7 @@ class RunService:
                                           if i.hostname})
             prev_id = repo.previous_scan_run_id(s, scan_run_id, coverage=out.coverage)
             statuses = {}
+            fixed: list[Finding] = []
             if prev_id is not None:
                 d = diff_runs(repo.get_findings(s, prev_id), out.findings,
                               repo.historically_fixed_keys(s, engagement_id, scan_run_id),
@@ -966,8 +984,17 @@ class RunService:
                 statuses = {f.dedup_key(): st for st, items in
                             (("open", d.open), ("new", d.new),
                              ("regression", d.regression)) for f in items}
+                fixed = list(d.fixed)
             repo.save_findings(s, engagement_id=engagement_id, scan_run_id=scan_run_id,
                                findings=out.findings, statuses=statuses)
+            fp_keys = set(repo.false_positive_marks(s, engagement_id))
+            names = assets.hostnames(s, engagement_id)
+        names.update({i.host: i.hostname for i in out.inventory if i.hostname})
+        ev.safe_add(self.sessions, scan_run_id, ev.host_events(
+            out.findings, statuses, fixed,
+            [(g.host, g.module, cv.STATUS_LABELS.get(g.status, g.status))
+             for g in out.coverage.gaps()],
+            false_positive_keys=fp_keys, hostnames=names))
         self._save_compliance(scan_run_id, out)
         with session_scope(self.sessions) as s:
             run = repo.get_scan_run(s, scan_run_id)
@@ -986,6 +1013,13 @@ class RunService:
                                                            else "")
             if run.status != final or message:
                 repo.set_scan_run_status(s, scan_run_id, final, error_message=message)
+        live = [f for f in out.findings
+                if str(f.severity) != "info" and f.dedup_key() not in fp_keys]
+        ev.safe_add(self.sessions, scan_run_id, [ev.run_finish(
+            final, open_issues=len(live),
+            new=sum(1 for f in live if statuses.get(f.dedup_key()) == "new"),
+            fixed=sum(1 for f in fixed if f.dedup_key() not in fp_keys),
+            message=message)])
         self.audit.record(subject="scanner", action="scan_finish",
                           target=f"scan_run:{scan_run_id}", result=final,
                           details={"targets": len(out.allowed),

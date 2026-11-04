@@ -227,6 +227,23 @@ class ScanRun(Base):
     warnings: Mapped[list[dict]] = mapped_column(Jsonb, default=list)
 
 
+class RunEventRow(Base):
+    """Лента событий прогона (миграция 0023): кто (subject) и что (message).
+    host и severity — у событий по хосту (новые, вернувшиеся, закрытые,
+    не проверен)."""
+    __tablename__ = "run_events"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    scan_run_id: Mapped[int] = mapped_column(
+        ForeignKey("scan_runs.id", ondelete="CASCADE"), index=True)
+    ts: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    kind: Mapped[str] = mapped_column(Text)
+    subject: Mapped[str] = mapped_column(Text)
+    host: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str | None] = mapped_column(Text)
+    message: Mapped[str] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(Jsonb)
+
+
 class RunCoverageRow(Base):
     """Покрытие прогона: статус модуля на хосте (scanner.core.coverage)."""
     __tablename__ = "scan_run_coverage"

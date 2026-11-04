@@ -469,6 +469,29 @@ export interface HostCountsOut {
 }
 
 /** Сводка прогона с сервера (ложные срабатывания в счётчиках не участвуют). */
+/** Событие ленты прогона на «Сводке» (миграция 0023). */
+export interface RunEventOut {
+  id: number;
+  ts: string | null;
+  /** run_start, run_finish, run_stop, module_start/finish/error/skip, host_new, host_regression, host_fixed, host_gap, hosts_more. */
+  kind: string;
+  /** Кто: «Прогон», модуль или имя хоста. */
+  subject: string;
+  host: string | null;
+  /** Уровень у событий по находкам; «ok» — закрытые. */
+  severity: string | null;
+  message: string;
+}
+
+/** Прогон на графике «Сводки» за период: открытые по уровням. */
+export interface TrendRunOut {
+  scan_run_id: number;
+  status: RunStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  counts: Record<Exclude<Severity, "info">, number>;
+}
+
 export interface FindingsSummary {
   counts: Record<Severity, number>;
   open: number;

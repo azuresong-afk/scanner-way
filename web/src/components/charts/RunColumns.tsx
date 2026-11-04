@@ -8,6 +8,11 @@ type Level = Exclude<Severity, "info">;
 
 /** Порядок в столбце снизу вверх: критические у основания. */
 const STACK: Level[] = ["critical", "high", "medium", "low"];
+/** Подписей под осью не больше — иначе они наезжают друг на друга. */
+const MAX_X_LABELS = 12;
+
+/** Заголовок подсказки и начало подписи для чтения с экрана. */
+const caption = (p: RunColumn, sep: string) => (p.period ? `${p.period}${sep}прогон ${p.sub}` : `Прогон ${p.label}${sep}${p.sub}`);
 
 /**
  * Открытые уязвимости по прогонам: столбец на прогон, внутри — уровни опасности.
@@ -26,6 +31,8 @@ export function RunColumns({ points }: { points: RunColumn[] }) {
     if (d < drop.d) drop = { i, d };
   }
   const last = points.length - 1;
+  // при многих столбцах подписан каждый step-й, считая от последнего
+  const step = Math.max(1, Math.ceil(points.length / MAX_X_LABELS));
 
   return (
     <div className="runcols">
@@ -38,7 +45,7 @@ export function RunColumns({ points }: { points: RunColumn[] }) {
         <div className="runcols-cols" role="list" aria-label="Открытые уязвимости по уровням в каждом прогоне">
           {points.map((p, i) => {
             const total = totals[i];
-            const aria = `Прогон ${p.label}, ${p.sub}: всего ${total}; ${STACK.map((s) => `${SEVERITY_LABEL[s].toLowerCase()} ${p.counts[s]}`).join(", ")}`;
+            const aria = `${caption(p, ", ")}: всего ${total}; ${STACK.map((s) => `${SEVERITY_LABEL[s].toLowerCase()} ${p.counts[s]}`).join(", ")}`;
             return (
               <div key={`${p.label}-${i}`} className="runcols-col" role="listitem" tabIndex={0} aria-label={aria}>
                 {(i === 0 || i === last) && (
@@ -57,9 +64,7 @@ export function RunColumns({ points }: { points: RunColumn[] }) {
                   )}
                 </span>
                 <span className={`runcols-tip ${i < points.length / 2 ? "to-right" : "to-left"}`} aria-hidden="true">
-                  <b>
-                    Прогон {p.label} · {p.sub}
-                  </b>
+                  <b>{caption(p, " · ")}</b>
                   <span>
                     Всего <b className="num">{fmtNumber(total)}</b>
                   </span>
@@ -78,8 +83,12 @@ export function RunColumns({ points }: { points: RunColumn[] }) {
       <div className="runcols-x" aria-hidden="true">
         {points.map((p, i) => (
           <span key={`${p.label}-${i}`} className={i === last ? "last" : ""}>
-            <span>{p.label}</span>
-            <span className="faint">{p.sub}</span>
+            {(last - i) % step === 0 && (
+              <>
+                <span>{p.label}</span>
+                <span className="faint">{p.sub}</span>
+              </>
+            )}
           </span>
         ))}
       </div>
@@ -89,13 +98,14 @@ export function RunColumns({ points }: { points: RunColumn[] }) {
 
 /** Те же данные таблицей (для чтения с экрана и печати). */
 export function RunColumnsTable({ points }: { points: RunColumn[] }) {
+  const periods = points.some((p) => p.period);
   return (
     <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
-            <th>Прогон</th>
-            <th>Дата</th>
+            <th>{periods ? "Период" : "Прогон"}</th>
+            <th>{periods ? "Последний прогон" : "Дата"}</th>
             {STACK.map((s) => (
               <th key={s} className="right">
                 {SEVERITY_LABEL[s]}
@@ -107,7 +117,7 @@ export function RunColumnsTable({ points }: { points: RunColumn[] }) {
         <tbody>
           {points.map((p, i) => (
             <tr key={`${p.label}-${i}`}>
-              <td className="mono">{p.label}</td>
+              <td className={periods ? undefined : "mono"}>{p.period ?? p.label}</td>
               <td className="muted nowrap">{p.sub}</td>
               {STACK.map((s) => (
                 <td key={s} className="right num">

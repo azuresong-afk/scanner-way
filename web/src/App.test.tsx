@@ -268,6 +268,20 @@ it("сводка: новый вид с «Главное» и графиком п
       ],
     },
     "GET /engagements/1/assets": [{ id: 1, engagement_id: 1, address: "10.0.0.1", hostname: "astra-db01", os_family_label: "Astra Linux" }],
+    "GET /runs/2/events": [
+      { id: 9, ts: "2026-10-27T11:00:00", kind: "run_finish", subject: "Прогон", host: null, severity: null, message: "завершён, открытых 2, новых 1, закрыто 1" },
+      { id: 8, ts: "2026-10-27T10:59:00", kind: "host_new", subject: "10.0.0.2", host: "10.0.0.2", severity: "medium", message: "новых уязвимостей: 1 · TLS 1.0" },
+      { id: 7, ts: "2026-10-27T10:30:00", kind: "module_finish", subject: "Уязвимости ПО", host: null, severity: null, message: "готов: 2 находки" },
+    ],
+    // за год — 30 еженедельных прогонов: столбцы по месяцам
+    "GET /engagements/1/trend": (_: unknown, url: URL) =>
+      url.searchParams.get("days") === "365"
+        ? Array.from({ length: 30 }, (_, i) => ({
+            scan_run_id: i + 1, status: "done", finished_at: null,
+            started_at: new Date(Date.UTC(2026, 3, 6, 12) + i * 7 * 86_400_000).toISOString(),
+            counts: { critical: 1, high: 2, medium: 3, low: 30 - i },
+          }))
+        : [],
   });
   renderApp("/");
   await screen.findByRole("heading", { name: "Сводка по проекту" });
@@ -281,6 +295,29 @@ it("сводка: новый вид с «Главное» и графиком п
   const cols = screen.getByRole("list", { name: "Открытые уязвимости по уровням в каждом прогоне" });
   expect(within(cols).getAllByRole("listitem")).toHaveLength(2);
   expect(screen.getByText("astra-db01")).toBeInTheDocument();
+
+  // лента последнего прогона: новые сверху, хост — ссылкой на его карточку
+  expect(screen.getByRole("heading", { name: "Лента прогона №2" })).toBeInTheDocument();
+  const feed = await screen.findByRole("list", { name: "События прогона №2, новые сверху" });
+  const rows = within(feed).getAllByRole("listitem");
+  expect(rows.map((r) => r.textContent)).toEqual([
+    expect.stringContaining("Прогон завершён, открытых 2, новых 1, закрыто 1"),
+    expect.stringContaining("10.0.0.2 новых уязвимостей: 1 · TLS 1.0"),
+    expect.stringContaining("Уязвимости ПО готов: 2 находки"),
+  ]);
+  expect(within(rows[1]).getByRole("link", { name: "10.0.0.2" })).toHaveAttribute("href", "/hosts/10.0.0.2?run=2");
+
+  // период графика: за год — одним запросом, столбцы по месяцам
+  expect(screen.getByText(/^За 2 прогона:/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("radio", { name: "Год" }));
+  expect(await screen.findByText(/^За год \(30 прогонов, по месяцам\):/)).toBeInTheDocument();
+  const months = screen.getByRole("list", { name: "Открытые уязвимости по уровням в каждом прогоне" });
+  expect(within(months).getAllByRole("listitem")).toHaveLength(7);
+  await userEvent.click(screen.getByRole("radio", { name: "3 месяца" }));
+  expect(await screen.findByText("За этот период меньше двух прогонов")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("radio", { name: "10 прогонов" }));
+  expect(screen.getByText(/^За 2 прогона:/)).toBeInTheDocument();
+
   // плиток «Новые / Закрытые / Регрессии» и матрицы риска в новом виде нет
   expect(screen.queryByText("Регрессии")).not.toBeInTheDocument();
   expect(screen.queryByText("Матрица риска")).not.toBeInTheDocument();

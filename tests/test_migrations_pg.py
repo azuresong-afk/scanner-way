@@ -222,3 +222,53 @@ def test_pg_0022_backfills_assets_from_runs():
     finally:
         engine.dispose()
         command.downgrade(cfg, "base")
+
+
+def test_pg_0023_backfills_run_events():
+    """0023: у прошлых прогонов в ленте — итог прогона и по хосту новые и
+    вернувшиеся уязвимости (без информационных и ложных срабатываний)."""
+    from alembic import command
+    cfg = _alembic_cfg()
+    command.upgrade(cfg, "0022")
+    engine = create_engine(PG_URL)
+    try:
+        with engine.begin() as c:
+            eid = c.execute(text("INSERT INTO engagements (name) VALUES ('Д') RETURNING id")
+                            ).scalar_one()
+            rid = c.execute(text(
+                "INSERT INTO scan_runs (engagement_id, modules, status, finished_at) "
+                "VALUES (:e, '{vuln}', 'partial', '2026-11-02T10:00:00Z') RETURNING id"),
+                {"e": eid}).scalar_one()
+            c.execute(text(
+                "INSERT INTO scan_runs (engagement_id, modules, status) "
+                "VALUES (:e, '{vuln}', 'running')"), {"e": eid})
+            for host, sev, status, key in (
+                    ("10.0.0.1", "critical", "new", "k1"), ("10.0.0.1", "medium", "new", "k2"),
+                    ("10.0.0.1", "info", "new", "k3"), ("10.0.0.1", "high", "regression", "k4"),
+                    ("10.0.0.2", "high", "new", "fp"), ("10.0.0.2", "low", "open", "k5")):
+                c.execute(text(
+                    "INSERT INTO findings (engagement_id, scan_run_id, module, host, "
+                    "finding_type, title, severity, status, dedup_key) VALUES (:e, :r, "
+                    "'vuln', :h, 'vuln', 't', :s, :st, :k)"),
+                    {"e": eid, "r": rid, "h": host, "s": sev, "st": status, "k": key})
+            c.execute(text(
+                "INSERT INTO false_positives (engagement_id, dedup_key, host, module, title) "
+                "VALUES (:e, 'fp', '10.0.0.2', 'vuln', 't')"), {"e": eid})
+        command.upgrade(cfg, "head")
+        with engine.begin() as c:
+            rows = sorted(c.execute(text(
+                "SELECT kind, subject, host, severity, message, ts FROM run_events "
+                "WHERE scan_run_id = :r"), {"r": rid}).all(), key=lambda r: r.kind)
+            others = c.scalar(text("SELECT count(*) FROM run_events WHERE scan_run_id <> :r"),
+                              {"r": rid})
+        assert [(r.kind, r.subject, r.host, r.severity, r.message) for r in rows] == [
+            ("host_new", "10.0.0.1", "10.0.0.1", "critical", "новых уязвимостей: 2"),
+            ("host_regression", "10.0.0.1", "10.0.0.1", "high",
+             "вернулись после исправления: 1"),
+            ("run_finish", "Прогон", None, None, "завершён частично"),
+        ]
+        assert rows[0].ts.day == 2
+        assert others == 0                         # идущий прогон — без итога
+    finally:
+        engine.dispose()
+        command.downgrade(cfg, "base")

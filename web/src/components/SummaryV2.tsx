@@ -1,13 +1,16 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { AssetOut, FixPlanOut, FixTaskOut, RunOut, Severity } from "../api/types";
-import { fmtDate, fmtDelta, fmtNumber, plural } from "../lib/format";
+import { api } from "../api/client";
+import { fmtDelta, fmtNumber, plural } from "../lib/format";
 import { SEVERITY_LABEL } from "../lib/labels";
 import { compareRisk, type HostRow, type RunSummary } from "../lib/stats";
-import { columnTotal, FIX_FIRST, findingsWord, type RunColumn } from "../lib/summary";
+import { columnTotal, FIX_FIRST, findingsWord, TREND_PERIODS, trendColumns, type RunColumn, type TrendPeriod, type TrendUnit } from "../lib/summary";
+import { useAsync } from "../lib/useAsync";
 import { RunColumns, RunColumnsTable } from "./charts/RunColumns";
 import { SeverityStack } from "./charts/SeverityBars";
-import { Empty, RunName, RunStatusPill } from "./ui";
+import { RunFeed } from "./RunFeed";
+import { Empty, ErrorAlert, Loading } from "./ui";
 
 type Level = Exclude<Severity, "info">;
 const LEVELS: Level[] = ["critical", "high", "medium", "low"];
@@ -143,29 +146,56 @@ function FixFirst({ fixes, latest }: { fixes: FixPlanOut | null; latest: RunOut 
 }
 
 /** Крупный график по прогонам: столбцы по уровням, рядом с планом исправлений. */
-function RunsTrend({ columns }: { columns: RunColumn[] }) {
+function RunsTrend({ engagementId, recent }: { engagementId: number; recent: RunColumn[] }) {
   const [table, setTable] = useState(false);
+  const [period, setPeriod] = useState<TrendPeriod>("runs");
+  const def = TREND_PERIODS.find((p) => p.id === period) ?? TREND_PERIODS[0];
+  // «10 прогонов» уже загружены сводкой; период — одним запросом к серверу
+  const ranged = useAsync(() => api.trend(engagementId, { days: def.days }), [engagementId, period], period !== "runs");
+  const picked = useMemo(
+    () => (period === "runs" ? { columns: recent, unit: "run" as TrendUnit } : ranged.data ? trendColumns(ranged.data) : null),
+    [period, recent, ranged.data],
+  );
+  const busy = period !== "runs" && ranged.loading;
+  const columns = busy ? [] : (picked?.columns ?? []);
+  const runCount = period === "runs" ? recent.length : (ranged.data?.length ?? 0);
   const first = columns[0];
   const last = columns[columns.length - 1];
   const t0 = first ? columnTotal(first) : 0;
   const t1 = last ? columnTotal(last) : 0;
   const severe = (c: RunColumn) => c.counts.critical + c.counts.high;
   const pctChange = t0 ? Math.round(((t1 - t0) / t0) * 100) : 0;
+  const runsText = `${runCount} ${plural(runCount, ["прогон", "прогона", "прогонов"])}`;
+  const scope =
+    period === "runs"
+      ? `За ${runsText}`
+      : `${def.phrase} (${runsText}${picked?.unit === "week" ? ", по неделям" : picked?.unit === "month" ? ", по месяцам" : ""})`;
   return (
     <section className="card card-pad grow-3 stack runs-trend" aria-labelledby="sum-trend">
       <div className="inline" style={{ justifyContent: "space-between" }}>
         <h2 id="sum-trend">Открытые уязвимости по прогонам</h2>
-        {columns.length > 1 && (
-          <button type="button" className="btn btn-sm" aria-pressed={table} onClick={() => setTable((v) => !v)}>
-            {table ? "Графиком" : "Таблицей"}
-          </button>
-        )}
+        <span className="inline">
+          <div className="seg seg-sm" role="radiogroup" aria-label="Период графика">
+            {TREND_PERIODS.map((p) => (
+              <button key={p.id} type="button" role="radio" aria-checked={period === p.id} onClick={() => setPeriod(p.id)}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          {columns.length > 1 && (
+            <button type="button" className="btn btn-sm" aria-pressed={table} onClick={() => setTable((v) => !v)}>
+              {table ? "Графиком" : "Таблицей"}
+            </button>
+          )}
+        </span>
       </div>
-      {columns.length > 1 ? (
+      {busy && <Loading />}
+      {!busy && period !== "runs" && ranged.error && <ErrorAlert error={ranged.error} onRetry={ranged.reload} />}
+      {!busy && columns.length > 1 && (
         <>
           <div className="inline" style={{ justifyContent: "space-between", fontSize: 13 }}>
             <span className="muted">
-              За {columns.length} {plural(columns.length, ["прогон", "прогона", "прогонов"])}:{" "}
+              {scope}:{" "}
               <b style={{ color: t1 <= t0 ? "var(--ok)" : "var(--danger)" }}>
                 {fmtDelta(t1 - t0)}
                 {t1 !== t0 && t0 ? ` (${pctChange > 0 ? "+" : "−"}${Math.abs(pctChange)}%)` : ""}
@@ -184,8 +214,9 @@ function RunsTrend({ columns }: { columns: RunColumn[] }) {
           </div>
           {table ? <RunColumnsTable points={columns} /> : <RunColumns points={columns} />}
         </>
-      ) : (
-        <Empty title="График появится после второго прогона" />
+      )}
+      {!busy && !ranged.error && columns.length <= 1 && (
+        <Empty title={period === "runs" ? "График появится после второго прогона" : "За этот период меньше двух прогонов"} />
       )}
     </section>
   );
@@ -229,38 +260,16 @@ function Hosts({ hosts, assets, latest }: { hosts: HostRow[]; assets: AssetOut[]
   );
 }
 
-function RecentRuns({ runs }: { runs: RunOut[] }) {
-  return (
-    <section className="card card-pad grow-2 stack" style={{ gap: 0 }} aria-labelledby="sum-runs">
-      <div className="inline" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-        <h2 id="sum-runs">Последние прогоны</h2>
-        <Link to="/runs" style={{ fontSize: 13 }}>
-          Все прогоны
-        </Link>
-      </div>
-      {runs.slice(0, 5).map((r) => (
-        <Link key={r.id} to={`/runs/${r.id}`} className="list-row">
-          <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-            <span className="ellipsis" style={{ fontWeight: 600 }}>
-              <RunName run={r} />
-            </span>
-            <span className="faint" style={{ fontSize: 12 }}>
-              №{r.id} · {fmtDate(r.started_at ?? r.created_at)}
-            </span>
-          </span>
-          <RunStatusPill status={r.status} />
-        </Link>
-      ))}
-    </section>
-  );
-}
-
 export interface SummaryV2Props {
   s: RunSummary;
   latest: RunOut;
   previous: RunOut | null;
   prevCounts: Record<Severity, number> | null;
-  runs: RunOut[];
+  engagementId: number;
+  /** Прогон для ленты: идущий или последний. */
+  feedRun: RunOut;
+  /** Идущий прогон завершился — перечитать сводку. */
+  onFeedFinished?: () => void;
   columns: RunColumn[];
   fixes: FixPlanOut | null;
   hosts: HostRow[];
@@ -274,11 +283,11 @@ export function SummaryV2(p: SummaryV2Props) {
       <Hero s={p.s} latest={p.latest} previous={p.previous} prevCounts={p.prevCounts} />
       <div className="row">
         <FixFirst fixes={p.fixes} latest={p.latest} />
-        <RunsTrend columns={p.columns} />
+        <RunsTrend engagementId={p.engagementId} recent={p.columns} />
       </div>
       <div className="row">
         <Hosts hosts={p.hosts} assets={p.assets} latest={p.latest} />
-        <RecentRuns runs={p.runs} />
+        <RunFeed run={p.feedRun} assets={p.assets} onFinished={p.onFeedFinished} />
       </div>
     </>
   );

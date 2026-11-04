@@ -42,6 +42,8 @@ import type {
   FindingOut,
   FindingQuery,
   FindingsSummary,
+  RunEventOut,
+  TrendRunOut,
   FixPlanOut,
   FixQuery,
   HostLatestOut,
@@ -324,6 +326,11 @@ export const api = {
   findings: (runId: number, params: FindingQuery = {}) => json<FindingOut[]>(`/runs/${runId}/findings${listQuery(params)}`),
   findingsPage: (runId: number, params: FindingQuery) => page<FindingOut>(`/runs/${runId}/findings${listQuery(params)}`),
   findingsSummary: (runId: number) => json<FindingsSummary>(`/runs/${runId}/findings/summary`),
+  /** Лента прогона, новые сверху. */
+  runEvents: (runId: number, limit = 50) => json<RunEventOut[]>(`/runs/${runId}/events?limit=${limit}`),
+  /** Открытые по уровням в каждом прогоне проекта за N дней (или последние limit прогонов). */
+  trend: (engagementId: number, params: { days?: number; limit?: number } = {}) =>
+    json<TrendRunOut[]>(`/engagements/${engagementId}/trend${listQuery(params)}`),
   /** План исправлений: находки, собранные в действия с командами по ОС хостов. */
   fixes: (runId: number, params: FixQuery = {}) => json<FixPlanOut>(`/runs/${runId}/fixes${listQuery(params)}`),
   finding: (id: number) => json<FindingOut>(`/findings/${id}`),
