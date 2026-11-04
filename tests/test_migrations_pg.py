@@ -224,12 +224,12 @@ def test_pg_0022_backfills_assets_from_runs():
         command.downgrade(cfg, "base")
 
 
-def test_pg_0023_backfills_run_events():
-    """0023: у прошлых прогонов в ленте — итог прогона и по хосту новые и
+def test_pg_0024_backfills_run_events():
+    """0024: у прошлых прогонов в ленте — итог прогона и по хосту новые и
     вернувшиеся уязвимости (без информационных и ложных срабатываний)."""
     from alembic import command
     cfg = _alembic_cfg()
-    command.upgrade(cfg, "0022")
+    command.upgrade(cfg, "0023")
     engine = create_engine(PG_URL)
     try:
         with engine.begin() as c:

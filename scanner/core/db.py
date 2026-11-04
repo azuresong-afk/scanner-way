@@ -228,7 +228,7 @@ class ScanRun(Base):
 
 
 class RunEventRow(Base):
-    """Лента событий прогона (миграция 0023): кто (subject) и что (message).
+    """Лента событий прогона (миграция 0024): кто (subject) и что (message).
     host и severity — у событий по хосту (новые, вернувшиеся, закрытые,
     не проверен)."""
     __tablename__ = "run_events"

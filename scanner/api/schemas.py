@@ -260,7 +260,7 @@ class CoverageOut(BaseModel):
 
 
 class RunEventOut(_Orm):
-    """Событие ленты прогона (миграция 0023): subject — кто («Прогон», модуль,
+    """Событие ленты прогона (миграция 0024): subject — кто («Прогон», модуль,
     имя хоста), message — что; host и severity — у событий по хосту."""
     id: int
     ts: datetime | None
