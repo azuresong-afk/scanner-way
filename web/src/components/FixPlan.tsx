@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Check, Copy, RotateCw, Search, Wrench } from "lucide-react";
 import { api } from "../api/client";
@@ -113,10 +113,15 @@ function HostRow({ h, runId, onFinding }: { h: FixHostOut; runId: number; onFind
   );
 }
 
-function FixCard({ t, runId, open, onFinding }: { t: FixTaskOut; runId: number; open: boolean; onFinding: (id: number) => void }) {
+function FixCard({ t, runId, open, focus, onFinding }: { t: FixTaskOut; runId: number; open: boolean; focus?: boolean; onFinding: (id: number) => void }) {
   const vulns = t.cves.length + t.bdu_ids.length;
+  const ref = useRef<HTMLDetailsElement>(null);
+  // действие, выбранное в быстром поиске (?task=…), раскрыто и прокручено в видимую область
+  useEffect(() => {
+    if (focus) ref.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }, [focus]);
   return (
-    <details className="fix-card" open={open}>
+    <details ref={ref} className={`fix-card${focus ? " fix-card-focus" : ""}`} open={open || focus}>
       <summary>
         <SeverityBadge severity={t.severity} short />
         <span className="fix-title">{t.title}</span>
@@ -216,6 +221,7 @@ export function FixPlan({ runId, onHost }: { runId: number; onHost: (host: strin
   const severities = params.getAll("sev").filter((s): s is Severity => (SEVERITIES as string[]).includes(s));
   const kinds = params.getAll("kind");
   const oses = params.getAll("os");
+  const focusKey = params.get("task");
   const size = PAGE_SIZES.includes(Number(params.get("size"))) ? Number(params.get("size")) : 25;
   const offset = Math.max(0, (Number(params.get("page")) || 1) - 1) * size;
   const [query, setQuery] = useState(params.get("q") ?? "");
@@ -236,6 +242,11 @@ export function FixPlan({ runId, onHost }: { runId: number; onHost: (host: strin
     if (q !== urlQ) update({ q: q || null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
+  // запрос сменился снаружи (переход из быстрого поиска) — поле поиска следует за адресом
+  useEffect(() => {
+    if (urlQ !== query.trim()) setQuery(urlQ);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlQ]);
 
   const kindParam = KIND_FILTERS.filter((k) => kinds.includes(k.id)).flatMap((k) => k.of);
   const key = JSON.stringify([severities, kindParam, oses, urlQ, offset, size]);
@@ -354,7 +365,7 @@ export function FixPlan({ runId, onHost }: { runId: number; onHost: (host: strin
         ) : (
           <div className="fix-list">
             {d.items.map((t, i) => (
-              <FixCard key={t.key} t={t} runId={runId} open={offset === 0 && i < 3} onFinding={openFinding} />
+              <FixCard key={t.key} t={t} runId={runId} open={offset === 0 && i < 3} focus={t.key === focusKey} onFinding={openFinding} />
             ))}
           </div>
         )}

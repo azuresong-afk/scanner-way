@@ -23,6 +23,7 @@ import { useAuth, type Perm } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { useTheme } from "../theme/ThemeContext";
 import { ROLE_LABEL } from "../lib/labels";
+import { QuickSearch } from "./QuickSearch";
 
 interface NavItem {
   to: string;
@@ -158,6 +159,7 @@ export function Layout() {
             <Menu size={20} />
           </button>
           <EngagementPicker />
+          <QuickSearch />
           <span className="spacer" />
           <span className="faint hide-sm" style={{ fontSize: 12 }}>
             Только цели из allowlist проекта

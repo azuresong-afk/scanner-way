@@ -38,6 +38,7 @@ from scanner.api import (
     routes_reachability,
     routes_runs,
     routes_schedules,
+    routes_search,
 )
 from scanner.api.rbac import seed_rbac, set_user_roles
 from scanner.api.scheduler import Scheduler
@@ -249,6 +250,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_portscan.router)
     app.include_router(routes_credcheck.router)
     app.include_router(routes_compliance.router)
+    app.include_router(routes_search.router)
     app.include_router(routes_audit.router)
     return app
 
