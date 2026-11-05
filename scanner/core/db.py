@@ -55,6 +55,16 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    # Вход через LDAP/AD и 2FA (миграция 0027). auth_source: local | ldap |
+    # platform (последний — под вход через «Платформу», контракт v1).
+    auth_source: Mapped[str] = mapped_column(Text, default="local",
+                                             server_default="local")
+    external_dn: Mapped[str | None] = mapped_column(Text)
+    mfa_secret: Mapped[str | None] = mapped_column(Text)
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False,
+                                              server_default="false")
+    mfa_last_step: Mapped[int | None] = mapped_column(BigInteger)
+    mfa_recovery: Mapped[list | None] = mapped_column(Jsonb)
 
 
 # ========== Engagement + allowlist ==========

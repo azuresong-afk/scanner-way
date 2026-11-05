@@ -34,12 +34,14 @@ from scanner.api import (
     routes_feeds,
     routes_findings,
     routes_integrations,
+    routes_mfa,
     routes_portscan,
     routes_reachability,
     routes_runs,
     routes_schedules,
     routes_search,
 )
+from scanner.api.ldap_auth import ConnectionFactory, LdapAuthenticator, LdapConfig
 from scanner.api.rbac import seed_rbac, set_user_roles
 from scanner.api.scheduler import Scheduler
 from scanner.api.security import LoginThrottle, TokenSigner, hash_password
@@ -134,8 +136,11 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
                notify_transports: Transports | None = None,
                notify_executor: Executor | None = None,
                portscan_executor: Executor | None = None,
-               portscan_runner=None) -> FastAPI:
+               portscan_runner=None,
+               ldap_connect: ConnectionFactory | None = None) -> FastAPI:
     settings = settings or ApiSettings()
+    # Проверяется первым: ошибка в настройках каталога — сразу понятный отказ старта.
+    ldap_cfg = LdapConfig.from_settings(settings)
     if session_factory is None:
         session_factory = make_session_factory(make_engine())
     if resolver_factory is None:
@@ -178,6 +183,20 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
                                        settings.login_lockout_minutes * 60)
     if vault is None:
         vault = load_vault(settings.credentials_key or settings.secret or None)
+    app.state.settings = settings
+    app.state.vault = vault
+    # Вход через LDAP/AD — только если задан SCANNER_API_LDAP_URL. Ошибка в
+    # настройках каталога останавливает старт: лучше явная ошибка, чем вход,
+    # который тихо работает не так, как задумано.
+    app.state.ldap = LdapAuthenticator(ldap_cfg, ldap_connect) if ldap_cfg else None
+    if ldap_cfg:
+        log.info("LDAP login enabled: %s (%d group mappings)",
+                 ", ".join(ldap_cfg.urls), len(ldap_cfg.group_roles))
+    if settings.mfa != "off":
+        log.info("2FA (TOTP) mode: %s", settings.mfa)
+        if vault is None:
+            log.error("2FA is enabled but no SCANNER_API_SECRET / SCANNER_CREDENTIALS_KEY "
+                      "is set: users will not be able to set up 2FA")
     app.state.notifier = Dispatcher(
         session_factory, audit, vault=vault, public_url=settings.public_url,
         transports=notify_transports, executor=notify_executor,
@@ -237,6 +256,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
                              "threads": threads}, status_code=200 if ok else 503)
 
     app.include_router(routes_auth.router)
+    app.include_router(routes_mfa.router)
     app.include_router(routes_engagements.router)
     app.include_router(routes_credentials.router)
     app.include_router(routes_assets.router)

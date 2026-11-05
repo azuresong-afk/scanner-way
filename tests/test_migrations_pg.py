@@ -272,3 +272,26 @@ def test_pg_0024_backfills_run_events():
     finally:
         engine.dispose()
         command.downgrade(cfg, "base")
+
+
+def test_pg_0027_users_auth_source_and_mfa(pg_factory):
+    """0027: существующие пользователи — local без 2FA; секрет и коды 2FA
+    сохраняются; auth_source принимает только local / ldap / platform."""
+    from sqlalchemy.exc import IntegrityError
+
+    from scanner.core.db import User, session_scope
+    with session_scope(pg_factory) as s:
+        s.add(User(username="ivanov", password_hash="!external", auth_source="ldap",
+                   external_dn="CN=Ivanov,DC=corp", mfa_secret="gAAAA-cipher",
+                   mfa_enabled=True, mfa_last_step=59000000, mfa_recovery=["ab", "cd"]))
+        s.add(User(username="root", password_hash="x"))
+    with session_scope(pg_factory) as s:
+        root = s.query(User).filter_by(username="root").one()
+        assert (root.auth_source, root.mfa_enabled, root.mfa_recovery) == ("local", False, None)
+        iv = s.query(User).filter_by(username="ivanov").one()
+        assert iv.mfa_recovery == ["ab", "cd"] and iv.mfa_last_step == 59000000
+    engine = create_engine(PG_URL)
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        conn.execute(text("INSERT INTO users (username, password_hash, auth_source) "
+                          "VALUES ('x', 'x', 'kerberos')"))
+    engine.dispose()

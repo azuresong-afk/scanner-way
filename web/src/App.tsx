@@ -21,6 +21,7 @@ import { CompliancePage } from "./pages/CompliancePage";
 import { RunDetailPage } from "./pages/RunDetailPage";
 import { RunsPage } from "./pages/RunsPage";
 import { SchedulesPage } from "./pages/SchedulesPage";
+import { SecurityPage } from "./pages/SecurityPage";
 import { UsersPage } from "./pages/UsersPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -90,6 +91,7 @@ export function App() {
         <Route path="feeds" element={<RequirePerm perm="view_engagements"><FeedsPage /></RequirePerm>} />
         <Route path="integrations" element={<RequirePerm perm="view_engagements"><IntegrationsPage /></RequirePerm>} />
         <Route path="audit" element={<RequirePerm perm="view_audit"><AuditPage /></RequirePerm>} />
+        <Route path="security" element={<SecurityPage />} />
         <Route path="users" element={<RequirePerm perm="manage_users"><UsersPage /></RequirePerm>} />
         <Route path="*" element={<div className="card"><Empty title="Страница не найдена" /></div>} />
       </Route>
