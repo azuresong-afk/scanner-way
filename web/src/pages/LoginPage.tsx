@@ -1,8 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { FileCheck2, KeyRound, Lock, Radar, ScrollText, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "../api/client";
-import type { MfaSetupOut } from "../api/types";
+import type { AuthConfigOut, MfaSetupOut } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { CodeField, MfaSetupBox, RecoveryCodesBox } from "../components/Mfa";
 import { codeLooksValid } from "../lib/mfa";
@@ -22,7 +22,13 @@ function loginError(ex: ApiError, step: Step): string {
 }
 
 export function LoginPage() {
-  const { me, login, acceptToken, config } = useAuth();
+  const { me, login, acceptToken } = useAuth();
+  // Способы входа на сервере (вход доменом, режим 2FA) — только для подсказки;
+  // старый сервер без /auth/config — локальный вход без 2FA.
+  const [config, setConfig] = useState<AuthConfigOut>({ ldap: false, mfa: "off" });
+  useEffect(() => {
+    if (!me) api.authConfig().then(setConfig).catch(() => undefined);
+  }, [me]);
   const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

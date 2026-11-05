@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, getToken, setToken, setUnauthorizedHandler } from "../api/client";
-import type { AuthConfigOut, MeOut, TokenOut } from "../api/types";
+import type { MeOut, TokenOut } from "../api/types";
 
 export type Perm =
   | "manage_users"
@@ -17,8 +17,6 @@ export type Perm =
 interface AuthValue {
   me: MeOut | null;
   ready: boolean;
-  /** Способы входа на сервере: вход через домен (LDAP/AD) и режим 2FA. */
-  config: AuthConfigOut;
   /** Пароль. Если нужна 2FA — возвращает второй шаг (mfa_token), иначе входит сразу. */
   login: (username: string, password: string) => Promise<TokenOut>;
   /** Завершить вход готовым токеном доступа (после кода 2FA). */
@@ -32,12 +30,6 @@ const AuthContext = createContext<AuthValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<MeOut | null>(null);
   const [ready, setReady] = useState(false);
-  const [config, setConfig] = useState<AuthConfigOut>({ ldap: false, mfa: "off" });
-
-  useEffect(() => {
-    // старый сервер без /auth/config — просто локальный вход без 2FA
-    api.authConfig().then(setConfig).catch(() => undefined);
-  }, []);
 
   const logout = useCallback(() => {
     setToken(null);
@@ -81,13 +73,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       me,
       ready,
-      config,
       login,
       acceptToken,
       logout,
       has: (perm) => !!me?.permissions.includes(perm),
     }),
-    [me, ready, config, login, acceptToken, logout],
+    [me, ready, login, acceptToken, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
