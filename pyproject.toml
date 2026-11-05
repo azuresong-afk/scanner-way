@@ -29,6 +29,8 @@ dependencies = [
     "ldap3>=2.9",
     # QR-код для настройки двухфакторного входа (TOTP) в приложении на телефоне
     "segno>=1.6",
+    # SNMP (v2c/v3 USM) для учёток сетевого оборудования: scanner/core/netexec.py
+    "pysnmp>=7.1,<8",
 ]
 
 [project.scripts]

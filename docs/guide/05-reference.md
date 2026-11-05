@@ -51,6 +51,12 @@ scanner credentials add --engagement 1 --name "стенд" --user audit --ask-pa
 # WinRM (порт по умолчанию 5986)
 scanner credentials add --engagement 1 --name "Windows" --protocol winrm --user 'CORP\svc_scan' \
     --password-env WINRM_PASS --targets 192.0.2.20
+# сетевое устройство: CLI по SSH, учётка только на просмотр (платформа auto или cisco_ios, junos, routeros, …)
+scanner credentials add --engagement 1 --name "Коммутаторы" --protocol netssh --platform auto \
+    --user scan --password-env NET_PASS --targets 192.0.2.0/27
+# SNMP v3 (ключ аутентификации — --password-env, шифрования — --priv-env); v2c: --snmp-version 2c, community — в пароле
+scanner credentials add --engagement 1 --name "SNMP" --protocol snmp --snmp-version 3 --user scan \
+    --snmp-auth sha --password-env SNMP_AUTH --snmp-priv aes --priv-env SNMP_PRIV --targets 192.0.2.0/27
 scanner credentials list --engagement 1
 scanner credentials delete --engagement 1 --id 2
 
@@ -229,6 +235,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 |---|---|---|
 | `linux_full` | Полная проверка Linux | `discovery`, `vuln`, `auth_inventory`, `config_audit`, `password_policy` |
 | `windows_full` | Полная проверка Windows | `discovery`, `vuln`, `win_inventory` |
+| `network_devices` | Сетевое оборудование | `discovery`, `netdev_audit` |
 | `network` | Только сетевая проверка | `discovery`, `vuln` |
 | `discovery` | Только обнаружение | `discovery` |
 
@@ -248,12 +255,14 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | `vuln` | Сетевая проверка уязвимостей | — | Nuclei, баннеры |
 | `auth_inventory` | Уязвимости по учётной записи (Linux) | `host_credentials` | SSH, бюллетени дистрибутивов |
 | `win_inventory` | Windows по WinRM | `host_credentials` | WinRM, MSRC |
+| `netdev_audit` | Сетевое оборудование | `host_credentials` | CLI по SSH (только просмотр), SNMP; NVD/БДУ по версии ОС устройства |
 | `config_audit` | Аудит конфигураций | `host_credentials` | OpenSCAP, Lynis; добавляет `auth_inventory` и `password_policy` |
 | `password_policy` | Парольная политика | — | чтение файлов PAM и `login.defs` |
 | `cred_audit` | Аудит учётных данных | `cred_audit` | SSH, наборы проверки |
 
-Движок `nuclei` = `vuln`; `credentialed` = `auth_inventory` + `win_inventory`;
-`both` — все три.
+Движок `nuclei` = `vuln`; `credentialed` = `auth_inventory` + `win_inventory` +
+`netdev_audit`; `both` — все четыре. Модули, для которых в прогоне нет учёток
+нужного протокола, из плана убираются.
 
 ### 5.4. Идентификаторы находок
 
@@ -264,6 +273,41 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | `[OpenSCAP] …`, `LYNIS:…` | правила аудита конфигураций |
 | `POLICY:password-…` | парольная политика |
 | `CRED:ssh/<логин>` | слабая учётная запись |
+| `NETDEV:<правило>` | правило конфигурации сетевого устройства (см. 5.4а) |
+
+### 5.4а. Правила конфигурации сетевого оборудования
+
+Оцениваются по выгрузке конфигурации (только по SSH). В доказательстве пароли,
+хэши, community и ключи SNMP заменены на `***`. Правило, к платформе не
+относящееся или не определимое по конфигурации, — «не применимо» и находкой
+не становится.
+
+| Правило | Что проверяет | Уровень |
+|---|---|---|
+| `telnet_mgmt` | управление по Telnet | высокий |
+| `ssh_v2` | только SSH v2 | средний |
+| `http_mgmt` | веб-управление по HTTP | средний |
+| `snmp_v12` | SNMP v1/v2c (в т. ч. ответ по учётке v2c) | средний |
+| `snmp_rw` | community с правом записи | высокий |
+| `snmp_default_community` | community `public`/`private` | критический |
+| `password_encryption` | `service password-encryption` и аналоги | средний |
+| `enable_secret` | пароль привилегированного режима хранится необратимо | высокий |
+| `local_user_secret` | пароли локальных учёток хранятся необратимо | высокий |
+| `aaa` | модель AAA | средний |
+| `session_timeout` | тайм-аут сеанса управления ≤ 10 мин | низкий |
+| `mgmt_acl` | ACL на доступ к управлению | средний |
+| `login_banner` | баннер при входе | низкий |
+| `remote_logging` | syslog на внешний сервер | средний |
+| `ntp` | синхронизация времени | низкий |
+| `insecure_services` | лишние службы (small-servers, finger, PAD, bootp и др.) | низкий |
+| `source_route` | IP source routing отключён | низкий |
+| `login_block` | блокировка после неудачных входов | низкий |
+| `ssh_root_login` | вход root по SSH (Junos) | высокий |
+| `password_strength` | проверка стойкости паролей | средний |
+| `ssh_crypto` | стойкая криптография SSH | низкий |
+| `mac_server` | MAC-Telnet / MAC-Winbox (MikroTik) | средний |
+
+Правила участвуют в профилях соответствия (ФСТЭК, CIS) через факт `netdev`.
 
 ### 5.5. Ограничения и лимиты
 
@@ -308,7 +352,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | Проекты, allowlist, активы | `engagement_create`, `engagement_update`, `engagement_delete`, `allowlist_add`, `allowlist_remove`, `asset_create`, `asset_update`, `asset_bulk_update`, `asset_delete`, `asset_import`, `asset_group_create`, `asset_group_rename`, `asset_group_delete` |
 | Учётки и наборы | `credential_create`, `credential_delete`, `credential_check`, `cred_set_create`, `cred_set_delete` |
 | Прогоны | `scan_request` (в т. ч. отказ без допустимых целей), `scan_queue`, `scan_start`, `scan_stop`, `scan_finish`, `scan_requeue`, `deny` (цель вне allowlist), `module_start`, `module_finish`, `module_skip`, `coverage` |
-| Движки и модули | `nmap_exec`, `nuclei_exec`, `banner_match`, `auth_inventory_*`, `win_inventory_*`, `config_audit_*`, `password_policy_*`, `cred_audit_*` (в т. ч. `cred_audit_attempt`, `cred_audit_lockout`, `cred_audit_limit`), `*_deny` |
+| Движки и модули | `nmap_exec`, `nuclei_exec`, `banner_match`, `auth_inventory_*`, `win_inventory_*`, `netdev_ssh`, `netdev_snmp`, `netdev_match`, `netdev_skip`, `config_audit_*`, `password_policy_*`, `cred_audit_*` (в т. ч. `cred_audit_attempt`, `cred_audit_lockout`, `cred_audit_limit`), `*_deny` |
 | Сетевой поиск | `port_scan`, `reachability_check` |
 | Расписание | `schedule_create`, `schedule_update`, `schedule_delete`, `schedule_fire` |
 | Находки и отчёты | `false_positive_mark`, `false_positive_unmark`, `false_positive_mark_software`, `export` |
@@ -380,6 +424,8 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | `SCANNER_WINRM_KNOWN_CERTS` | `/data/winrm_known_certs` | запомненные сертификаты |
 | `SCANNER_WINRM_STRICT_CERTS` | 0 | 1 — только хосты с заранее известным сертификатом |
 | `SCANNER_WINRM_ALLOW_HTTP` | 0 | 1 — разрешить WinRM по HTTP (5985) |
+| `SCANNER_NETDEV_COMMAND_TIMEOUT_SEC` | 60 | предел одной команды CLI сетевого устройства, с |
+| `SCANNER_NETDEV_SNMP_TIMEOUT_SEC`, `SCANNER_NETDEV_SNMP_RETRIES` | 3, 1 | таймаут запроса SNMP и число повторов |
 
 **Аудит конфигураций**
 

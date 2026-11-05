@@ -16,6 +16,10 @@
   * ``windows_policy`` — {параметр: значение} (win_inventory, R3);
   * ``windows`` / ``linux_inventory`` — True: инвентаризация по учётной
     записи выполнена (обновления/пакеты хоста проверены);
+  * ``netdev`` — {"platform", "version", "source": ssh | snmp, "rules":
+    {id правила: pass | fail | na}} — сетевое устройство опрошено
+    (netdev_audit): версия ОС проверена по CVE/БДУ, правила конфигурации — по
+    SSH (по SNMP — только версия);
   * ``network_vuln`` — True: сетевые проверки уязвимостей (Nuclei) по хосту;
   * ``discovery`` — True: хост просканирован discovery (известны его сервисы);
   * ``cred_audit`` — True: на хосте была хотя бы одна попытка проверки учёток.
@@ -62,7 +66,10 @@ def merge_run_facts(facts: dict[str, dict[str, Any]], *, completed: set[str],
         for h in (discovered if "discovery" in completed else set(targets)):
             put(h, "network_vuln")
     for h, inv in inventory.items():
-        put(h, "windows" if getattr(inv, "os_id", None) == "windows" else "linux_inventory")
+        os_id = getattr(inv, "os_id", None)
+        if os_id == "network":
+            continue          # факт «netdev» пишет сам модуль netdev_audit
+        put(h, "windows" if os_id == "windows" else "linux_inventory")
     if "password_policy" in completed:
         for h in policy_hosts:
             put(h, "password_policy")

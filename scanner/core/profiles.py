@@ -20,7 +20,7 @@ class Profile:
     title: str
     description: str
     modules: tuple[str, ...]
-    needs: tuple[str, ...] = ()          # протоколы учёток: ssh | winrm
+    needs: tuple[str, ...] = ()          # протоколы учёток: ssh | winrm | netssh | snmp
 
 
 PROFILES: dict[str, Profile] = {p.id: p for p in (
@@ -35,6 +35,13 @@ PROFILES: dict[str, Profile] = {p.id: p for p in (
             "установленные обновления и ПО по WinRM (MSRC, CVE/БДУ ФСТЭК). Нужна "
             "WinRM-учётка.",
             ("discovery", "vuln", "win_inventory"), ("winrm",)),
+    Profile("network_devices", "Сетевое оборудование",
+            "Коммутаторы, маршрутизаторы и межсетевые экраны (Cisco, Juniper, MikroTik, "
+            "Huawei, Eltex): версия ОС устройства → CVE/БДУ ФСТЭК и аудит конфигурации "
+            "(Telnet/HTTP, SNMP, пароли, AAA, журналы, NTP). Нужна учётка сетевого "
+            "устройства: SSH только на просмотр (версия и конфигурация) или SNMP "
+            "(только версия).",
+            ("discovery", "netdev_audit"), ("netssh",)),
     Profile("network", "Только сетевая проверка",
             "Обнаружение и проверка без учётной записи: шаблоны Nuclei и версии из "
             "баннеров. Бэкпорты дистрибутивов не учитываются — находки по баннерам "
@@ -46,7 +53,15 @@ PROFILES: dict[str, Profile] = {p.id: p for p in (
 )}
 
 # Что модуль НЕ проверит без учётки/как ограничен — для предупреждений до запуска.
-_NEEDS = {"auth_inventory": "ssh", "config_audit": "ssh", "win_inventory": "winrm"}
+_NEEDS = {"auth_inventory": "ssh", "config_audit": "ssh", "win_inventory": "winrm",
+          "netdev_audit": "netdev"}
+# «netdev» — любая учётка сетевого оборудования: SSH-CLI или SNMP.
+_NETDEV = frozenset({"netssh", "snmp"})
+_NEED_LABEL = {"ssh": "SSH", "winrm": "WinRM", "netdev": "сетевого оборудования (SSH/SNMP)"}
+
+
+def _has(need: str, protocols: set[str]) -> bool:
+    return bool(protocols & _NETDEV) if need == "netdev" else need in protocols
 
 
 @dataclass(slots=True)
@@ -97,13 +112,14 @@ def plan_modules(requested: Iterable[str], *, protocols: set[str],
     keep = []
     for name in req:
         need = _NEEDS.get(name)
-        if need and need not in protocols and name in auto and (
-                (need == "winrm" and "ssh" in protocols)
-                or (need == "ssh" and "winrm" in protocols)):
+        if need and not _has(need, protocols) and name in auto and (
+                protocols - ({need} if need != "netdev" else _NETDEV)):
             plan.removed.append(PlannedModule(
                 name, MODULE_TITLES.get(name, name),
                 note=("нет учётки WinRM — Windows-хосты этим модулем не проверяются"
                       if need == "winrm" else
+                      "нет учётки сетевого оборудования — коммутаторы и маршрутизаторы "
+                      "этим модулем не проверяются" if need == "netdev" else
                       "нет SSH-учётки — Linux-хосты этим модулем не проверяются")))
             continue
         keep.append(name)
@@ -112,15 +128,15 @@ def plan_modules(requested: Iterable[str], *, protocols: set[str],
     for name in final:
         need = _NEEDS.get(name)
         note = None
-        if need and need not in protocols:
-            note = (f"нет учётки {'SSH' if need == 'ssh' else 'WinRM'} — модуль не "
+        if need and not _has(need, protocols):
+            note = (f"нет учётки {_NEED_LABEL[need]} — модуль не "
                     "сможет войти на хосты, проверка будет неполной")
             plan.warnings.append(f"{MODULE_TITLES.get(name, name)}: {note}")
         plan.modules.append(PlannedModule(name, MODULE_TITLES.get(name, name),
                                           added_as_companion=name in companions
                                           and name not in req, note=note))
     names = set(final)
-    if "vuln" in names and not names & {"auth_inventory", "win_inventory"}:
+    if "vuln" in names and not names & {"auth_inventory", "win_inventory", "netdev_audit"}:
         plan.warnings.append("Нет проверки по учётной записи: уязвимости определяются только "
                              "по сети (Nuclei, баннеры) — бэкпорты дистрибутивов не "
                              "учитываются, пакеты и конфигурация не проверяются.")
@@ -136,5 +152,6 @@ def plan_modules(requested: Iterable[str], *, protocols: set[str],
     plan.full_check = (
         {"discovery", "vuln"} <= names
         and (({"auth_inventory", "config_audit"} <= names and "ssh" in protocols)
-             or ("win_inventory" in names and "winrm" in protocols)))
+             or ("win_inventory" in names and "winrm" in protocols)
+             or ("netdev_audit" in names and bool(protocols & _NETDEV))))
     return plan

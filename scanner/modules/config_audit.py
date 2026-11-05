@@ -660,6 +660,9 @@ def parse_lynis_report(text: str, host: str, module: str = "config_audit",
         if solution and solution not in e["solutions"]:
             e["solutions"].append(solution)
 
+    if not meta and not entries and not executed:
+        # Пустой/обрезанный report.dat: Lynis не отработал — это не «нарушений нет».
+        raise ConfigAuditError("lynis: пустой отчёт report.dat — аудит не выполнен")
     findings: list[Finding] = []
     remediations: dict[str, str] = {}
     for test_id, e in entries.items():
@@ -1078,6 +1081,10 @@ class ConfigAuditModule(ScanModule):
             plan = self.plan(os, sess.pre.tools)
             policy_files = self._collect_policy(ctx, host, sess)
             findings: list[Finding] = []
+            if not plan.backends:
+                ctx.coverage.mark(host, MODULE, cv.ERROR,
+                                  ("ни один бэкенд аудита конфигурации не применим: "
+                                   + "; ".join(plan.notes))[:300])
             for backend in plan.backends:
                 findings += self._run_backend(ctx, host, sess, plan, backend)
             return [self._summary(host, sess, plan, os, findings, policy_files), *findings]
@@ -1116,6 +1123,10 @@ class ConfigAuditModule(ScanModule):
                 if ctx.host_family(host) == "windows":
                     ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
                                       "хост Windows — аудит конфигурации Linux неприменим")
+                elif ctx.host_family(host) == "network":
+                    ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
+                                      "сетевое устройство — проверяется модулем "
+                                      "«Сетевое оборудование»")
                 else:
                     ctx.coverage.mark(host, MODULE, cv.NO_CREDENTIALS,
                                       "нет SSH-учётки для хоста — конфигурация не "

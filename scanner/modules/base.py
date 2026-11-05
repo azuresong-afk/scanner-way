@@ -61,7 +61,10 @@ class ScanContext:
 
     def host_family(self, host: str) -> str | None:
         """Семейство ОС хоста (scanner.core.osfamily) по данным прогона."""
-        if host in self.inventory:
+        inv = self.inventory.get(host)
+        if inv is not None:
+            if inv.os_id in ("windows", "network"):
+                return inv.os_id   # WinRM / сетевое устройство (netdev_audit)
             return "linux"         # вход по SSH и пакеты dpkg/rpm/apk
         h = self.hosts.get(host)
         return h.family if h else None

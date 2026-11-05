@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -99,7 +100,7 @@ def run_plan(session: Session, engagement_id: int, body: RunCreate, runs: RunSer
         modules = [m for m in prof.modules if m in runs.registry]
         auto = set(modules)
     else:
-        modules = with_engine(body.modules, body.vuln_engine)
+        modules = with_engine(body.modules, body.vuln_engine, runs.registry)
         auto = set(VULN_ENGINES[body.vuln_engine]) if body.vuln_engine else set()
     wanted = set(body.credential_ids)
     protocols = {r.protocol or "ssh" for r in repo.list_host_credentials(session, engagement_id)
@@ -194,13 +195,19 @@ def check_targets(engagement_id: int, targets: list[str], *, user: Principal,
     return plan, denied
 
 
-def with_engine(modules: list[str], engine: str | None) -> list[str]:
-    """Модули прогона с учётом выбранного движка поиска уязвимостей."""
+def with_engine(modules: list[str], engine: str | None,
+                known: Iterable[str] | None = None) -> list[str]:
+    """Модули прогона с учётом выбранного движка поиска уязвимостей.
+
+    known — реестр модулей: модуль движка вне реестра (сборка без модуля
+    сетевого оборудования и т. п.) не добавляется."""
     if engine is None:
         return list(modules)
     engine_modules = {m for ms in VULN_ENGINES.values() for m in ms}
+    allowed = None if known is None else set(known)
     return order_modules([*(m for m in modules if m not in engine_modules),
-                          *VULN_ENGINES[engine]])
+                          *(m for m in VULN_ENGINES[engine]
+                            if allowed is None or m in allowed)])
 
 
 @router.get("/engagements/{engagement_id}/runs", response_model=list[RunOut])

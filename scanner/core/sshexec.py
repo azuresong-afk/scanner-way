@@ -257,6 +257,20 @@ class ParamikoShell:
         finally:
             sftp.close()
 
+    @property
+    def client(self):
+        """paramiko.SSHClient сессии — для интерактивного CLI сетевых устройств
+        (`core.netexec`), где нет обычной оболочки с exec."""
+        return self._client
+
+    @property
+    def remote_banner(self) -> str:
+        """Баннер SSH-сервера цели (``SSH-2.0-ROSSSH``, ``SSH-2.0-Cisco-1.25``)."""
+        try:
+            return str(self._client.get_transport().remote_version or "")
+        except Exception:  # noqa: BLE001 — баннер лишь подсказка
+            return ""
+
     def close(self) -> None:
         self._client.close()
 

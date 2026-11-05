@@ -57,3 +57,52 @@ it("заводит учётку WinRM с доменом и портом по у�
   const sent = JSON.parse(String(api.calls.find((c) => c.init?.method === "POST")!.init!.body));
   expect(sent).toMatchObject({ protocol: "winrm", domain: "CORP", auth: "password", port: 5986, become: "none" });
 });
+
+it("заводит учётку сетевого устройства (SSH) с платформой и показывает её в таблице", async () => {
+  const NET = { ...ROW, id: 6, name: "Коммутаторы", protocol: "netssh", options: { platform: "cisco_ios" } };
+  const api = mockApi({
+    "GET /engagements/7/credentials": [NET],
+    "POST /engagements/7/credentials": NET,
+  });
+  render(<CredentialsCard engagementId={7} />);
+  const row = (await screen.findByText("Коммутаторы")).closest("tr")!;
+  expect(within(row).getByText("SSH · Cisco IOS")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Добавить/ }));
+  const dlg = await screen.findByRole("dialog");
+  await userEvent.click(within(dlg).getByRole("radio", { name: /Сетевое устройство/ }));
+  expect(within(dlg).queryByRole("radio", { name: /sudo/ })).toBeNull();   // без повышения прав
+  await userEvent.type(within(dlg).getByLabelText("Название"), "Коммутаторы");
+  await userEvent.type(within(dlg).getByLabelText("Логин на устройстве"), "audit");
+  await userEvent.selectOptions(within(dlg).getByLabelText(/Платформа устройства/), "junos");
+  await userEvent.type(within(dlg).getByLabelText("Пароль", { selector: "input[type=password]" }), "net-pass");
+  await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(api.calls.some((c) => c.init?.method === "POST")).toBe(true));
+  const sent = JSON.parse(String(api.calls.find((c) => c.init?.method === "POST")!.init!.body));
+  expect(sent).toMatchObject({ protocol: "netssh", platform: "junos", auth: "password", port: 22, become: "none" });
+});
+
+it("SNMPv3: ключи auth и priv, порт 161; v2c — только community", async () => {
+  const api = mockApi({
+    "GET /engagements/7/credentials": [],
+    "POST /engagements/7/credentials": { ...ROW, id: 7, protocol: "snmp", port: 161 },
+  });
+  render(<CredentialsCard engagementId={7} />);
+  await userEvent.click(screen.getByRole("button", { name: /Добавить/ }));
+  const dlg = await screen.findByRole("dialog");
+  await userEvent.click(within(dlg).getByRole("radio", { name: /^SNMP/ }));
+  expect((within(dlg).getByLabelText("Порт SNMP (UDP)") as HTMLInputElement).value).toBe("161");
+  await userEvent.type(within(dlg).getByLabelText("Название"), "SNMP ядро");
+  await userEvent.type(within(dlg).getByLabelText("Пользователь SNMPv3"), "nms");
+  await userEvent.type(within(dlg).getByLabelText(/Ключ аутентификации/), "authkey123");
+  const save = screen.getByRole("button", { name: "Сохранить" });
+  expect(save).toBeDisabled();                                   // нет ключа priv
+  await userEvent.type(within(dlg).getByLabelText(/Ключ шифрования/), "privkey123");
+  await waitFor(() => expect(save).toBeEnabled());
+  await userEvent.click(save);
+  await waitFor(() => expect(api.calls.some((c) => c.init?.method === "POST")).toBe(true));
+  const sent = JSON.parse(String(api.calls.find((c) => c.init?.method === "POST")!.init!.body));
+  expect(sent).toMatchObject({
+    protocol: "snmp", snmp_version: "3", snmp_auth_proto: "sha", snmp_priv_proto: "aes",
+    username: "nms", password: "authkey123", passphrase: "privkey123", port: 161,
+  });
+});

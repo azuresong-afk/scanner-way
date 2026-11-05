@@ -153,7 +153,7 @@ describe("модуль cred_audit в форме запуска", () => {
     await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")).toBe(true));
     const call = api.calls.find((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")!;
     const sent = JSON.parse(String(call.init!.body));
-    expect(sent.modules).toEqual(["discovery", "auth_inventory", "win_inventory"]);
+    expect(sent.modules).toEqual(["discovery", "auth_inventory", "win_inventory", "netdev_audit"]);
     expect(sent.credential_ids).toEqual([5]);
   });
 

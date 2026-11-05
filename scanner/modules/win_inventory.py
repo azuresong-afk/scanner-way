@@ -401,7 +401,7 @@ class WinInventoryModule(ScanModule):
             ctx.audit.record(subject="scanner", action="win_inventory_msrc", target=host,
                              result="error", details=f"{type(e).__name__}: {e}"[:300])
             return Assessment(None, no_data=True, reason="ошибка справочника MSRC"), []
-        findings = [self._gap_finding(host, inv.os, a.product, g) for g in a.gaps]
+        findings = [self._gap_finding(host, inv.os, a.product, g, ctx) for g in a.gaps]
         ctx.audit.record(subject="scanner", action="win_inventory_msrc", target=host,
                          result="no_data" if a.no_data else "ok",
                          details={"product": a.product, "gaps": len(a.gaps),
@@ -409,7 +409,7 @@ class WinInventoryModule(ScanModule):
         return a, findings
 
     def _gap_finding(self, host: str, os: WindowsOs, product: str | None,
-                     gap: KbGap) -> Finding:
+                     gap: KbGap, ctx: ScanContext | None = None) -> Finding:
         msrc_sev = _MSRC_SEVERITY.get((gap.severity or "").lower())
         cvss_sev = severity_from_cvss(gap.cvss)
         # Нет ни severity бюллетеня, ни CVSS — отсутствующее обновление всё равно
@@ -433,8 +433,11 @@ class WinInventoryModule(ScanModule):
         if self._matcher is not None:          # связать с БДУ ФСТЭК по CVE
             try:
                 self._matcher.enrich(f)
-            except Exception:
+            except Exception as e:
                 log.warning("БДУ: не удалось обогатить находку %s", f.vuln_id, exc_info=True)
+                if ctx is not None:
+                    ctx.coverage.mark(host, MODULE, cv.ERROR, cv.match_failed(
+                        f"привязка {gap.cve_id} к БДУ ФСТЭК", e))
         evidence = [f"Продукт MSRC: {product or '—'}",
                     f"ОС хоста: {os.label}" + (f" ({os.version})" if os.version else "")]
         if gap.fix_kbs:
@@ -464,6 +467,8 @@ class WinInventoryModule(ScanModule):
                                  target=host, result="error",
                                  details={"software": sw.name,
                                           "error": f"{type(e).__name__}: {e}"[:300]})
+                ctx.coverage.mark(host, MODULE, cv.ERROR, cv.match_failed(
+                    f"сопоставление ПО {sw.name} {sw.version} с БДУ", e))
                 continue
             if found:
                 matched += 1
@@ -559,6 +564,7 @@ class WinInventoryModule(ScanModule):
             collected = list(pool.map(lambda j: (j, self._collect(ctx, throttle, *j)), jobs))
 
         matcher = self._run_matcher()
+        ref_gap = cv.reference_gap(matcher)
         store = self._resolve_msrc_store()
         findings: list[Finding] = []
         for (host, _creds), (inv, cred, notes) in collected:
@@ -576,8 +582,17 @@ class WinInventoryModule(ScanModule):
                 os_findings = []
                 ctx.audit.record(subject="scanner", action="win_inventory_msrc",
                                  target=host, result="no_store")
+            if a.no_data:
+                # Обновления Windows не сверены (нет справочника MSRC, продукт не
+                # распознан, ошибка справочника): «не хватает 0» было бы ложью.
+                ctx.coverage.mark(host, MODULE, cv.ERROR,
+                                  f"обновления Windows не проверены: {a.reason or 'нет данных MSRC'}"
+                                  [:300])
+            if ref_gap is not None and any(sw.version and sw.version != "—"
+                                           for sw in inv.software):
+                ctx.coverage.mark(host, MODULE, cv.ERROR, f"ПО: {ref_gap}")
             sw_findings = (self._match_software(ctx, host, inv.software, matcher)
-                           if matcher is not None else [])
+                           if matcher is not None and ref_gap is None else [])
             findings.append(self._summary(host, inv, cred, a, len(sw_findings)))
             if inv.policy:
                 record_fact(ctx.compliance_facts, host, "windows_policy", dict(inv.policy))

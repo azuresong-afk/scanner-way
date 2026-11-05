@@ -44,7 +44,7 @@ _SEV_RANK = {Severity.INFO: 0, Severity.LOW: 1, Severity.MEDIUM: 2, Severity.HIG
              Severity.CRITICAL: 4}
 # Модуль находок -> факт «хост проверен этим модулем».
 _VULN_COVERAGE = {"vuln": "network_vuln", "auth_inventory": "linux_inventory",
-                  "win_inventory": "windows"}
+                  "win_inventory": "windows", "netdev_audit": "netdev"}
 _MAX_ITEMS = 20          # нарушений в доказательствах одной проверки
 
 
@@ -211,10 +211,27 @@ def _src_cred(check: Check, d: _HostData) -> tuple[bool, list[dict], str | None]
     return True, [_finding_item(f) for f in creds], "проверка учётных данных по наборам оператора"
 
 
+def _src_netdev(check: Check, d: _HostData) -> tuple[bool, list[dict], str | None]:
+    nd = d.facts.get("netdev") or {}
+    rules: dict[str, str] = nd.get("rules") or {}
+    evaluated = {r: rules[r] for r in check.netdev if rules.get(r) in ("pass", "fail")}
+    if not evaluated:
+        return False, [], None
+    ids = {f"NETDEV:{r}" for r, st in evaluated.items() if st == "fail"}
+    failed = [_finding_item(f) for f in d.findings
+              if f.module == "netdev_audit" and f.vuln_id in ids]
+    shown = {f["vuln_id"] for f in failed}
+    failed += [{"kind": "fact", "title": f"сетевое устройство: правило {i} — нарушено"}
+               for i in sorted(ids - shown)]
+    return True, failed, (f"сетевое устройство ({nd.get('platform') or '—'}): "
+                          + ", ".join(f"{r} — {st}" for r, st in sorted(evaluated.items())))
+
+
 _SOURCES = (
     ("openscap", _src_openscap), ("lynis", _src_lynis),
     ("password_policy", _src_password_policy), ("windows", _src_windows),
     ("vulns", _src_vulns), ("services", _src_services), ("cred_audit", _src_cred),
+    ("netdev", _src_netdev),
 )
 
 

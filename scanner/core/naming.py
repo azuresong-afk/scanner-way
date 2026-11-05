@@ -15,12 +15,14 @@ _PARTS: tuple[tuple[str, str], ...] = (
     ("discovery", "обнаружение"),
     ("vuln", "Nuclei"),
     ("auth_inventory", "учётная запись"),
+    ("netdev_audit", "сетевое оборудование"),
     ("config_audit", "конфигурации"),
     ("cred_audit", "пароли"),
 )
 # Единственный модуль — подпись полнее, иначе «Учётная запись · …» непонятно.
 _ALONE = {"auth_inventory": "по учётной записи", "config_audit": "аудит конфигураций",
-          "cred_audit": "аудит паролей", "discovery": "инвентаризация"}
+          "cred_audit": "аудит паролей", "discovery": "инвентаризация",
+          "netdev_audit": "сетевое оборудование"}
 
 # Понятные названия модулей (покрытие прогона, предупреждения, состав проверки).
 MODULE_TITLES: dict[str, str] = {
@@ -28,6 +30,7 @@ MODULE_TITLES: dict[str, str] = {
     "vuln": "сетевая проверка уязвимостей (Nuclei, баннеры)",
     "auth_inventory": "пакеты Linux по SSH (CVE/БДУ, бюллетени)",
     "win_inventory": "обновления и ПО Windows по WinRM",
+    "netdev_audit": "сетевое оборудование по SSH/SNMP (версия → CVE/БДУ, конфигурация)",
     "config_audit": "аудит конфигурации (OpenSCAP, Lynis)",
     "password_policy": "парольная политика",
     "cred_audit": "проверка стойкости паролей",

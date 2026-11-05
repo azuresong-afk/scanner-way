@@ -83,6 +83,7 @@ export const MODULE_LABEL: Record<string, string> = {
   // как и auth_inventory — проверка пакетов по бюллетеням вендора по той же учётке.
   password_policy: "Парольная политика",
   win_inventory: "Windows по WinRM",
+  netdev_audit: "Сетевое оборудование",
 };
 
 /** Статус проверки модуля на хосте (scanner.core.coverage). */
@@ -128,13 +129,14 @@ export const SOURCE_LABEL: Record<string, string> = {
   cred_audit: "аудит паролей",
   discovery: "обнаружение",
   windows: "инвентаризация Windows",
+  vendor_version: "версия ОС устройства",
 };
 
 /** Модули поиска уязвимостей — выбираются движком, а не флажками. */
 export const ENGINE_MODULES = ["vuln", "auth_inventory"];
 
 /** Модули, которые входят на хосты по учётным записям договора (CREDENTIAL_MODULES на бэкенде). */
-export const CREDENTIAL_MODULES = ["auth_inventory", "config_audit"];
+export const CREDENTIAL_MODULES = ["auth_inventory", "netdev_audit", "config_audit"];
 
 export interface EngineInfo {
   id: VulnEngine | "none";
@@ -151,15 +153,15 @@ export const VULN_ENGINES: EngineInfo[] = [
   {
     id: "credentialed",
     label: "По учётной записи",
-    description: "Linux по SSH (пакеты) и Windows по WinRM (обновления, ПО) → БДУ/CVE",
-    modules: ["auth_inventory", "win_inventory"],
+    description: "Linux по SSH (пакеты), Windows по WinRM (обновления, ПО) и сетевое оборудование (версия, конфигурация) → БДУ/CVE",
+    modules: ["auth_inventory", "win_inventory", "netdev_audit"],
     credentials: true,
   },
   {
     id: "both",
     label: "Оба движка",
-    description: "Nuclei и инвентаризация по учётной записи (Linux и Windows)",
-    modules: ["vuln", "auth_inventory", "win_inventory"],
+    description: "Nuclei и инвентаризация по учётной записи (Linux, Windows, сетевое оборудование)",
+    modules: ["vuln", "auth_inventory", "win_inventory", "netdev_audit"],
     credentials: true,
   },
   { id: "none", label: "Не искать", description: "Только выбранные ниже модули", modules: [], credentials: false },
@@ -170,6 +172,7 @@ export const MODULE_SHORT: Record<string, string> = {
   vuln: "Уязвимости (Nuclei)",
   auth_inventory: "Уязвимости (учётка)",
   win_inventory: "Windows (WinRM)",
+  netdev_audit: "Сетевое оборудование",
   config_audit: "Конфигурации",
   password_policy: "Парольная политика",
   cred_audit: "Учётные данные",
@@ -183,6 +186,7 @@ const TITLE_PARTS: [string, string][] = [
   ["discovery", "обнаружение"],
   ["vuln", "Nuclei"],
   ["auth_inventory", "учётная запись"],
+  ["netdev_audit", "сетевое оборудование"],
   ["config_audit", "конфигурации"],
   ["cred_audit", "пароли"],
 ];
@@ -191,6 +195,7 @@ const TITLE_ALONE: Record<string, string> = {
   config_audit: "аудит конфигураций",
   cred_audit: "аудит паролей",
   discovery: "инвентаризация",
+  netdev_audit: "сетевое оборудование",
 };
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -335,10 +340,10 @@ export function nothingChecked(summary: FindingsSummary | null | undefined): boo
 /** Движок и модули-флажки по готовому профилю проверки. */
 export function applyProfile(p: RunProfile): { engine: EngineInfo["id"]; modules: string[] } {
   const v = p.modules.includes("vuln");
-  const a = p.modules.includes("auth_inventory") || p.modules.includes("win_inventory");
+  const a = ["auth_inventory", "win_inventory", "netdev_audit"].some((m) => p.modules.includes(m));
   return {
     engine: v && a ? "both" : v ? "nuclei" : a ? "credentialed" : "none",
-    modules: p.modules.filter((m) => !["vuln", "auth_inventory", "win_inventory"].includes(m)),
+    modules: p.modules.filter((m) => !["vuln", "auth_inventory", "win_inventory", "netdev_audit"].includes(m)),
   };
 }
 
