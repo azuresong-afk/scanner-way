@@ -104,6 +104,10 @@ class InMemoryReferenceStore:
     def bdu_software_names(self) -> set[str]:
         return {n for n, ids in self._bdu_by_soft.items() if ids}
 
+    def counts(self) -> dict[str, int]:
+        """Число записей справочников: {"bdu": …, "nvd": …}."""
+        return {"bdu": len(self.bdu), "nvd": len(self.nvd)}
+
 
 # ---------- SQL (PostgreSQL / SQLite) ----------
 
@@ -267,6 +271,16 @@ class SqlReferenceStore:
             store.create_schema()
         return store
 
+    def counts(self) -> dict[str, int]:
+        """Число записей справочников: {"bdu": …, "nvd": …} (пустой справочник =
+        сопоставление ничего не найдёт, и это не «чисто»)."""
+        from sqlalchemy import func, select
+        with self.engine.connect() as conn:
+            return {"bdu": int(conn.execute(select(func.count()).select_from(bdu_entry))
+                               .scalar() or 0),
+                    "nvd": int(conn.execute(select(func.count()).select_from(nvd_cve))
+                               .scalar() or 0)}
+
     def create_schema(self) -> None:
         """Создаёт таблицы справочников, если их нет (в проде — миграции)."""
         tables = [nvd_cve, nvd_cpe_match, bdu_entry]
@@ -404,6 +418,22 @@ class SqlReferenceStore:
         return names
 
 
+class UnavailableReferenceStore:
+    """Справочник, который не удалось открыть: любое обращение — ошибка.
+
+    Вместо «matcher не подключён» (тихо — ноль уязвимостей) модули получают
+    ошибку сопоставления и отмечают хосты пробелом покрытия."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+
+    def _fail(self, *_a, **_kw):
+        raise RuntimeError(f"справочники недоступны: {self.reason}")
+
+    counts = get_nvd = get_bdu = bdu_by_cve = cpe_matches = _fail
+    bdu_by_software = bdu_software_names = upsert_bdu = upsert_nvd = _fail
+
+
 # ---------- Кэш на время прогона ----------
 
 class CachingReferenceStore:
@@ -447,6 +477,9 @@ class CachingReferenceStore:
 
     def bdu_by_software(self, name: str) -> list[BduRecord]:
         return self._get("bdu_by_software", name)
+
+    def counts(self) -> dict[str, int]:
+        return self.store.counts()  # type: ignore[attr-defined]
 
     def bdu_software_names(self) -> set[str]:
         with self._lock:

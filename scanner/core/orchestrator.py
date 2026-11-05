@@ -760,9 +760,11 @@ class RunService:
             try:
                 from scanner.feeds.store import SqlReferenceStore
                 store = SqlReferenceStore(engine)
-            except Exception:
+            except Exception as e:
                 log.exception("cannot build reference store; vuln findings won't be enriched")
-                return None
+                # не None: модули отметят хосты пробелом покрытия, а не «чисто»
+                from scanner.feeds.store import UnavailableReferenceStore
+                store = UnavailableReferenceStore(f"{type(e).__name__}: {e}"[:200])
         from scanner.feeds.matcher import VulnMatcher
         return VulnMatcher(store)
 

@@ -30,6 +30,7 @@ import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Self
 from urllib.parse import urlsplit
 
 from scanner.core import coverage as cv
@@ -75,6 +76,45 @@ def mark_banner(f: Finding, service: ServiceInfo) -> None:
     note = BANNER_NOTE + (f" Баннер «{banner}» указывает на сборку дистрибутива — "
                           "вероятность бэкпорта высокая." if distro else "")
     f.evidence = f"{f.evidence}\n{note}" if f.evidence else note
+
+
+class NucleiOutput(str):
+    """stdout Nuclei (JSONL) + его stderr: по stderr видно, какие хосты Nuclei
+    молча исключил из проверки и сколько шаблонов загрузил."""
+
+    stderr: str = ""
+
+    def __new__(cls, stdout: str, stderr: str = "") -> Self:
+        obj = super().__new__(cls, stdout)
+        obj.stderr = stderr or ""
+        return obj
+
+
+# Nuclei исключает хост после серии ошибок соединения (-max-host-error, по
+# умолчанию 30) и пишет об этом только в лог: без разбора такой хост выглядел
+# бы проверенным и «чистым».
+_SKIPPED_RE = re.compile(r"Skipped (\S+) from target list as found unresponsive",
+                         re.IGNORECASE)
+_TEMPLATES_RE = re.compile(r"Templates loaded for (?:current )?scan:\s*(\d+)", re.IGNORECASE)
+_NO_TEMPLATES_RE = re.compile(r"no templates (?:provided|were loaded|found)", re.IGNORECASE)
+
+
+def nuclei_skipped_hosts(stderr: str) -> list[str]:
+    """Хосты, которые Nuclei исключил из проверки как неотвечающие."""
+    out: list[str] = []
+    for m in _SKIPPED_RE.finditer(stderr or ""):
+        h = _input_host(m.group(1).strip("'\"").rstrip(".,"))
+        if h not in out:
+            out.append(h)
+    return out
+
+
+def nuclei_no_templates(stderr: str) -> bool:
+    """Nuclei отработал без единого шаблона — сетевые проверки не выполнялись."""
+    if _NO_TEMPLATES_RE.search(stderr or ""):
+        return True
+    counts = [int(x) for x in _TEMPLATES_RE.findall(stderr or "")]
+    return bool(counts) and max(counts) == 0
 
 
 class VulnScanError(RuntimeError):
@@ -194,7 +234,8 @@ def build_nuclei_command(rate: RateProfile, opts: VulnOptions) -> list[str]:
     cmd = [
         opts.nuclei_path,
         "-jsonl",                  # структурированный вывод в stdout
-        "-silent",                 # без баннера/прогресса в stdout
+        # Без -silent: лог Nuclei (stderr) нужен, чтобы увидеть исключённые
+        # хосты и пустой набор шаблонов; в stdout по-прежнему только JSONL.
         "-no-color",
         "-disable-update-check",   # никаких сетевых вызовов помимо сканирования
         "-rate-limit", str(max(1, int(rate.max_requests_per_sec))),
@@ -243,8 +284,8 @@ def _subprocess_runner(cmd: list[str], targets: str, timeout: float) -> str:
             raise VulnScanTimeout(timeout, out) from e
     # Nuclei отдаёт rc=0 даже когда ничего не найдено; ненулевой — ошибка запуска.
     if proc.returncode != 0:
-        raise VulnScanError(f"nuclei rc={proc.returncode}: {proc.stderr.strip()[:500]}")
-    return proc.stdout
+        raise VulnScanError(f"nuclei rc={proc.returncode}: {proc.stderr.strip()[-500:]}")
+    return NucleiOutput(proc.stdout, proc.stderr)
 
 
 def _collect_cves(info: dict, classification: dict) -> list[str]:
@@ -404,6 +445,8 @@ class VulnModule(ScanModule):
         cmd = build_nuclei_command(ctx.rate, opts)
         findings: list[Finding] = []
         step = max(1, opts.batch_size)
+        n_batches = (len(inputs) + step - 1) // step
+        failed: list[BaseException] = []
         for i in range(0, len(inputs), step):
             batch = inputs[i:i + step]
             targets = "\n".join(batch) + "\n"
@@ -411,8 +454,14 @@ class VulnModule(ScanModule):
                              target=f"{len(batch)} targets", result="started",
                              details=shlex.join(cmd))
             timeout = nuclei_timeout(ctx.rate, len(batch), opts)
+            batch_hosts = list(dict.fromkeys(_input_host(line) for line in batch))
             try:
                 output = self._runner(cmd, targets, timeout)
+                stderr = getattr(output, "stderr", "")
+                if nuclei_no_templates(stderr):
+                    raise VulnScanError("Nuclei не загрузил ни одного шаблона — сетевые "
+                                        "проверки не выполнялись (обновите шаблоны в "
+                                        "«Справочниках»)")
                 batch_findings = parse_nuclei_jsonl(output, self.name)
             except VulnScanTimeout as e:
                 # Частичный результат лучше никакого: сохраняем найденное и
@@ -437,10 +486,37 @@ class VulnModule(ScanModule):
                 ctx.audit.record(subject="scanner", action="nuclei_exec",
                                  target=f"{len(batch)} targets", result="error",
                                  details=str(e)[:500])
-                raise VulnScanError(str(e)) from e
+                failed.append(e)
+                if len(failed) == n_batches:
+                    # не отработала ни одна пачка — ошибка модуля целиком
+                    raise VulnScanError(str(e)) from e
+                # Упала одна пачка: находки остальных пачек сохраняем, а хосты
+                # этой — пробел покрытия (не «проверено, уязвимостей нет»).
+                for host in batch_hosts:
+                    ctx.coverage.mark(host, self.name, cv.ERROR,
+                                      f"Nuclei: {e}"[:300])
+                    findings.append(Finding(
+                        module=self.name, host=host, finding_type=FindingType.INFO,
+                        title="Поиск уязвимостей не выполнен — ошибка Nuclei",
+                        severity=Severity.INFO, vuln_id="INFO:vuln-scan-error",
+                        evidence=str(e)[:500]))
+                continue
+            skipped = nuclei_skipped_hosts(stderr)
+            for host in skipped:
+                ctx.coverage.mark(host, self.name, cv.ERROR,
+                                  "Nuclei исключил хост из проверки после серии ошибок "
+                                  "соединения — проверка не завершена")
+                findings.append(Finding(
+                    module=self.name, host=host, finding_type=FindingType.INFO,
+                    title="Поиск уязвимостей прерван: хост перестал отвечать",
+                    severity=Severity.INFO, vuln_id="INFO:vuln-host-skipped",
+                    evidence="Nuclei исключил хост после серии ошибок соединения "
+                             "(max-host-error): часть шаблонов не проверена. Проверьте "
+                             "доступность хоста и повторите прогон с профилем ниже."))
             ctx.audit.record(subject="scanner", action="nuclei_exec",
                              target=f"{len(batch)} targets", result="ok",
-                             details=f"findings={len(batch_findings)}")
+                             details=f"findings={len(batch_findings)}"
+                                     + (f"; skipped={','.join(skipped)}" if skipped else ""))
             findings.extend(self._enrich(batch_findings))
         findings.extend(self._banner_findings(ctx, findings))
         # Nuclei отдаёт по строке на каждый сработавший matcher/URL шаблона;
@@ -461,6 +537,15 @@ class VulnModule(ScanModule):
         services = [s for s in ctx.services or [] if s.product and s.version]
         if by_service is None or not services:
             return []
+        gap = cv.reference_gap(self._matcher)
+        if gap is not None:
+            # версии сервисов есть, а сопоставлять их не с чем: не «чисто»
+            for h in dict.fromkeys(s.host for s in services):
+                ctx.coverage.mark(h, self.name, cv.ERROR, f"по версиям сервисов: {gap}")
+            ctx.audit.record(subject="scanner", action="banner_match",
+                             target=f"{len(services)} services", result="no_reference",
+                             details=gap)
+            return []
 
         def idents(f: Finding) -> set[str]:
             return {i.upper() for i in (f.vuln_id, *f.cve_ids, *f.bdu_ids) if i}
@@ -476,6 +561,8 @@ class VulnModule(ScanModule):
                 ctx.audit.record(subject="scanner", action="banner_match",
                                  target=f"{s.host}:{s.port}", result="error",
                                  details=f"{type(e).__name__}: {e}"[:500])
+                ctx.coverage.mark(s.host, self.name, cv.ERROR, cv.match_failed(
+                    f"сопоставление версии {s.product} {s.version} с БДУ/NVD", e))
                 continue
             known = seen.setdefault((s.host, s.port), set())
             for f in matched:
