@@ -144,6 +144,29 @@ def test_create_winrm_credential(api):
     assert bad.status_code == 422
 
 
+def test_create_db_credentials(api):
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    r = _cred(api, eid, holder, name="PG ДМЗ", username="scan_ro", protocol="postgresql",
+              targets=["10.0.0.20"])
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["protocol"] == "postgresql" and body["port"] == 5432
+    assert body["db_name"] == "postgres" and body["become"] == "none"
+    assert HOST_PASSWORD not in r.text
+    r = _cred(api, eid, holder, name="ERP", username="C##SCAN", protocol="oracle",
+              db_name="ERPPDB")
+    assert r.status_code == 201, r.text
+    assert r.json()["port"] == 1521 and r.json()["db_name"] == "ERPPDB"
+    # Oracle без имени сервиса, СУБД по ключу, имя базы с кавычкой — отказ
+    assert _cred(api, eid, holder, name="o", username="x",
+                 protocol="oracle").status_code == 422
+    assert _cred(api, eid, holder, name="k", username="x", protocol="mysql", auth="key",
+                 private_key=make_key(), password=None).status_code == 422
+    assert _cred(api, eid, holder, name="q", username="x", protocol="mssql",
+                 db_name="a'b").status_code == 422
+
+
 def test_create_validates_scope_and_key(api):
     eid = api.engagement("10.0.0.0/24")
     holder = api.user("keeper", "operator", "host_credentials")

@@ -1,10 +1,15 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { KeyRound, Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
-import type { CredentialAuth, CredentialBecome, CredentialOut, CredentialProtocol } from "../api/types";
-
-const DEFAULT_PORT: Record<CredentialProtocol, string> = { ssh: "22", winrm: "5986" };
+import type { CredentialAuth, CredentialBecome, CredentialOut, CredentialProtocol, DbProtocol } from "../api/types";
 import { fmtDate } from "../lib/format";
+import { DB_PROTOCOLS, PROTOCOL_LABEL, isDbProtocol } from "../lib/labels";
+
+const DEFAULT_PORT: Record<CredentialProtocol, string> = {
+  ssh: "22",
+  winrm: "5986",
+  ...(Object.fromEntries(DB_PROTOCOLS.map((d) => [d.id, d.port])) as Record<DbProtocol, string>),
+};
 import { parseTargets } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
 import { Empty, ErrorAlert, Loading, Modal } from "./ui";
@@ -24,8 +29,9 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
         </button>
       </div>
       <p className="muted" style={{ margin: "0 20px 14px", fontSize: 13 }}>
-        Для движка «По учётной записи»: Linux по SSH (пакеты → БДУ ФСТЭК и CVE) и Windows по WinRM (обновления и ПО → KB/CVE и БДУ), а также для
-        аудита конфигураций (CIS, ФСТЭК/ГОСТ — нужен sudo). Пароли и ключи хранятся зашифрованными и никогда не показываются.
+        Для движка «По учётной записи»: Linux по SSH (пакеты → БДУ ФСТЭК и CVE) и Windows по WinRM (обновления и ПО → KB/CVE и БДУ), для
+        аудита конфигураций (CIS, ФСТЭК/ГОСТ — нужен sudo) и для аудита СУБД (учётка СУБД только на чтение). Пароли и ключи хранятся
+        зашифрованными и никогда не показываются.
       </p>
       {list.loading && !list.data ? (
         <Loading />
@@ -60,14 +66,20 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
                     {c.port !== Number(DEFAULT_PORT[c.protocol ?? "ssh"]) ? `:${c.port}` : ""}
                   </td>
                   <td className="muted">
-                    {c.protocol === "winrm" ? "WinRM · пароль" : c.auth === "key" ? "SSH · ключ" : "SSH · пароль"}
+                    {c.protocol === "winrm"
+                      ? "WinRM · пароль"
+                      : isDbProtocol(c.protocol)
+                        ? `${PROTOCOL_LABEL[c.protocol]}${c.db_name ? ` · ${c.db_name}` : ""}`
+                        : c.auth === "key"
+                          ? "SSH · ключ"
+                          : "SSH · пароль"}
                     {c.key_fingerprint && (
                       <div className="mono faint" style={{ fontSize: 11 }} title={c.key_fingerprint}>
                         {c.key_fingerprint.slice(0, 22)}…
                       </div>
                     )}
                   </td>
-                  <td className="muted">{c.become === "none" ? "нет" : "sudo"}</td>
+                  <td className="muted">{c.protocol !== "ssh" ? "—" : c.become === "none" ? "нет" : "sudo"}</td>
                   <td className="mono muted">{c.targets.length ? c.targets.join(", ") : "все цели прогона"}</td>
                   <td className="muted nowrap">{fmtDate(c.created_at)}</td>
                   <td className="right">
@@ -119,23 +131,28 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
   const [passphrase, setPassphrase] = useState("");
   const [scope, setScope] = useState("");
   const [become, setBecome] = useState<CredentialBecome>("sudo");
+  const [dbName, setDbName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isWinrm = protocol === "winrm";
-  // WinRM входит только по паролю (NTLM); при переключении на WinRM возвращаем пароль.
-  const effectiveAuth: CredentialAuth = isWinrm ? "password" : auth;
+  const isDb = isDbProtocol(protocol);
+  const dbInfo = DB_PROTOCOLS.find((d) => d.id === protocol);
+  // WinRM и СУБД входят только по паролю; при переключении на них возвращаем пароль.
+  const effectiveAuth: CredentialAuth = isWinrm || isDb ? "password" : auth;
 
   const switchProtocol = (p: CredentialProtocol) => {
     setProtocol(p);
     if (!portTouched) setPort(DEFAULT_PORT[p]);   // порт по умолчанию, пока его не трогали
+    setDbName(DB_PROTOCOLS.find((d) => d.id === p)?.dbName ?? "");
   };
 
   const parsed = parseTargets(scope);
   const portNum = Number(port);
   const portOk = Number.isInteger(portNum) && portNum > 0 && portNum < 65536;
   const secretOk = effectiveAuth === "password" ? password.length > 0 : key.trim().length > 0;
-  const canSubmit = name.trim() && username.trim() && portOk && secretOk && parsed.invalid.length === 0 && !busy;
+  const dbOk = protocol !== "oracle" || dbName.trim().length > 0;   // Oracle: имя сервиса обязательно
+  const canSubmit = name.trim() && username.trim() && portOk && secretOk && dbOk && parsed.invalid.length === 0 && !busy;
 
   const readKey = async (ev: ChangeEvent<HTMLInputElement>) => {
     const file = ev.target.files?.[0];
@@ -156,10 +173,11 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
         auth: effectiveAuth,
         protocol,
         ...(isWinrm && domain.trim() ? { domain: domain.trim() } : {}),
+        ...(isDb && dbName.trim() ? { db_name: dbName.trim() } : {}),
         ...(effectiveAuth === "password" ? { password } : { private_key: key, passphrase: passphrase || undefined }),
         targets: parsed.targets,
-        // WinRM не повышает права — sudo только для SSH-аудита конфигураций.
-        become: isWinrm ? "none" : become,
+        // WinRM и СУБД не повышают права — sudo только для SSH-аудита конфигураций.
+        become: protocol === "ssh" ? become : "none",
       });
       onDone();
     } catch (err) {
@@ -190,9 +208,9 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
         </label>
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
           <span>Способ входа</span>
-          <div className="grid-2">
+          <div className="grid-3">
             <label className="option-card">
-              <input type="radio" name="protocol" checked={!isWinrm} onChange={() => switchProtocol("ssh")} />
+              <input type="radio" name="protocol" checked={protocol === "ssh"} onChange={() => switchProtocol("ssh")} />
               <span>
                 <b style={{ fontWeight: 500 }}>SSH</b>
                 <small>Linux: пакеты, аудит конфигураций</small>
@@ -205,21 +223,40 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
                 <small>Windows: обновления и ПO (HTTPS, NTLM)</small>
               </span>
             </label>
+            <label className="option-card">
+              <input type="radio" name="protocol" checked={isDb} onChange={() => switchProtocol(isDb ? protocol : "postgresql")} />
+              <span>
+                <b style={{ fontWeight: 500 }}>СУБД</b>
+                <small>Аудит баз данных: версия → CVE/БДУ, конфигурация по CIS</small>
+              </span>
+            </label>
           </div>
         </fieldset>
+        {isDb && (
+          <label className="field">
+            <span>СУБД</span>
+            <select className="input" value={protocol} onChange={(e) => switchProtocol(e.target.value as CredentialProtocol)}>
+              {DB_PROTOCOLS.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.label} ({d.hint})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="inline" style={{ alignItems: "flex-end" }}>
           <label className="field" style={{ flex: "3 1 200px" }}>
-            <span>{isWinrm ? "Логин Windows" : "Логин на хосте"}</span>
+            <span>{isWinrm ? "Логин Windows" : isDb ? "Логин СУБД" : "Логин на хосте"}</span>
             <input
               className="input mono"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder={isWinrm ? "svc_scan" : "audit"}
+              placeholder={isWinrm ? "svc_scan" : isDb ? "scan_ro" : "audit"}
               maxLength={128}
             />
           </label>
           <label className="field" style={{ flex: "1 1 90px" }}>
-            <span>{isWinrm ? "Порт WinRM" : "Порт SSH"}</span>
+            <span>{isWinrm ? "Порт WinRM" : isDb ? "Порт СУБД" : "Порт SSH"}</span>
             <input
               className="input mono"
               value={port}
@@ -238,7 +275,16 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
             <small>Логин будет сохранён как ДОМЕН\user. Пусто — локальная учётная запись хоста.</small>
           </label>
         )}
-        {!isWinrm && (
+        {isDb && dbInfo && (
+          <label className="field">
+            <span>{dbInfo.dbLabel}</span>
+            <input className="input mono" value={dbName} onChange={(e) => setDbName(e.target.value)} placeholder={protocol === "oracle" ? "ORCLPDB1" : dbInfo.dbName} maxLength={128} />
+            <small>
+              Учётке СУБД нужны только права на чтение системных представлений — список прав для каждой СУБД в руководстве администратора.
+            </small>
+          </label>
+        )}
+        {protocol === "ssh" && (
           <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
             <span>Аутентификация</span>
             <div className="grid-2">
@@ -260,7 +306,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
         )}
         {effectiveAuth === "password" ? (
           <label className="field">
-            <span>{isWinrm ? "Пароль Windows" : "Пароль"}</span>
+            <span>{isWinrm ? "Пароль Windows" : isDb ? "Пароль СУБД" : "Пароль"}</span>
             <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
           </label>
         ) : (
@@ -288,7 +334,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
             </label>
           </>
         )}
-        {!isWinrm && (
+        {protocol === "ssh" && (
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
           <span>Повышение прав (для аудита конфигураций)</span>
           <div className="grid-2">

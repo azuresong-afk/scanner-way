@@ -62,8 +62,9 @@
 
 | Поле | Значение |
 |---|---|
-| Способ входа | SSH или WinRM |
-| Логин, порт | порт по умолчанию 22 (SSH) или 5986 (WinRM); для WinRM — домен |
+| Способ входа | SSH, WinRM или СУБД (PostgreSQL / MySQL / MS SQL / Oracle) |
+| Логин, порт | порт по умолчанию 22 (SSH), 5986 (WinRM), 5432 / 3306 / 1433 / 1521 (СУБД); для WinRM — домен |
+| База (СУБД) | база для входа: PostgreSQL — `postgres`, MS SQL — `master`; для Oracle — имя сервиса (обязательно) |
 | Секрет | пароль; для SSH — или закрытый ключ (файлом, с парольной фразой) |
 | Повышение прав (SSH) | `sudo` (по умолчанию) или `none` — для входа сразу под root |
 | Область действия | адреса и подсети из allowlist, к которым подходит учётка; пусто — все цели прогона |
@@ -86,6 +87,27 @@
 | Ключ хоста изменился | ключ SSH или сертификат WinRM отличается от запомненного |
 | Нет учётки | ни одна учётка не покрывает адрес хоста |
 | Частично | из нескольких учёток хоста подошли не все |
+
+**Учётные записи СУБД.** Для аудита СУБД (модуль «Аудит СУБД», профиль
+«Проверка СУБД») заведите у заказчика отдельную учётку СУБД **только на
+чтение** и выдайте ей минимальные права. Без части прав аудит выполняется,
+но зависящие правила получают «не проверено» — в сводке аудита перечислено,
+какого права не хватило.
+
+| СУБД | Учётка и права |
+|---|---|
+| PostgreSQL, Postgres Pro | `CREATE ROLE scan_ro LOGIN PASSWORD '…'; GRANT pg_read_all_settings TO scan_ro;` для проверки `pg_hba.conf` дополнительно `GRANT SELECT ON pg_hba_file_rules TO scan_ro; GRANT EXECUTE ON FUNCTION pg_hba_file_rules() TO scan_ro;` |
+| MySQL, MariaDB | `CREATE USER 'scan_ro'@'<IP сканера>' IDENTIFIED BY '…';` для проверки учётных записей `GRANT SELECT (user, host, plugin, authentication_string) ON mysql.user TO 'scan_ro'@'<IP сканера>';` (MariaDB 10.4+: `GRANT SELECT ON mysql.user …` — это представление) |
+| MS SQL Server | SQL-логин; `GRANT VIEW SERVER STATE TO [scan_ro]; GRANT VIEW ANY DEFINITION TO [scan_ro];` (SQL Server 2022: `VIEW SERVER SECURITY STATE`) |
+| Oracle Database | `CREATE USER scan_ro IDENTIFIED BY "…"; GRANT CREATE SESSION, SELECT_CATALOG_ROLE TO scan_ro;` проверка паролей по умолчанию требует `SELECT ON dba_users_with_defpwd` |
+
+Сканер выполняет только фиксированные запросы `SELECT`/`SHOW` к системным
+представлениям, переводит сессию в режим «только чтение» (PostgreSQL,
+MySQL/MariaDB, Oracle) и не читает прикладные данные и хэши паролей (для
+MySQL проверяется только, пуст ли хэш). Пароль передаётся драйверу и в
+журналы не попадает. TLS используется, если сервер его поддерживает
+(PostgreSQL, MySQL/MariaDB, MS SQL); Oracle — обычный TCP (пароль по
+протоколу O5LOGON не передаётся открытым текстом).
 
 ### 2.3. Наборы проверки паролей
 

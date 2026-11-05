@@ -57,3 +57,32 @@ it("заводит учётку WinRM с доменом и портом по у�
   const sent = JSON.parse(String(api.calls.find((c) => c.init?.method === "POST")!.init!.body));
   expect(sent).toMatchObject({ protocol: "winrm", domain: "CORP", auth: "password", port: 5986, become: "none" });
 });
+
+it("заводит учётку СУБД: Oracle требует имя сервиса, порт 1521, без sudo", async () => {
+  const ORA = { ...ROW, id: 6, name: "Oracle ERP", username: "scan_ro", port: 1521, protocol: "oracle", db_name: "ERPPDB" };
+  const api = mockApi({
+    "GET /engagements/7/credentials": [ORA],
+    "POST /engagements/7/credentials": ORA,
+  });
+  render(<CredentialsCard engagementId={7} />);
+  const row = (await screen.findByText("Oracle ERP")).closest("tr")!;
+  expect(within(row).getByText("Oracle · ERPPDB")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: /Добавить/ }));
+  const dlg = await screen.findByRole("dialog");
+  await userEvent.click(within(dlg).getByRole("radio", { name: /СУБД/ }));
+  expect((within(dlg).getByLabelText("Порт СУБД") as HTMLInputElement).value).toBe("5432");
+  expect((within(dlg).getByLabelText(/^База для входа/) as HTMLInputElement).value).toBe("postgres");
+  await userEvent.selectOptions(within(dlg).getByLabelText("СУБД"), "oracle");
+  expect((within(dlg).getByLabelText("Порт СУБД") as HTMLInputElement).value).toBe("1521");
+  expect(within(dlg).queryByRole("radio", { name: /sudo/ })).toBeNull();
+  await userEvent.type(within(dlg).getByLabelText("Название"), "Oracle ERP");
+  await userEvent.type(within(dlg).getByLabelText("Логин СУБД"), "scan_ro");
+  await userEvent.type(within(dlg).getByLabelText("Пароль СУБД", { selector: "input[type=password]" }), "db-pass");
+  expect(screen.getByRole("button", { name: "Сохранить" })).toBeDisabled();       // нет имени сервиса
+  await userEvent.type(within(dlg).getByLabelText(/Имя сервиса/), "ERPPDB");
+  await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(api.calls.some((c) => c.init?.method === "POST")).toBe(true));
+  const sent = JSON.parse(String(api.calls.find((c) => c.init?.method === "POST")!.init!.body));
+  expect(sent).toMatchObject({ protocol: "oracle", db_name: "ERPPDB", auth: "password", port: 1521, become: "none" });
+});

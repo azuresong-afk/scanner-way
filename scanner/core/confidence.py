@@ -57,6 +57,8 @@ def infer(f: Finding) -> tuple[str, str]:
         msrc = "MSRC" in (f.evidence or "") or (f.vuln_id or "").startswith("KB")
         return (f.source or ("vendor_advisory" if msrc else "authenticated_package"),
                 f.confidence or ("high" if msrc else "medium"))
+    if m == "db_audit":
+        return f.source or "authenticated_package", f.confidence or "medium"
     if m == "vuln":
         return f.source or "nuclei", f.confidence or "medium"
     if m in ("config_audit", "password_policy"):

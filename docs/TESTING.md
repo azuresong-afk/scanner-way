@@ -522,6 +522,64 @@ HTTPS (5986); сервисная учётка с правом чтения (ло
 
 - [ ] Шаг 8е пройден
 
+## Шаг 8ж. Аудит СУБД по учётной записи ★
+
+Сканер входит в СУБД учётной записью **только на чтение** и проверяет
+экземпляр сервера: версию и редакцию → CVE/БДУ ФСТЭК (SQL Server — по
+справочнику MSRC), окончание поддержки ветки и конфигурацию по мотивам CIS
+Benchmarks. Поддерживаются PostgreSQL и Postgres Pro, MySQL и MariaDB,
+Microsoft SQL Server, Oracle Database. Модуль «Аудит СУБД» (`db_audit`), профиль
+«Проверка СУБД». Нужно право `host_credentials`.
+
+Нужен хотя бы один сервер СУБД `LAB_DB_IP` в allowlist; удобно поднять на
+стенде контейнеры (пароли — свои):
+
+```bash
+docker run -d --name lab-pg -p 5432:5432 -e POSTGRES_PASSWORD=adminpw postgres:13
+docker run -d --name lab-my -p 3306:3306 -e MYSQL_ROOT_PASSWORD=adminpw mysql:8.0
+docker run -d --name lab-mssql -p 1433:1433 -e ACCEPT_EULA=Y \
+    -e MSSQL_SA_PASSWORD='Adm1n-pw!' mcr.microsoft.com/mssql/server:2019-latest
+docker run -d --name lab-ora -p 1521:1521 -e ORACLE_PASSWORD=adminpw gvenzl/oracle-free
+```
+
+Учётки только на чтение (права — [Руководство оператора, 2.2](guide/04-operator-guide.md#22-учётные-записи-активов)):
+
+```sql
+-- PostgreSQL
+CREATE ROLE scan_ro LOGIN PASSWORD 'ro-pass'; GRANT pg_read_all_settings TO scan_ro;
+GRANT SELECT ON pg_hba_file_rules TO scan_ro; GRANT EXECUTE ON FUNCTION pg_hba_file_rules() TO scan_ro;
+-- MySQL
+CREATE USER 'scan_ro'@'%' IDENTIFIED BY 'ro-pass';
+GRANT SELECT (user, host, plugin, authentication_string) ON mysql.user TO 'scan_ro'@'%';
+-- MS SQL Server
+CREATE LOGIN scan_ro WITH PASSWORD = 'Ro-pass-123!'; GRANT VIEW SERVER STATE TO scan_ro;
+GRANT VIEW ANY DEFINITION TO scan_ro;
+-- Oracle (в PDB FREEPDB1)
+CREATE USER scan_ro IDENTIFIED BY "ro-pass"; GRANT CREATE SESSION, SELECT_CATALOG_ROLE TO scan_ro;
+```
+
+Для SQL Server перезагрузите справочник MSRC после обновления сканера:
+`docker compose exec app scanner feeds sync-msrc` (продукты SQL Server
+раньше в него не попадали).
+
+| # | Действие | Ожидаемый результат |
+|---|---|---|
+| 8ж.1 | Под `op1`: проект → «Учётные записи активов» → «Добавить» → способ входа «СУБД» | Появляется выбор СУБД (PostgreSQL / MySQL / MS SQL Server / Oracle) и поле базы; порт меняется на 5432; «Ключ SSH» и «Повышение прав» скрыты |
+| 8ж.2 | Выбрать Oracle, не заполнять «Имя сервиса» | Кнопка «Сохранить» недоступна; порт 1521. Через API без `db_name` — 422 «для Oracle укажите имя сервиса» |
+| 8ж.3 | Завести учётки `scan_ro` для каждой СУБД стенда, область — `LAB_DB_IP` | В таблице «Вход» — «PostgreSQL · postgres», «Oracle · FREEPDB1» и т. п.; пароль нигде не показан |
+| 8ж.4 | «Активы» → `LAB_DB_IP` → значок ключа → «Проверить вход» | По каждой учётке СУБД — «Вход выполнен»; с неверным паролем — «Отказ в доступе»; с закрытым портом — «Недоступен» |
+| 8ж.5 | Запуск: профиль **«Проверка СУБД»** (или «Обнаружение» + флажок «Аудит СУБД»), цель `LAB_DB_IP`, отметить учётки СУБД | Прогон `done`; в «Полноте проверки» модуль «аудит СУБД» — «выполнено» |
+| 8ж.6 | «Находки», модуль «Аудит СУБД» | Сводка «Аудит СУБД: PostgreSQL 13.x, порт 5432 — нарушений конфигурации N»; для PostgreSQL 13 — `DB-EOL` «ветка не поддерживается производителем с 13.11.2025» (HIGH); уязвимости версии `CVE-…`/`BDU:…` на порту СУБД с привязкой к БДУ |
+| 8ж.7 | Открыть находку `DB-PG-SSL` (или `DB-MY-TLS`, `DB-MS-XPCMD` после `sp_configure 'xp_cmdshell', 1`) | Тип — конфигурация; в доказательстве — значение параметра; в рекомендации — команда исправления и «Основание: CIS …» |
+| 8ж.8 | Убрать у PostgreSQL-учётки `GRANT … pg_hba_file_rules`, повторить прогон | В сводке «не проверено: DB-PG-HBA-TRUST, DB-PG-HBA-WEAK» и какое право выдать; эти правила не считаются выполненными |
+| 8ж.9 | SQL Server с загруженным MSRC | Находки `CVE-…` по отсутствующим обновлениям SQL Server (KB, сборка с исправлением, ссылка на каталог Microsoft), уверенность «подтверждено». Без MSRC — в сводке «справочник MSRC не загружен», это **не** «уязвимостей нет» |
+| 8ж.10 | Под `scan_ro` проверить, что сканер ничего не изменил: журнал СУБД / `pg_stat_statements` / SQL Server Profiler | Только `SELECT`/`SHOW` к системным представлениям; для PostgreSQL сессия с `default_transaction_read_only=on`, приложение `scanner-db-audit` |
+| 8ж.11 | Журнал аудита: `db_audit_connect`, `db_audit_query`, `db_audit_match` / `db_audit_msrc` | Логин, порт, протокол и база учётки, список выполненных и недоступных запросов; пароля нет ни в одной записи |
+| 8ж.12 | Discovery нашёл MySQL на `LAB_DB_IP`, а в прогоне только PostgreSQL-учётка | Полнота проверки «аудит СУБД — нет учётной записи: найдена СУБД (MySQL/MariaDB :3306), но учётки СУБД для неё нет»; на закрытый порт учётки сканер не подключается |
+| 8ж.13 | Отчёт по прогону (HTML/PDF/DOCX) | Раздел «Аудит СУБД» с находками конфигурации и уязвимостями версии, рекомендации — из правил |
+
+- [ ] Шаг 8ж пройден
+
 ## Шаг 9. Аудит конфигураций по учётной записи ★
 
 Аудит конфигураций (CIS, требования ФСТЭК/ГОСТ) использует те же учётные

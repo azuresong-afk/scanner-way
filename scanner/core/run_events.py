@@ -36,6 +36,7 @@ MODULE_LABELS: dict[str, str] = {
     "win_inventory": "По учётной записи (Windows)",
     "config_audit": "Аудит конфигураций",
     "password_policy": "Парольная политика",
+    "db_audit": "Аудит СУБД",
     "cred_audit": "Аудит учётных записей",
 }
 

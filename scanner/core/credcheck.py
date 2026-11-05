@@ -7,7 +7,9 @@
   * SSH — TCP-подключение к порту учётки, затем вход paramiko (`sshexec.connect`)
     и сразу закрытие сессии. Ни одной команды на хосте не выполняется;
   * WinRM — TCP-подключение, затем открытие и закрытие оболочки WS-Man
-    (`winexec.connect`: именно здесь проходят TLS и NTLM). Ни одного скрипта.
+    (`winexec.connect`: именно здесь проходят TLS и NTLM). Ни одного скрипта;
+  * СУБД (PostgreSQL, MySQL/MariaDB, MS SQL, Oracle) — вход учётной записью
+    СУБД (`dbexec.connect`) и сразу отключение. Ни одного запроса.
 
 Перед входом — быстрая TCP-проба порта учётки (`reachability.tcp_probe`):
 закрытый порт и молчащий хост дают понятный ответ за секунды, без ожидания
@@ -27,9 +29,9 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from scanner.core import sshexec, winexec
+from scanner.core import dbexec, sshexec, winexec
 from scanner.core.credentials import (
-    PROTOCOL_SSH,
+    DB_PROTOCOLS,
     PROTOCOL_WINRM,
     PROTOCOLS,
     CredentialError,
@@ -57,6 +59,10 @@ LOGIN_TIMEOUT_SEC = 10.0
 Probe = Callable[[str, int, float], PortResult]
 SshConnect = Callable[[str, HostCredential, sshexec.SshOptions], sshexec.RemoteShell]
 WinConnect = Callable[[str, HostCredential, winexec.WinRmOptions], winexec.WinShell]
+DbConnect = Callable[[str, HostCredential, dbexec.DbOptions], dbexec.DbSession]
+
+PROTOCOL_TITLES = {"ssh": "SSH", "winrm": "WinRM", "postgresql": "PostgreSQL",
+                   "mysql": "MySQL/MariaDB", "mssql": "MS SQL", "oracle": "Oracle"}
 
 
 @dataclass(slots=True)
@@ -90,6 +96,8 @@ class Connectors:
     ssh_connect: SshConnect = sshexec.connect
     win_connect: WinConnect = winexec.connect
     precheck_timeout: float = PRECHECK_TIMEOUT_SEC
+    db_options: dbexec.DbOptions = field(default_factory=dbexec.DbOptions)
+    db_connect: DbConnect = dbexec.connect
 
 
 def default_connectors(login_timeout: float = LOGIN_TIMEOUT_SEC) -> Connectors:
@@ -100,7 +108,9 @@ def default_connectors(login_timeout: float = LOGIN_TIMEOUT_SEC) -> Connectors:
     win = winexec.options_from_env()
     win.connect_timeout_sec = min(win.connect_timeout_sec, login_timeout)
     win.operation_timeout_sec = max(1, int(min(win.operation_timeout_sec, login_timeout)))
-    return Connectors(ssh_options=ssh, win_options=win)
+    db = dbexec.options_from_env()
+    db.connect_timeout_sec = min(db.connect_timeout_sec, login_timeout)
+    return Connectors(ssh_options=ssh, win_options=win, db_options=db)
 
 
 def _timed_out(e: BaseException) -> bool:
@@ -160,10 +170,27 @@ def _login_winrm(host: str, cred: HostCredential, c: Connectors) -> tuple[str, s
     return OK, "WinRM: вход выполнен"
 
 
+def _login_db(host: str, cred: HostCredential, c: Connectors) -> tuple[str, str]:
+    label = PROTOCOL_TITLES.get(cred.protocol, cred.protocol)
+    try:
+        session = c.db_connect(host, cred, c.db_options)
+    except dbexec.DbAuthFailed:
+        return AUTH_FAILED, f"{label}: логин или пароль отклонены СУБД"
+    except dbexec.DbUnreachable as e:
+        if dbexec.is_timeout(e):
+            return TIMEOUT, (f"{label}: СУБД не ответила за "
+                             f"{c.db_options.connect_timeout_sec:.0f} с")
+        return UNREACHABLE, f"{label}: нет соединения с портом {cred.port}"
+    except dbexec.DbError as e:
+        return ERROR, f"{label}: {str(e)[:200]}"
+    session.close()
+    return OK, f"{label}: вход выполнен"
+
+
 def check_login(host: str, cred: HostCredential, c: Connectors) -> LoginResult:
     """Одна попытка входа по учётке: TCP-проба порта, затем вход и выход."""
     start = time.monotonic()
-    label = "SSH" if cred.protocol == PROTOCOL_SSH else "WinRM"
+    label = PROTOCOL_TITLES.get(cred.protocol, cred.protocol)
     pre = c.probe(host, cred.port, c.precheck_timeout)
     if pre.state == "closed":
         status, message = UNREACHABLE, f"{label}: порт {cred.port} закрыт"
@@ -173,6 +200,8 @@ def check_login(host: str, cred: HostCredential, c: Connectors) -> LoginResult:
                                     "или порт закрыт межсетевым экраном")
     elif cred.protocol == PROTOCOL_WINRM:
         status, message = _login_winrm(host, cred, c)
+    elif cred.protocol in DB_PROTOCOLS:
+        status, message = _login_db(host, cred, c)
     else:
         status, message = _login_ssh(host, cred, c)
     return LoginResult(credential_id=cred.id, credential=cred.name,

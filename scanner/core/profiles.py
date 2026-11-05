@@ -20,7 +20,7 @@ class Profile:
     title: str
     description: str
     modules: tuple[str, ...]
-    needs: tuple[str, ...] = ()          # протоколы учёток: ssh | winrm
+    needs: tuple[str, ...] = ()          # протоколы учёток: ssh | winrm | dbms
 
 
 PROFILES: dict[str, Profile] = {p.id: p for p in (
@@ -35,6 +35,12 @@ PROFILES: dict[str, Profile] = {p.id: p for p in (
             "установленные обновления и ПО по WinRM (MSRC, CVE/БДУ ФСТЭК). Нужна "
             "WinRM-учётка.",
             ("discovery", "vuln", "win_inventory"), ("winrm",)),
+    Profile("dbms", "Проверка СУБД",
+            "Обнаружение хостов и сервисов, затем вход в СУБД учётной записью только на "
+            "чтение: версия → CVE/БДУ ФСТЭК (SQL Server — по обновлениям Microsoft), "
+            "окончание поддержки и конфигурация по CIS. PostgreSQL и Postgres Pro, "
+            "MySQL и MariaDB, MS SQL Server, Oracle. Нужна учётка СУБД.",
+            ("discovery", "db_audit"), ("dbms",)),
     Profile("network", "Только сетевая проверка",
             "Обнаружение и проверка без учётной записи: шаблоны Nuclei и версии из "
             "баннеров. Бэкпорты дистрибутивов не учитываются — находки по баннерам "
@@ -46,7 +52,10 @@ PROFILES: dict[str, Profile] = {p.id: p for p in (
 )}
 
 # Что модуль НЕ проверит без учётки/как ограничен — для предупреждений до запуска.
-_NEEDS = {"auth_inventory": "ssh", "config_audit": "ssh", "win_inventory": "winrm"}
+_NEEDS = {"auth_inventory": "ssh", "config_audit": "ssh", "win_inventory": "winrm",
+          "db_audit": "dbms"}
+# Протоколы учёток СУБД сводятся к одной потребности «dbms».
+_DB_PROTOCOLS = frozenset({"postgresql", "mysql", "mssql", "oracle"})
 
 
 @dataclass(slots=True)
@@ -93,6 +102,8 @@ def plan_modules(requested: Iterable[str], *, protocols: set[str],
     )
     req = list(dict.fromkeys(requested))
     auto = set(engine_modules)
+    if protocols & _DB_PROTOCOLS:
+        protocols = {*protocols, "dbms"}
     plan = RunPlan()
     keep = []
     for name in req:
@@ -113,8 +124,9 @@ def plan_modules(requested: Iterable[str], *, protocols: set[str],
         need = _NEEDS.get(name)
         note = None
         if need and need not in protocols:
-            note = (f"нет учётки {'SSH' if need == 'ssh' else 'WinRM'} — модуль не "
-                    "сможет войти на хосты, проверка будет неполной")
+            kind = {"ssh": "SSH", "winrm": "WinRM", "dbms": "СУБД"}[need]
+            note = (f"нет учётки {kind} — модуль не сможет войти на хосты, проверка "
+                    "будет неполной")
             plan.warnings.append(f"{MODULE_TITLES.get(name, name)}: {note}")
         plan.modules.append(PlannedModule(name, MODULE_TITLES.get(name, name),
                                           added_as_companion=name in companions

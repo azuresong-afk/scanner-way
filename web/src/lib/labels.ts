@@ -70,6 +70,12 @@ export const MODULES: ModuleInfo[] = [
     permission: "host_credentials",
   },
   {
+    id: "db_audit",
+    label: "Аудит СУБД",
+    description: "PostgreSQL/Postgres Pro, MySQL/MariaDB, MS SQL, Oracle: версия → CVE/БДУ, конфигурация по CIS",
+    permission: "host_credentials",
+  },
+  {
     id: "cred_audit",
     label: "Аудит учётных данных",
     description: "Проверка слабых и стандартных паролей по договору, с лимитами попыток",
@@ -130,11 +136,30 @@ export const SOURCE_LABEL: Record<string, string> = {
   windows: "инвентаризация Windows",
 };
 
+/** Способ входа учётки — коротко для таблиц и проверки входа. */
+export const PROTOCOL_LABEL: Record<string, string> = {
+  ssh: "SSH",
+  winrm: "WinRM",
+  postgresql: "PostgreSQL",
+  mysql: "MySQL/MariaDB",
+  mssql: "MS SQL",
+  oracle: "Oracle",
+};
+
+/** Учётки СУБД (db_audit): порт и база по умолчанию, подпись поля базы. */
+export const DB_PROTOCOLS: { id: "postgresql" | "mysql" | "mssql" | "oracle"; label: string; hint: string; port: string; dbName: string; dbLabel: string }[] = [
+  { id: "postgresql", label: "PostgreSQL", hint: "и Postgres Pro", port: "5432", dbName: "postgres", dbLabel: "База для входа" },
+  { id: "mysql", label: "MySQL", hint: "и MariaDB", port: "3306", dbName: "", dbLabel: "База для входа (необязательно)" },
+  { id: "mssql", label: "MS SQL Server", hint: "SQL-логин", port: "1433", dbName: "master", dbLabel: "База для входа" },
+  { id: "oracle", label: "Oracle", hint: "тонкий режим, без клиента", port: "1521", dbName: "", dbLabel: "Имя сервиса (service name)" },
+];
+export const isDbProtocol = (p: string | undefined) => DB_PROTOCOLS.some((d) => d.id === p);
+
 /** Модули поиска уязвимостей — выбираются движком, а не флажками. */
 export const ENGINE_MODULES = ["vuln", "auth_inventory"];
 
 /** Модули, которые входят на хосты по учётным записям договора (CREDENTIAL_MODULES на бэкенде). */
-export const CREDENTIAL_MODULES = ["auth_inventory", "config_audit"];
+export const CREDENTIAL_MODULES = ["auth_inventory", "config_audit", "db_audit"];
 
 export interface EngineInfo {
   id: VulnEngine | "none";
@@ -172,6 +197,7 @@ export const MODULE_SHORT: Record<string, string> = {
   win_inventory: "Windows (WinRM)",
   config_audit: "Конфигурации",
   password_policy: "Парольная политика",
+  db_audit: "СУБД",
   cred_audit: "Учётные данные",
 };
 
@@ -184,11 +210,13 @@ const TITLE_PARTS: [string, string][] = [
   ["vuln", "Nuclei"],
   ["auth_inventory", "учётная запись"],
   ["config_audit", "конфигурации"],
+  ["db_audit", "СУБД"],
   ["cred_audit", "пароли"],
 ];
 const TITLE_ALONE: Record<string, string> = {
   auth_inventory: "по учётной записи",
   config_audit: "аудит конфигураций",
+  db_audit: "аудит СУБД",
   cred_audit: "аудит паролей",
   discovery: "инвентаризация",
 };

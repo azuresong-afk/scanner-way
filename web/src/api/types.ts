@@ -115,7 +115,7 @@ export interface RunProfile {
   title: string;
   description: string;
   modules: string[];
-  /** Протоколы учёток, без которых профиль неполон: ssh | winrm. */
+  /** Протоколы учёток, без которых профиль неполон: ssh | winrm | dbms (любая учётка СУБД). */
   needs: string[];
 }
 
@@ -327,8 +327,11 @@ export type CredentialAuth = "password" | "key";
 /** Повышение прав для аудита конфигураций: sudo (пароль учётки / NOPASSWD) или без него. */
 export type CredentialBecome = "sudo" | "none";
 
-/** Способ входа: SSH (Linux) или WinRM (Windows, только пароль). */
-export type CredentialProtocol = "ssh" | "winrm";
+/** СУБД для аудита баз данных (db_audit): учётка СУБД только на чтение, только пароль. */
+export type DbProtocol = "postgresql" | "mysql" | "mssql" | "oracle";
+
+/** Способ входа: SSH (Linux), WinRM (Windows, только пароль) или СУБД. */
+export type CredentialProtocol = "ssh" | "winrm" | DbProtocol;
 
 /** Учётка актива на вход. Секреты API принимает, но никогда не отдаёт. */
 export interface CredentialIn {
@@ -344,6 +347,8 @@ export interface CredentialIn {
   protocol?: CredentialProtocol;
   /** Домен Windows для WinRM: логин сохраняется как ДОМЕН\user. */
   domain?: string;
+  /** СУБД: база для входа (PostgreSQL, MS SQL) или имя сервиса Oracle. */
+  db_name?: string;
 }
 
 export interface CredentialOut {
@@ -360,6 +365,7 @@ export interface CredentialOut {
   created_at: string | null;
   become: CredentialBecome;
   protocol: CredentialProtocol;
+  db_name?: string | null;
 }
 
 export interface PackageOut {
@@ -779,7 +785,7 @@ export interface CredentialCheckIn {
 export interface CredentialLoginOut {
   credential_id: number;
   credential: string;
-  protocol: "ssh" | "winrm";
+  protocol: CredentialProtocol;
   username: string;
   port: number;
   status: CredLoginStatus;

@@ -4,8 +4,9 @@
 ``/cvrf/v3.0/cvrf/2024-Jan``). Из каждой уязвимости берутся исправления типа
 Vendor Fix: номер KB, продукт, KB, которую это обновление замещает
 (``Supercedence``), и сборка ОС, начиная с которой уязвимость закрыта
-(``FixedBuild``). Хранятся только продукты Windows — сопоставление идёт с ОС
-хоста; ПО из реестра сопоставляется с БДУ/NVD обычным `VulnMatcher`.
+(``FixedBuild``). Хранятся продукты Windows (сопоставление идёт с ОС хоста) и
+Microsoft SQL Server (сборка экземпляра СУБД, `assess_sql`, модуль db_audit);
+ПО из реестра сопоставляется с БДУ/NVD обычным `VulnMatcher`.
 
 Сопоставление с хостом (`assess`) — CVE продукта хоста считается закрытой, если:
 
@@ -141,8 +142,17 @@ def is_windows_product(name: str) -> bool:
     return name.lower().startswith("windows ")
 
 
+def is_sql_server_product(name: str) -> bool:
+    """Продукты Microsoft SQL Server (аудит СУБД, db_audit)."""
+    return name.lower().startswith("microsoft sql server ")
+
+
+def is_tracked_product(name: str) -> bool:
+    return is_windows_product(name) or is_sql_server_product(name)
+
+
 def parse_cvrf(doc: dict[str, Any], release: str | None = None) -> list[MsrcFix]:
-    """Документ CVRF (JSON) -> исправления для продуктов Windows."""
+    """Документ CVRF (JSON) -> исправления для продуктов Windows и SQL Server."""
     if release is None:
         ident = (doc.get("DocumentTracking") or {}).get("Identification") or {}
         release = _value(ident.get("ID")) or "unknown"
@@ -180,7 +190,7 @@ def parse_cvrf(doc: dict[str, Any], release: str | None = None) -> list[MsrcFix]
             for pid in r.get("ProductID") or []:
                 pid = str(pid)
                 name = products.get(pid)
-                if not name or not is_windows_product(name):
+                if not name or not is_tracked_product(name):
                     continue
                 out[(cve, pid, kb)] = MsrcFix(
                     release=release, cve_id=cve, product_id=pid, product=name[:200], kb=kb,
@@ -439,6 +449,67 @@ def assess(os: WindowsOs, installed_kbs: Iterable[str], store) -> Assessment:
         out.gaps.append(KbGap(
             cve_id=cve, fix_kbs=kbs, recommended_kb=rec, fixed_build=builds[0] if builds
             else None, severity=next((f.severity for f in items if f.severity), None),
+            cvss=max(scores) if scores else None, title=latest.title,
+            release=latest.release))
+    return out
+
+
+# ---------- Microsoft SQL Server ----------
+
+def _sql_branch(build: tuple[int, ...]) -> tuple[int, int, int]:
+    """Ветка обслуживания SQL Server: major.minor и «тысяча» номера сборки
+    (15.0.2xxx — GDR, 15.0.4xxx — CU у SQL Server 2019)."""
+    return build[0], build[1], build[2] // 1000
+
+
+def assess_sql(version: str, year: str | None, store) -> Assessment:
+    """Какие CVE SQL Server не закрыты сборкой экземпляра (ProductVersion).
+
+    CVE закрыта, если сборка экземпляра не ниже наименьшей ``FixedBuild`` той же
+    ветки обслуживания (GDR или CU — у них разные диапазоны номеров сборок):
+    более поздние накопительные обновления включают исправление. Если по CVE
+    есть исправления только для других веток — CVE не оценивается (не «есть»
+    и не «нет»).
+    """
+    host = _build_tuple(version)
+    if host is None or not year:
+        return Assessment(None, no_data=True,
+                          reason=f"сборка SQL Server «{version}» не распознана")
+    prefix = f"microsoft sql server {year.lower()}"
+    names = sorted(n for n in store.products() if n.lower().startswith(prefix)
+                   and (len(n) == len(prefix) or not n[len(prefix)].isdigit()))
+    label = f"Microsoft SQL Server {year}"
+    if not names:
+        return Assessment(label, no_data=True,
+                          reason=f"в справочнике MSRC нет данных по «{label}» — "
+                                 "загрузите справочник обновлений Microsoft "
+                                 "(scanner feeds sync-msrc)")
+    fixes = [f for n in names for f in store.fixes_for(n)]
+    branch = _sql_branch(host)
+    by_cve: dict[str, list[MsrcFix]] = {}
+    for f in fixes:
+        b = _build_tuple(f.fixed_build)
+        if b is not None and _sql_branch(b) == branch:
+            by_cve.setdefault(f.cve_id, []).append(f)
+    out = Assessment(label)
+    if not by_cve:
+        out.no_data = True
+        out.reason = (f"в справочнике MSRC нет исправлений для ветки сборок "
+                      f"{branch[0]}.{branch[1]}.{branch[2]}xxx")
+        return out
+    for cve, items in sorted(by_cve.items()):
+        items.sort(key=lambda f: _build_tuple(f.fixed_build) or ())
+        first = items[0]
+        if host >= (_build_tuple(first.fixed_build) or ()):
+            out.fixed += 1
+            continue
+        latest = max(items, key=lambda f: release_key(f.release))
+        scores = [f.cvss for f in items if f.cvss is not None]
+        newest = max(items, key=lambda f: _build_tuple(f.fixed_build) or ())
+        out.gaps.append(KbGap(
+            cve_id=cve, fix_kbs=list(dict.fromkeys(f.kb for f in items)),
+            recommended_kb=newest.kb, fixed_build=first.fixed_build,
+            severity=next((f.severity for f in items if f.severity), None),
             cvss=max(scores) if scores else None, title=latest.title,
             release=latest.release))
     return out

@@ -16,10 +16,12 @@ _PARTS: tuple[tuple[str, str], ...] = (
     ("vuln", "Nuclei"),
     ("auth_inventory", "учётная запись"),
     ("config_audit", "конфигурации"),
+    ("db_audit", "СУБД"),
     ("cred_audit", "пароли"),
 )
 # Единственный модуль — подпись полнее, иначе «Учётная запись · …» непонятно.
 _ALONE = {"auth_inventory": "по учётной записи", "config_audit": "аудит конфигураций",
+          "db_audit": "аудит СУБД",
           "cred_audit": "аудит паролей", "discovery": "инвентаризация"}
 
 # Понятные названия модулей (покрытие прогона, предупреждения, состав проверки).
@@ -30,6 +32,7 @@ MODULE_TITLES: dict[str, str] = {
     "win_inventory": "обновления и ПО Windows по WinRM",
     "config_audit": "аудит конфигурации (OpenSCAP, Lynis)",
     "password_policy": "парольная политика",
+    "db_audit": "аудит СУБД (версия → CVE/БДУ, конфигурация по CIS)",
     "cred_audit": "проверка стойкости паролей",
 }
 

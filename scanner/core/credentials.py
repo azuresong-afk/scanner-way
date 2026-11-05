@@ -5,9 +5,12 @@
 аудита конфигураций (`config_audit`). Для аудита конфигураций нужны права root:
 поле `become` (`sudo` | `none`) говорит, повышать ли права через sudo.
 
-Поле `protocol` (`ssh` | `winrm`) — способ входа. Учётки WinRM (Windows, только
-пароль, логин `ДОМЕН\\user` или `user@домен`) использует модуль `win_inventory`;
-SSH-модули их не видят: `credentials_for_host` по умолчанию отдаёт только SSH.
+Поле `protocol` (`ssh` | `winrm` | `postgresql` | `mysql` | `mssql` | `oracle`) —
+способ входа. Учётки WinRM (Windows, только пароль, логин `ДОМЕН\\user` или
+`user@домен`) использует модуль `win_inventory`; учётки СУБД (только пароль,
+учётная запись СУБД только на чтение) — модуль `db_audit`, `db_name` — база
+(PostgreSQL, MS SQL) или имя сервиса Oracle. SSH-модули чужих учёток не видят:
+`credentials_for_host` по умолчанию отдаёт только SSH.
 
 Безопасность:
 - секреты (пароль, закрытый ключ, парольная фраза) хранятся в БД только
@@ -48,15 +51,26 @@ BECOME_KINDS = (BECOME_SUDO, BECOME_NONE)
 # Способ входа на хост: SSH (Linux/Unix) или WinRM (Windows, HTTPS + NTLM).
 PROTOCOL_SSH = "ssh"
 PROTOCOL_WINRM = "winrm"
-PROTOCOLS = (PROTOCOL_SSH, PROTOCOL_WINRM)
-DEFAULT_PORTS = {PROTOCOL_SSH: 22, PROTOCOL_WINRM: 5986}
+# СУБД (db_audit): вход учётной записью СУБД, только пароль. MariaDB — mysql.
+PROTOCOL_POSTGRESQL = "postgresql"
+PROTOCOL_MYSQL = "mysql"
+PROTOCOL_MSSQL = "mssql"
+PROTOCOL_ORACLE = "oracle"
+DB_PROTOCOLS = (PROTOCOL_POSTGRESQL, PROTOCOL_MYSQL, PROTOCOL_MSSQL, PROTOCOL_ORACLE)
+PROTOCOLS = (PROTOCOL_SSH, PROTOCOL_WINRM, *DB_PROTOCOLS)
+DEFAULT_PORTS = {PROTOCOL_SSH: 22, PROTOCOL_WINRM: 5986, PROTOCOL_POSTGRESQL: 5432,
+                 PROTOCOL_MYSQL: 3306, PROTOCOL_MSSQL: 1433, PROTOCOL_ORACLE: 1521}
+# База по умолчанию для входа (Oracle — имени сервиса по умолчанию нет).
+DEFAULT_DB_NAMES = {PROTOCOL_POSTGRESQL: "postgres", PROTOCOL_MSSQL: "master"}
+_DB_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.$#-]{0,127}$")
 
 # Сколько учёток пробовать на одном хосте: учётки задаёт оператор, но
 # серия неудачных входов может заблокировать учётную запись на цели.
 MAX_CREDENTIALS_PER_HOST = 3
 
 MAX_SECRET_LEN = 16 * 1024
-_USER_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@\\-]{0,127}$")
+# «#» и «$» — общие пользователи Oracle (C##SCAN) и служебные учётки.
+_USER_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@\\#$-]{0,127}$")
 
 
 class CredentialError(ValueError):
@@ -234,7 +248,12 @@ class HostCredential:
     private_key: str | None = field(default=None, repr=False)
     passphrase: str | None = field(default=None, repr=False)
     become: str = BECOME_SUDO                   # sudo | none
-    protocol: str = PROTOCOL_SSH                # ssh | winrm
+    protocol: str = PROTOCOL_SSH                # ssh | winrm | postgresql | mysql | …
+    db_name: str | None = None                  # база / имя сервиса Oracle (СУБД)
+
+    @property
+    def is_db(self) -> bool:
+        return self.protocol in DB_PROTOCOLS
 
     def scope_prefix(self, host: str) -> int | None:
         """Длина префикса самой узкой подсети области, куда входит хост.
@@ -255,7 +274,8 @@ class HostCredential:
         """Описание для аудита и находок — без секретов."""
         return {"credential_id": self.id, "credential": self.name,
                 "user": self.username, "port": self.port, "auth": self.auth,
-                "become": self.become, "protocol": self.protocol}
+                "become": self.become, "protocol": self.protocol,
+                **({"db_name": self.db_name} if self.db_name else {})}
 
 
 def validate_become(become: str) -> str:
@@ -270,6 +290,22 @@ def validate_protocol(protocol: str) -> str:
         raise CredentialError(f"недопустимый протокол входа: {protocol!r} "
                               f"(допустимо: {', '.join(PROTOCOLS)})")
     return protocol
+
+
+def validate_db_name(protocol: str, db_name: str | None) -> str | None:
+    """База для входа в СУБД: имя без кавычек и пробелов (в запросы не подставляется,
+    передаётся драйверу параметром подключения). Для Oracle обязательно имя сервиса."""
+    if protocol not in DB_PROTOCOLS:
+        return None
+    name = (db_name or "").strip() or DEFAULT_DB_NAMES.get(protocol)
+    if not name and protocol == PROTOCOL_MYSQL:
+        return None                     # MySQL/MariaDB: база для входа не нужна
+    if not name:
+        raise CredentialError("для Oracle укажите имя сервиса (service name), "
+                              "например ORCLPDB1")
+    if not _DB_NAME_RE.match(name):
+        raise CredentialError(f"недопустимое имя базы/сервиса: {name!r}")
+    return name
 
 
 def credentials_for_host(host: str, creds: Sequence[HostCredential],

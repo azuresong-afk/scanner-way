@@ -23,6 +23,7 @@ from scanner.core.credentials import (
     AUTH_PASSWORD,
     BECOME_NONE,
     BECOME_SUDO,
+    DB_PROTOCOLS,
     DEFAULT_PORTS,
     PROTOCOL_SSH,
     PROTOCOL_WINRM,
@@ -33,6 +34,7 @@ from scanner.core.credentials import (
     normalize_scope,
     validate_become,
     validate_cred_set_entries,
+    validate_db_name,
     validate_protocol,
     validate_username,
 )
@@ -219,13 +221,16 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
                            passphrase: str | None = None,
                            created_by: int | None = None,
                            become: str = BECOME_SUDO,
-                           protocol: str = PROTOCOL_SSH) -> int:
+                           protocol: str = PROTOCOL_SSH,
+                           db_name: str | None = None) -> int:
     """Завести учётку договора. Секреты шифруются, в БД открытым текстом не попадают.
 
     Область действия (targets) обязана входить в allowlist договора: учётка не
     должна «расширять» объём работ. CredentialError — недопустимые данные.
     port=None — стандартный порт протокола (SSH 22, WinRM HTTPS 5986).
     Учётка WinRM — только по паролю (NTLM), повышения прав у неё нет.
+    Учётка СУБД (postgresql/mysql/mssql/oracle) — только по паролю, без повышения
+    прав; db_name — база для входа или имя сервиса Oracle.
     """
     protocol = validate_protocol(protocol)
     if auth not in AUTH_KINDS:
@@ -238,6 +243,11 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
         if auth != AUTH_PASSWORD:
             raise CredentialError("учётка WinRM входит только по паролю (NTLM)")
         become = BECOME_NONE
+    if protocol in DB_PROTOCOLS:
+        if auth != AUTH_PASSWORD:
+            raise CredentialError("учётка СУБД входит только по паролю")
+        become = BECOME_NONE
+    db_name = validate_db_name(protocol, db_name)
     username = validate_username(username)
     become = validate_become(become)
     scope = normalize_scope(targets)
@@ -260,7 +270,7 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
                             username=username, port=port, targets=scope,
                             secret_enc=vault.encrypt(secrets),
                             key_fingerprint=fingerprint, created_by=created_by,
-                            become=become, protocol=protocol)
+                            become=become, protocol=protocol, db_name=db_name)
     session.add(row)
     session.flush()
     return row.id
@@ -293,7 +303,8 @@ def load_host_credentials(session: Session, vault: CredentialVault, engagement_i
             password=sec.get("password") if r.auth == AUTH_PASSWORD else None,
             private_key=sec.get("private_key") if r.auth == AUTH_KEY else None,
             passphrase=sec.get("passphrase") if r.auth == AUTH_KEY else None,
-            become=r.become or BECOME_SUDO, protocol=r.protocol or PROTOCOL_SSH))
+            become=r.become or BECOME_SUDO, protocol=r.protocol or PROTOCOL_SSH,
+            db_name=getattr(r, "db_name", None)))
     return out
 
 

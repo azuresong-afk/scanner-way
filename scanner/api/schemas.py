@@ -145,9 +145,13 @@ class CredentialIn(BaseModel):
     become: str = Field(default="sudo", pattern="^(sudo|none)$")
     # Способ входа: ssh | winrm (Windows, только пароль). domain — домен Windows:
     # логин сохраняется как ДОМЕН\\user.
-    protocol: str = Field(default="ssh", pattern="^(ssh|winrm)$")
+    # СУБД (db_audit): postgresql | mysql (и MariaDB) | mssql | oracle — только пароль.
+    protocol: str = Field(default="ssh",
+                          pattern="^(ssh|winrm|postgresql|mysql|mssql|oracle)$")
     domain: str | None = Field(default=None, max_length=64,
                                pattern=r"^[A-Za-z0-9][A-Za-z0-9.\-]*$")
+    # База для входа (PostgreSQL — postgres, MS SQL — master) или имя сервиса Oracle.
+    db_name: str | None = Field(default=None, max_length=128)
 
     def login(self) -> str:
         """Логин для хранения: с доменом Windows, если он задан отдельно."""
@@ -176,6 +180,7 @@ class CredentialOut(_Orm):
     created_at: datetime | None
     become: str = "sudo"
     protocol: str = "ssh"
+    db_name: str | None = None
 
     @field_validator("targets", mode="before")
     @classmethod
@@ -660,7 +665,7 @@ class CredentialCheckIn(BaseModel):
 class CredentialLoginOut(BaseModel):
     credential_id: int
     credential: str
-    protocol: str                 # ssh | winrm
+    protocol: str                 # ssh | winrm | postgresql | mysql | mssql | oracle
     username: str
     port: int
     status: str                   # ok | auth_failed | timeout | unreachable | host_key_mismatch | error

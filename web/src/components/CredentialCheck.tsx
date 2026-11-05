@@ -7,6 +7,7 @@ import type {
   CredentialHostCheckOut,
 } from "../api/types";
 import { ErrorAlert, Modal } from "./ui";
+import { PROTOCOL_LABEL } from "../lib/labels";
 
 /** Сколько хостов уходит в один запрос: результаты появляются по мере проверки. */
 const CHECK_BATCH = 4;
@@ -296,7 +297,7 @@ export function CredentialCheckModal({
                           <b>{x.credential}</b>
                           <span className="mono faint">
                             {x.username} ·{" "}
-                            {x.protocol === "winrm" ? "WinRM" : "SSH"}:{x.port}
+                            {PROTOCOL_LABEL[x.protocol] ?? x.protocol}:{x.port}
                           </span>
                           <span className="muted">{x.message}</span>
                           <span
