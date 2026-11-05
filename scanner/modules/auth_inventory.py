@@ -863,6 +863,10 @@ class AuthInventoryModule(ScanModule):
                 if ctx.host_family(host) == "windows":
                     ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
                                       "хост Windows — пакеты Linux не проверяются")
+                elif ctx.host_family(host) == "network":
+                    ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
+                                      "сетевое устройство — проверяется модулем "
+                                      "«Сетевое оборудование»")
                 else:
                     ctx.coverage.mark(host, MODULE, cv.NO_CREDENTIALS,
                                       "нет SSH-учётки для хоста — пакеты не проверены")

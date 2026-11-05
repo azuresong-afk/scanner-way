@@ -327,8 +327,12 @@ export type CredentialAuth = "password" | "key";
 /** Повышение прав для аудита конфигураций: sudo (пароль учётки / NOPASSWD) или без него. */
 export type CredentialBecome = "sudo" | "none";
 
-/** Способ входа: SSH (Linux) или WinRM (Windows, только пароль). */
-export type CredentialProtocol = "ssh" | "winrm";
+/** Способ входа: SSH (Linux), WinRM (Windows, только пароль), SSH в CLI сетевого устройства (netssh) или SNMP. */
+export type CredentialProtocol = "ssh" | "winrm" | "netssh" | "snmp";
+
+/** Платформа сетевого устройства (учётка netssh); auto — определить по CLI. */
+export type NetdevPlatform =
+  | "auto" | "cisco_ios" | "cisco_xe" | "cisco_nxos" | "cisco_asa" | "junos" | "routeros" | "huawei_vrp" | "eltex_esr" | "eltex_mes";
 
 /** Учётка актива на вход. Секреты API принимает, но никогда не отдаёт. */
 export interface CredentialIn {
@@ -344,6 +348,12 @@ export interface CredentialIn {
   protocol?: CredentialProtocol;
   /** Домен Windows для WinRM: логин сохраняется как ДОМЕН\user. */
   domain?: string;
+  /** netssh: платформа устройства. */
+  platform?: NetdevPlatform;
+  /** snmp: 2c — community в password; 3 — USM (ключ auth в password, priv в passphrase). */
+  snmp_version?: "2c" | "3";
+  snmp_auth_proto?: string;
+  snmp_priv_proto?: string;
 }
 
 export interface CredentialOut {
@@ -360,6 +370,8 @@ export interface CredentialOut {
   created_at: string | null;
   become: CredentialBecome;
   protocol: CredentialProtocol;
+  /** Несекретные параметры: platform (netssh), snmp_version/auth_proto/priv_proto (snmp). */
+  options?: Record<string, string>;
 }
 
 export interface PackageOut {
@@ -779,7 +791,7 @@ export interface CredentialCheckIn {
 export interface CredentialLoginOut {
   credential_id: number;
   credential: string;
-  protocol: "ssh" | "winrm";
+  protocol: CredentialProtocol;
   username: string;
   port: number;
   status: CredLoginStatus;

@@ -16,7 +16,7 @@ from typing import Any
 import yaml
 
 PROFILES_DIR = Path(__file__).with_name("profiles")
-PLATFORMS = ("linux", "windows", "any")
+PLATFORMS = ("linux", "windows", "network", "any")
 WIN_OPS = ("eq", "ne", "ge", "le")
 SEVERITIES = ("low", "medium", "high", "critical")
 # Профили по порядку показа.
@@ -50,6 +50,7 @@ class Check:
     vulns: dict[str, Any] | None = None
     services: dict[str, Any] | None = None
     cred_audit: bool = False
+    netdev: tuple[str, ...] = ()         # правила netdev_audit (NETDEV:<id>)
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,9 +151,10 @@ def _check(raw: dict) -> Check:
               password_policy=_tuple(raw.get("password_policy"), f"{cid}.password_policy"),
               windows=tuple(_win(w, cid) for w in raw.get("windows") or ()),
               vulns=vulns, services=raw.get("services"),
-              cred_audit=bool(raw.get("cred_audit")))
+              cred_audit=bool(raw.get("cred_audit")),
+              netdev=_tuple(raw.get("netdev"), f"{cid}.netdev"))
     if not (c.openscap or c.lynis or c.password_policy or c.windows or c.vulns
-            or c.services or c.cred_audit):
+            or c.services or c.cred_audit or c.netdev):
         raise CatalogError(f"проверка {cid}: нет ни одного источника")
     return c
 

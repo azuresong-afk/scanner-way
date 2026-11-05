@@ -45,7 +45,7 @@ _FAMILIES: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
     ("windows", "Windows", ("windows",), r"windows|microsoft"),
     ("macos", "macOS / Apple", ("macos",), r"mac\s*os|apple|darwin"),
     ("bsd", "BSD", ("freebsd", "openbsd", "netbsd"), r"bsd"),
-    ("network", "Сетевое оборудование", (),
+    ("network", "Сетевое оборудование", ("network",),
      (r"cisco|\bios\b|routeros|mikrotik|juniper|junos|huawei|\bvrp\b|fortinet|fortios"
       r"|eltex|элтекс|keenetic|zyxel|d-link|tp-link|ubiquiti|edgeos|aruba|arista")),
 )

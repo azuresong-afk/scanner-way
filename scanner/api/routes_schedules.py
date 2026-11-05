@@ -51,7 +51,7 @@ def _now() -> datetime:
 def _apply(row: ScanSchedule, body: ScheduleIn, *, request: Request, user: Principal,
            audit, runs: RunService) -> None:
     """Проверяет тело как запуск прогона + расписание и переносит в row."""
-    modules = order_modules(with_engine(body.modules, body.vuln_engine))
+    modules = order_modules(with_engine(body.modules, body.vuln_engine, runs.registry))
     check_run_options(row.engagement_id, modules=modules, rate_profile=body.rate_profile,
                       credential_ids=body.credential_ids, cred_set_ids=body.cred_set_ids,
                       user=user, request=request, audit=audit, runs=runs)

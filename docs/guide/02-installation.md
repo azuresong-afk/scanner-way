@@ -26,6 +26,7 @@
 | Сервер → цели из allowlist | ICMP, TCP-порты сканирования (по умолчанию 1000 популярных) | обнаружение, сетевая проверка | да |
 | Сервер → цели | TCP 22 (или порт учётки) | проверка по учётной записи Linux, аудит конфигураций, аудит паролей | при работе с учётками |
 | Сервер → цели | TCP 5986 (HTTPS); 5985 — только при `SCANNER_WINRM_ALLOW_HTTP=1` | проверка Windows по WinRM | при работе с Windows |
+| Сервер → сетевые устройства | TCP 22 (CLI по SSH), UDP 161 (SNMP) | проверка сетевого оборудования | при работе с сетевым оборудованием |
 | Сервер → интернет | `services.nvd.nist.gov`, `epss.cyentia.com`, `www.cisa.gov`, `api.msrc.microsoft.com`, `security-tracker.debian.org`, `security-metadata.canonical.com`, `security.access.redhat.com`, `rdb.altlinux.org`, `dl.astralinux.ru`, `redos.red-soft.ru`, `secdb.alpinelinux.org`, `github.com` (шаблоны Nuclei) | автообновление справочников | нет: в закрытом контуре — комплект данных |
 | Сервер → интернет при сборке | Docker Hub, PyPI, npm, GitHub | сборка образов | только на машине сборки |
 | Сервер → почта, Telegram, Jira, SIEM | адреса из настроек каналов | уведомления | по желанию |

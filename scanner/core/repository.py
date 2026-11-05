@@ -24,6 +24,8 @@ from scanner.core.credentials import (
     BECOME_NONE,
     BECOME_SUDO,
     DEFAULT_PORTS,
+    PROTOCOL_NETSSH,
+    PROTOCOL_SNMP,
     PROTOCOL_SSH,
     PROTOCOL_WINRM,
     CredentialError,
@@ -33,6 +35,7 @@ from scanner.core.credentials import (
     normalize_scope,
     validate_become,
     validate_cred_set_entries,
+    validate_options,
     validate_protocol,
     validate_username,
 )
@@ -219,15 +222,21 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
                            passphrase: str | None = None,
                            created_by: int | None = None,
                            become: str = BECOME_SUDO,
-                           protocol: str = PROTOCOL_SSH) -> int:
+                           protocol: str = PROTOCOL_SSH,
+                           options: dict | None = None) -> int:
     """Завести учётку договора. Секреты шифруются, в БД открытым текстом не попадают.
 
     Область действия (targets) обязана входить в allowlist договора: учётка не
     должна «расширять» объём работ. CredentialError — недопустимые данные.
-    port=None — стандартный порт протокола (SSH 22, WinRM HTTPS 5986).
+    port=None — стандартный порт протокола (SSH 22, WinRM HTTPS 5986, SNMP 161).
     Учётка WinRM — только по паролю (NTLM), повышения прав у неё нет.
+    Учётки сетевого оборудования: netssh — пароль или ключ, без повышения прав
+    (уровень доступа задаётся на устройстве: только просмотр); snmp — секрет в
+    password (community v2c или ключ аутентификации v3) и passphrase (ключ
+    шифрования v3), параметры — в options.
     """
     protocol = validate_protocol(protocol)
+    options = validate_options(protocol, options)
     if auth not in AUTH_KINDS:
         raise CredentialError(f"неизвестный способ аутентификации: {auth}")
     if port is None:
@@ -238,6 +247,22 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
         if auth != AUTH_PASSWORD:
             raise CredentialError("учётка WinRM входит только по паролю (NTLM)")
         become = BECOME_NONE
+    if protocol == PROTOCOL_NETSSH:
+        become = BECOME_NONE
+    if protocol == PROTOCOL_SNMP:
+        if auth != AUTH_PASSWORD:
+            raise CredentialError("учётка SNMP задаётся community или ключами SNMPv3")
+        become = BECOME_NONE
+        if options["snmp_version"] == "2c":
+            username = username or "community"
+        else:
+            if options["priv_proto"] != "none" and not passphrase:
+                raise CredentialError("SNMPv3: нужен ключ шифрования (priv) — или "
+                                      "выберите шифрование «none» (не рекомендуется)")
+            for label, value in (("аутентификации", password),
+                                 ("шифрования", passphrase)):
+                if value and len(value) < 8:
+                    raise CredentialError(f"SNMPv3: ключ {label} короче 8 символов")
     username = validate_username(username)
     become = validate_become(become)
     scope = normalize_scope(targets)
@@ -248,8 +273,13 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
     fingerprint = None
     if auth == AUTH_PASSWORD:
         if not password:
-            raise CredentialError("нужен пароль")
+            raise CredentialError("нужен community SNMP" if protocol == PROTOCOL_SNMP
+                                  and options["snmp_version"] == "2c" else
+                                  "нужен ключ аутентификации SNMPv3"
+                                  if protocol == PROTOCOL_SNMP else "нужен пароль")
         secrets = {"password": password}
+        if protocol == PROTOCOL_SNMP and options["snmp_version"] == "3" and passphrase:
+            secrets["passphrase"] = passphrase
     else:
         if not private_key or not private_key.strip():
             raise CredentialError("нужен закрытый ключ SSH")
@@ -260,7 +290,7 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
                             username=username, port=port, targets=scope,
                             secret_enc=vault.encrypt(secrets),
                             key_fingerprint=fingerprint, created_by=created_by,
-                            become=become, protocol=protocol)
+                            become=become, protocol=protocol, options=options)
     session.add(row)
     session.flush()
     return row.id
@@ -292,8 +322,10 @@ def load_host_credentials(session: Session, vault: CredentialVault, engagement_i
             targets=tuple(str(t) for t in r.targets or ()),
             password=sec.get("password") if r.auth == AUTH_PASSWORD else None,
             private_key=sec.get("private_key") if r.auth == AUTH_KEY else None,
-            passphrase=sec.get("passphrase") if r.auth == AUTH_KEY else None,
-            become=r.become or BECOME_SUDO, protocol=r.protocol or PROTOCOL_SSH))
+            passphrase=(sec.get("passphrase")
+                        if r.auth == AUTH_KEY or r.protocol == PROTOCOL_SNMP else None),
+            become=r.become or BECOME_SUDO, protocol=r.protocol or PROTOCOL_SSH,
+            options=dict(r.options or {})))
     return out
 
 

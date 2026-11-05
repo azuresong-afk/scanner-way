@@ -1,0 +1,32 @@
+Building configuration...
+
+Current configuration : 2101 bytes
+!
+version 15.0
+no service pad
+service timestamps debug datetime msec
+!
+hostname lab-sw1
+!
+enable password 7 0822455D0A16544541
+!
+username admin privilege 15 password 7 13061E010803557878
+username backup secret 5 $1$mERr$hx5rVt7rPNoS4wqbXKX7m0
+!
+ip http server
+ip ssh version 1
+service tcp-small-servers
+!
+snmp-server community public RO
+snmp-server community Wr1teC0mm RW
+!
+line con 0
+ exec-timeout 0 0
+line vty 0 4
+ password 7 104D000A0618
+ login
+ transport input telnet ssh
+line vty 5 15
+ login
+!
+end
