@@ -130,11 +130,17 @@ class AllowlistBulkOut(BaseModel):
 
 # ---- учётные записи активов ----
 class CredentialIn(BaseModel):
-    """Учётка для инвентаризации и аудита конфигураций по SSH или WinRM. Секреты только на вход — API их не отдаёт."""
+    """Учётка для инвентаризации и аудита конфигураций по SSH или WinRM, а также
+    сетевого оборудования (SSH в CLI устройства или SNMP). Секреты только на
+    вход — API их не отдаёт.
+
+    SNMP: snmp_version 2c — community в password; 3 — логин USM в username,
+    ключ аутентификации в password, ключ шифрования в passphrase, алгоритмы —
+    snmp_auth_proto / snmp_priv_proto."""
     name: str = Field(min_length=1, max_length=128)
     username: str = Field(min_length=1, max_length=128)
     auth: str = Field(pattern="^(password|key)$")
-    # Пусто — стандартный порт протокола: SSH 22, WinRM HTTPS 5986.
+    # Пусто — стандартный порт протокола: SSH 22, WinRM HTTPS 5986, SNMP 161.
     port: int | None = Field(default=None, ge=1, le=65535)
     password: str | None = Field(default=None, min_length=1, max_length=1024)
     private_key: str | None = Field(default=None, min_length=1, max_length=16384)
@@ -145,9 +151,25 @@ class CredentialIn(BaseModel):
     become: str = Field(default="sudo", pattern="^(sudo|none)$")
     # Способ входа: ssh | winrm (Windows, только пароль). domain — домен Windows:
     # логин сохраняется как ДОМЕН\\user.
-    protocol: str = Field(default="ssh", pattern="^(ssh|winrm)$")
+    protocol: str = Field(default="ssh", pattern="^(ssh|winrm|netssh|snmp)$")
     domain: str | None = Field(default=None, max_length=64,
                                pattern=r"^[A-Za-z0-9][A-Za-z0-9.\-]*$")
+    # Сетевое оборудование: платформа устройства (netssh, auto — определить),
+    # параметры SNMP (snmp).
+    platform: str | None = Field(default=None, max_length=32)
+    snmp_version: str | None = Field(default=None, pattern="^(2c|3)$")
+    snmp_auth_proto: str | None = Field(default=None, max_length=16)
+    snmp_priv_proto: str | None = Field(default=None, max_length=16)
+
+    def options(self) -> dict:
+        """Несекретные параметры учётки (проверяет repository/credentials)."""
+        if self.protocol == "netssh":
+            return {"platform": self.platform or "auto"}
+        if self.protocol == "snmp":
+            return {"snmp_version": self.snmp_version or "3",
+                    "auth_proto": self.snmp_auth_proto or "sha",
+                    "priv_proto": self.snmp_priv_proto or "aes"}
+        return {}
 
     def login(self) -> str:
         """Логин для хранения: с доменом Windows, если он задан отдельно."""
@@ -176,6 +198,12 @@ class CredentialOut(_Orm):
     created_at: datetime | None
     become: str = "sudo"
     protocol: str = "ssh"
+    options: dict = {}
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def _options_dict(cls, v: object) -> dict:
+        return dict(v or {}) if isinstance(v, dict) else {}
 
     @field_validator("targets", mode="before")
     @classmethod
@@ -660,7 +688,7 @@ class CredentialCheckIn(BaseModel):
 class CredentialLoginOut(BaseModel):
     credential_id: int
     credential: str
-    protocol: str                 # ssh | winrm
+    protocol: str                 # ssh | winrm | netssh | snmp
     username: str
     port: int
     status: str                   # ok | auth_failed | timeout | unreachable | host_key_mismatch | error

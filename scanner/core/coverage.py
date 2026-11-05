@@ -52,7 +52,8 @@ STATUS_LABELS = {
 
 # Модули, которые входят на хост по учётной записи (их пробелы = нет
 # пакетного аудита / аудита конфигурации).
-AUTH_MODULES = frozenset({"auth_inventory", "win_inventory", "config_audit"})
+AUTH_MODULES = frozenset({"auth_inventory", "win_inventory", "netdev_audit",
+                          "config_audit"})
 
 MSG_HOST_DOWN = "Хост недоступен, проверка не выполнена"
 REC_HOST_DOWN = ("Хост не ответил на обнаружение (ICMP/TCP). Проверьте, что он "

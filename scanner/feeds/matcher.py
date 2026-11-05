@@ -235,6 +235,49 @@ class VulnMatcher:
         return self._version_findings(res, host=host, port=None, module=module,
                                       label=label, evidence=evidence)
 
+    def findings_for_firmware(self, host: str, *, product: str, versions: Sequence[str],
+                              cpe: str | None = None, bdu_names: Sequence[str] = (),
+                              module: str = "netdev_audit",
+                              source: str = "") -> list[Finding]:
+        """Находки по версии ОС сетевого устройства (Cisco IOS, Junos, RouterOS…).
+
+        :param product: название ОС для подписи («Cisco IOS XE»).
+        :param versions: версия и, при необходимости, кандидаты (у Huawei —
+            полная версия V200R009C00SPC500 и базовая V200R009C00); находки
+            по всем кандидатам объединяются без повторов.
+        :param cpe: ``cpe:/o:vendor:product`` для NVD; без него — только БДУ.
+        :param bdu_names: названия ПО в БДУ ФСТЭК («Cisco IOS», «JunOS»…).
+        Находки без порта: уязвимость относится к устройству. В отличие от
+        пакетов Linux, у прошивок нет бэкпортов: версия вендора — точная.
+        """
+        out: dict[str, Finding] = {}
+        for version in dict.fromkeys(v for v in versions if v):
+            cpe_value = f"{cpe}:{version}" if cpe else None
+            service = ServiceInfo(host=host, port=0, protocol="firmware", product=product,
+                                  version=version, cpe=cpe_value)
+            res = MatchResult()
+            if cpe:
+                for cve, ev in self._cves_by_cpe(service):
+                    self._add_cve(res, cve, ev)
+            if self.bdu_product_match:
+                for rec, ev in self._bdu_by_product(service, extra_names=bdu_names,
+                                                    hints=False):
+                    self._add_bdu(res, rec, ev)
+            label = f"{product} {version}"
+
+            def evidence(ids: set[str], res=res, label=label, cpe_value=cpe_value) -> str:
+                lines = [f"ОС устройства: {label}" + (f", {cpe_value}" if cpe_value else "")
+                         + (f" ({source})" if source else "")]
+                lines += [f"[{e.source}] {e.identifier}: {e.detail}"
+                          for e in res.evidence
+                          if e.identifier in ids and e.source in (SRC_CPE, SRC_BDU_PRODUCT)]
+                return "\n".join(lines)
+
+            for f in self._version_findings(res, host=host, port=None, module=module,
+                                            label=label, evidence=evidence):
+                out.setdefault(f.vuln_id or "", f)
+        return list(out.values())
+
     def _version_findings(self, res: MatchResult, *, host: str, port: int | None,
                           module: str, label: str | None,
                           evidence: Callable[[set[str]], str]) -> list[Finding]:

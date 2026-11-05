@@ -82,6 +82,7 @@ MODULE_LABELS: dict[str, str] = {
     "discovery": "Инвентаризация сети",
     "vuln": "Уязвимости ПО",
     "auth_inventory": "Уязвимости ПО по учётной записи",
+    "netdev_audit": "Сетевое оборудование",
     "config_audit": "Аудит конфигураций",
     "password_policy": "Парольная политика",
     "cred_audit": "Аудит учётных записей",

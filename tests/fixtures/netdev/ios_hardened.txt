@@ -1,0 +1,42 @@
+Building configuration...
+!
+version 15.2
+service password-encryption
+no service pad
+!
+hostname core-sw
+!
+aaa new-model
+aaa authentication login default group tacacs+ local
+!
+enable algorithm-type scrypt secret 9 $9$nhEmQVczB7dqsO$X.HsgL6x1il0RxkOSSvyQYwucySCt7qFm4v7pqCxkKM
+username admin privilege 15 algorithm-type scrypt secret 9 $9$abcdefghijklmn$0123456789abcdefghijklmnopqrstuvwxyzABCDEFG
+!
+no ip source-route
+no ip http server
+ip ssh version 2
+login block-for 120 attempts 5 within 60
+!
+snmp-server group NMS v3 priv
+snmp-server user nms NMS v3 auth sha AuthKey123 priv aes 128 PrivKey123
+!
+logging host 10.0.0.50
+ntp server 10.0.0.1
+banner login ^C
+Authorized access only
+^C
+!
+ip access-list standard MGMT
+ permit 10.0.0.0 0.0.0.255
+!
+line con 0
+ exec-timeout 5 0
+line vty 0 4
+ access-class MGMT in
+ exec-timeout 10 0
+ transport input ssh
+line vty 5 15
+ access-class MGMT in
+ transport input ssh
+!
+end

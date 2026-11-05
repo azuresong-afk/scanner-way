@@ -7,7 +7,10 @@
   * SSH — TCP-подключение к порту учётки, затем вход paramiko (`sshexec.connect`)
     и сразу закрытие сессии. Ни одной команды на хосте не выполняется;
   * WinRM — TCP-подключение, затем открытие и закрытие оболочки WS-Man
-    (`winexec.connect`: именно здесь проходят TLS и NTLM). Ни одного скрипта.
+    (`winexec.connect`: именно здесь проходят TLS и NTLM). Ни одного скрипта;
+  * сетевое устройство по SSH (netssh) — как SSH: вход и выход, без команд;
+  * SNMP — один GET sysDescr (UDP, без TCP-пробы): ответ агента и есть
+    проверка учётки. Неверный community v2c неотличим от недоступного агента.
 
 Перед входом — быстрая TCP-проба порта учётки (`reachability.tcp_probe`):
 закрытый порт и молчащий хост дают понятный ответ за секунды, без ожидания
@@ -27,9 +30,9 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from scanner.core import sshexec, winexec
+from scanner.core import netexec, sshexec, winexec
 from scanner.core.credentials import (
-    PROTOCOL_SSH,
+    PROTOCOL_SNMP,
     PROTOCOL_WINRM,
     PROTOCOLS,
     CredentialError,
@@ -57,6 +60,7 @@ LOGIN_TIMEOUT_SEC = 10.0
 Probe = Callable[[str, int, float], PortResult]
 SshConnect = Callable[[str, HostCredential, sshexec.SshOptions], sshexec.RemoteShell]
 WinConnect = Callable[[str, HostCredential, winexec.WinRmOptions], winexec.WinShell]
+SnmpGet = Callable[..., dict[str, str]]
 
 
 @dataclass(slots=True)
@@ -89,6 +93,8 @@ class Connectors:
     probe: Probe = tcp_probe
     ssh_connect: SshConnect = sshexec.connect
     win_connect: WinConnect = winexec.connect
+    snmp_get: SnmpGet = netexec.snmp_get
+    snmp_options: netexec.SnmpOptions = field(default_factory=netexec.SnmpOptions)
     precheck_timeout: float = PRECHECK_TIMEOUT_SEC
 
 
@@ -160,12 +166,35 @@ def _login_winrm(host: str, cred: HostCredential, c: Connectors) -> tuple[str, s
     return OK, "WinRM: вход выполнен"
 
 
+def _login_snmp(host: str, cred: HostCredential, c: Connectors) -> tuple[str, str]:
+    try:
+        values = c.snmp_get(host, cred, (netexec.OID_SYS_DESCR,), c.snmp_options)
+    except netexec.SnmpAuthFailed:
+        return AUTH_FAILED, "SNMPv3: логин или ключи отклонены агентом"
+    except netexec.SnmpTimeout:
+        return TIMEOUT, (f"SNMP: агент не ответил (UDP/{cred.port}) — устройство "
+                         "недоступно, адрес сканера не разрешён на устройстве или "
+                         "неверный community")
+    except netexec.NetError as e:
+        return ERROR, str(e)[:200]
+    descr = " ".join((values.get(netexec.OID_SYS_DESCR) or "").split())[:80]
+    return OK, "SNMP: агент ответил" + (f" ({descr})" if descr else "")
+
+
+_LABELS = {"ssh": "SSH", "winrm": "WinRM", "netssh": "SSH (сетевое устройство)",
+           "snmp": "SNMP"}
+
+
 def check_login(host: str, cred: HostCredential, c: Connectors) -> LoginResult:
-    """Одна попытка входа по учётке: TCP-проба порта, затем вход и выход."""
+    """Одна попытка входа по учётке: TCP-проба порта, затем вход и выход
+    (SNMP — UDP: сразу запрос sysDescr)."""
     start = time.monotonic()
-    label = "SSH" if cred.protocol == PROTOCOL_SSH else "WinRM"
-    pre = c.probe(host, cred.port, c.precheck_timeout)
-    if pre.state == "closed":
+    label = _LABELS.get(cred.protocol, cred.protocol)
+    pre = (c.probe(host, cred.port, c.precheck_timeout) if cred.protocol != PROTOCOL_SNMP
+           else None)
+    if pre is None:
+        status, message = _login_snmp(host, cred, c)
+    elif pre.state == "closed":
         status, message = UNREACHABLE, f"{label}: порт {cred.port} закрыт"
     elif pre.state != "open":
         status, message = TIMEOUT, (f"{label}: порт {cred.port} не ответил за "

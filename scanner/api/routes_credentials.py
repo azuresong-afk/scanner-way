@@ -1,4 +1,5 @@
-"""Учётные записи активов договора (инвентаризация и аудит конфигураций по SSH/WinRM).
+"""Учётные записи активов договора (инвентаризация и аудит конфигураций по
+SSH/WinRM, сетевое оборудование по SSH-CLI/SNMP).
 
 Все операции — только с правом host_credentials. Секреты принимаются на вход
 и сразу шифруются; ни один ответ API и ни одна запись аудита их не содержат.
@@ -47,8 +48,10 @@ def create_credential(engagement_id: int, body: CredentialIn, request: Request,
             username=body.login(), port=body.port, targets=body.targets,
             password=body.password if body.auth == "password" else None,
             private_key=body.private_key if body.auth == "key" else None,
-            passphrase=body.passphrase if body.auth == "key" else None,
-            created_by=user.id, become=body.become, protocol=body.protocol)
+            passphrase=(body.passphrase
+                        if body.auth == "key" or body.protocol == "snmp" else None),
+            created_by=user.id, become=body.become, protocol=body.protocol,
+            options=body.options())
     except CredentialError as e:
         audit.record(subject=user.subject, action="credential_create",
                      target=f"engagement:{engagement_id}", result="rejected",
@@ -63,7 +66,7 @@ def create_credential(engagement_id: int, body: CredentialIn, request: Request,
                  target=f"engagement:{engagement_id}", result="ok",
                  details={"credential_id": cid, "name": row.name, "user": row.username,
                           "port": row.port, "auth": row.auth, "become": row.become,
-                          "protocol": row.protocol,
+                          "protocol": row.protocol, "options": dict(row.options or {}),
                           "targets": list(row.targets or []),
                           "key_fingerprint": row.key_fingerprint})
     return row
