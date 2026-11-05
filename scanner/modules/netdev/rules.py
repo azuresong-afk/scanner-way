@@ -18,7 +18,7 @@ configuration | display set, /export terse, display current-configuration) по
 конфигурация нигде не сохраняется.
 
 Правила Eltex ESR/MES составлены по документации вендора и подлежат проверке
-на стенде (см. docs/TESTING.md, шаг 8ж).
+на стенде (см. docs/TESTING.md, шаг 8з).
 """
 from __future__ import annotations
 
