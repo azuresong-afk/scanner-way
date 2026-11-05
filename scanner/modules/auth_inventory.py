@@ -445,6 +445,8 @@ class AuthInventoryModule(ScanModule):
         self._fetch_advisories = fetch_advisories
         self._connect = connector or connect
         self._sleep = sleep
+        # Ошибка чтения бюллетеней на этом прогоне (пробел покрытия хостов).
+        self._adv_error: str | None = None
 
     # --- сбор ---
     def _collect(self, ctx: ScanContext, throttle: _Throttle, host: str,
@@ -545,6 +547,9 @@ class AuthInventoryModule(ScanModule):
                                  target=inv.host, result="error",
                                  details={"software": sw.label,
                                           "error": f"{type(e).__name__}: {e}"[:300]})
+                ctx.coverage.mark(inv.host, MODULE, cv.ERROR, cv.match_failed(
+                    f"сопоставление {sw.label} {g.upstream or ''} с БДУ/NVD".replace("  ", " "),
+                    e))
                 continue
             for f in found:
                 key = f.vuln_id or ""
@@ -626,6 +631,8 @@ class AuthInventoryModule(ScanModule):
                                          target=inv.host, result="error",
                                          details={"cve": cve,
                                                   "error": f"{type(e).__name__}: {e}"[:300]})
+                        ctx.coverage.mark(inv.host, MODULE, cv.ERROR, cv.match_failed(
+                            f"привязка {cve} к БДУ/NVD", e))
                 note = ""
                 if f.severity is Severity.INFO:
                     f.severity = Severity.MEDIUM
@@ -779,6 +786,8 @@ class AuthInventoryModule(ScanModule):
                                      target=inv.host, result="error",
                                      details={"cve": cve,
                                               "error": f"{type(e).__name__}: {e}"[:300]})
+                    ctx.coverage.mark(inv.host, MODULE, cv.ERROR, cv.match_failed(
+                        f"привязка {cve} (ядро) к БДУ/NVD", e))
             note = ""
             if f.severity is Severity.INFO:
                 f.severity = Severity.MEDIUM
@@ -863,6 +872,10 @@ class AuthInventoryModule(ScanModule):
                 if ctx.host_family(host) == "windows":
                     ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
                                       "хост Windows — пакеты Linux не проверяются")
+                elif ctx.host_family(host) == "network":
+                    ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
+                                      "сетевое устройство — проверяется модулем "
+                                      "«Сетевое оборудование»")
                 else:
                     ctx.coverage.mark(host, MODULE, cv.NO_CREDENTIALS,
                                       "нет SSH-учётки для хоста — пакеты не проверены")
@@ -881,14 +894,19 @@ class AuthInventoryModule(ScanModule):
             collected = list(pool.map(lambda j: (j, self._collect(ctx, throttle, *j)), jobs))
 
         matcher = self._run_matcher()
+        # Почему сопоставление с БДУ/NVD на этом прогоне неполное (пустой или
+        # недоступный справочник): такие хосты — пробел покрытия, не «чисто».
+        ref_gap = cv.reference_gap(matcher)
         bdu_names: set[str] = set()
-        if matcher is not None:
+        if matcher is not None and ref_gap is None:
             try:
                 bdu_names = set(matcher.store.bdu_software_names())  # type: ignore[attr-defined]
             except Exception as e:  # noqa: BLE001 — без индекса работают известные пакеты
                 ctx.audit.record(subject="scanner", action="auth_inventory_match",
                                  target="bdu_software_names", result="error",
                                  details=f"{type(e).__name__}: {e}"[:300])
+                ref_gap = cv.match_failed("поиск ПО по названиям БДУ", e)
+        self._adv_error = None
         advisories, loaded = self._run_advisories(ctx)
         inventories = [inv for _, (inv, _) in collected if inv is not None]
         fetch_errors = self._fetch_missing(ctx, inventories, loaded)
@@ -901,6 +919,10 @@ class AuthInventoryModule(ScanModule):
             if inv is None:
                 continue
             ctx.inventory[host] = inv
+            if ref_gap is not None and inv.packages:
+                ctx.coverage.mark(host, MODULE, cv.ERROR, f"пакеты: {ref_gap}")
+            if self._adv_error is not None and inv.packages:
+                ctx.coverage.mark(host, MODULE, cv.ERROR, self._adv_error)
             adv = self._host_advisories(ctx, inv, advisories, loaded, errors)
             matched = (self._match(ctx, inv, matcher, bdu_names, adv)
                        if matcher or (adv and adv.has_data) else [])
@@ -958,6 +980,8 @@ class AuthInventoryModule(ScanModule):
             ctx.audit.record(subject="scanner", action="auth_inventory_backport",
                              target="distro_advisory", result="error",
                              details=f"{type(e).__name__}: {e}"[:300])
+            # бюллетени есть, но прочитать их не удалось — проверка неполная
+            self._adv_error = cv.match_failed("сверка с бюллетенями вендора", e)
             return None, None
 
     def _fetch_missing(self, ctx: ScanContext, inventories: list[HostInventory],
@@ -1008,6 +1032,8 @@ class AuthInventoryModule(ScanModule):
             ctx.audit.record(subject="scanner", action="auth_inventory_backport",
                              target=inv.host, result="error",
                              details=f"{type(e).__name__}: {e}"[:300])
+            ctx.coverage.mark(inv.host, MODULE, cv.ERROR,
+                              cv.match_failed("сверка с бюллетенями вендора", e))
             return None
 
     def _run_matcher(self) -> _Matcher | None:

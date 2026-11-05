@@ -59,6 +59,9 @@ def infer(f: Finding) -> tuple[str, str]:
                 f.confidence or ("high" if msrc else "medium"))
     if m == "db_audit":
         return f.source or "authenticated_package", f.confidence or "medium"
+    if m == "netdev_audit":
+        # версия ОС устройства: точная по CLI, по sysDescr — чуть менее точная
+        return f.source or "vendor_version", f.confidence or "high"
     if m == "vuln":
         return f.source or "nuclei", f.confidence or "medium"
     if m in ("config_audit", "password_policy"):

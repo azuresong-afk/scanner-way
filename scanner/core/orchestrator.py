@@ -60,22 +60,24 @@ from scanner.reporting.diff import diff_runs
 # Порядок исполнения: discovery первым — его сервисы (ctx.services) нужны
 # остальным модулям.
 MODULE_ORDER: tuple[str, ...] = ("discovery", "vuln", "auth_inventory", "win_inventory",
-                                 "config_audit", "password_policy", "db_audit",
+                                 "netdev_audit", "config_audit", "password_policy",
+                                 "db_audit",
                                  "cred_audit")
 
 # Движки поиска уязвимостей (выбор оператора): сетевые проверки Nuclei без
 # учётной записи и/или инвентаризация по учётной записи — пакеты Linux
-# (auth_inventory) и обновления/ПО Windows по WinRM (win_inventory). Каждый
-# модуль инертен там, где у него нет подходящей учётки, поэтому в смешанной
-# сети «По учётной записи» покрывает и Linux, и Windows.
+# (auth_inventory), обновления/ПО Windows по WinRM (win_inventory) и сетевое
+# оборудование по SSH-CLI/SNMP (netdev_audit). Каждый модуль инертен там, где у
+# него нет подходящей учётки, поэтому в смешанной сети «По учётной записи»
+# покрывает и Linux, и Windows, и коммутаторы/маршрутизаторы.
 VULN_ENGINES: dict[str, tuple[str, ...]] = {
     "nuclei": ("vuln",),
-    "credentialed": ("auth_inventory", "win_inventory"),
-    "both": ("vuln", "auth_inventory", "win_inventory"),
+    "credentialed": ("auth_inventory", "win_inventory", "netdev_audit"),
+    "both": ("vuln", "auth_inventory", "win_inventory", "netdev_audit"),
 }
 # Модули, которые входят на хосты по учётным записям договора (ctx.credentials).
-CREDENTIAL_MODULES = frozenset({"auth_inventory", "win_inventory", "config_audit",
-                                "db_audit"})
+CREDENTIAL_MODULES = frozenset({"auth_inventory", "win_inventory", "netdev_audit",
+                                "config_audit", "db_audit"})
 # Модули-спутники: ставятся в прогон вместе с основным. password_policy оценивает
 # парольную политику, которую собирает config_audit (ctx.host_policy_configs);
 # сам по себе в сеть не ходит и без config_audit инертен.
@@ -136,6 +138,10 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
         return WinInventoryModule(WinInventoryOptions(winrm=options_from_env()),
                                   matcher=matcher)
 
+    def netdev_audit() -> ScanModule:
+        from scanner.modules.netdev_audit import NetdevAuditModule, options_from_env
+        return NetdevAuditModule(options_from_env(), matcher=matcher)
+
     def config_audit() -> ScanModule:
         from scanner.modules.config_audit import ConfigAuditModule, options_from_env
         return ConfigAuditModule(options_from_env())
@@ -157,7 +163,8 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
         return CredentialAuditModule(authenticator=build_default_authenticator())
 
     return {"discovery": discovery, "vuln": vuln, "auth_inventory": auth_inventory,
-            "win_inventory": win_inventory, "config_audit": config_audit,
+            "win_inventory": win_inventory, "netdev_audit": netdev_audit,
+            "config_audit": config_audit,
             "password_policy": password_policy, "db_audit": db_audit,
             "cred_audit": cred_audit}
 
@@ -768,9 +775,11 @@ class RunService:
             try:
                 from scanner.feeds.store import SqlReferenceStore
                 store = SqlReferenceStore(engine)
-            except Exception:
+            except Exception as e:
                 log.exception("cannot build reference store; vuln findings won't be enriched")
-                return None
+                # не None: модули отметят хосты пробелом покрытия, а не «чисто»
+                from scanner.feeds.store import UnavailableReferenceStore
+                store = UnavailableReferenceStore(f"{type(e).__name__}: {e}"[:200])
         from scanner.feeds.matcher import VulnMatcher
         return VulnMatcher(store)
 

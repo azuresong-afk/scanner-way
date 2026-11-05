@@ -52,12 +52,45 @@ STATUS_LABELS = {
 
 # Модули, которые входят на хост по учётной записи (их пробелы = нет
 # пакетного аудита / аудита конфигурации).
-AUTH_MODULES = frozenset({"auth_inventory", "win_inventory", "config_audit", "db_audit"})
+AUTH_MODULES = frozenset({"auth_inventory", "win_inventory", "netdev_audit",
+                          "config_audit", "db_audit"})
 
 MSG_HOST_DOWN = "Хост недоступен, проверка не выполнена"
 REC_HOST_DOWN = ("Хост не ответил на обнаружение (ICMP/TCP). Проверьте, что он "
                  "включён и доступен из сети сканера. Если хост блокирует ICMP, "
                  "запустите прогон с опцией «Сканировать без проверки ping (-Pn)».")
+
+
+# --- «нет ложной чистоты»: сломанная проверка -> пробел покрытия, не «чисто» ---
+FEEDS_HINT = ("загрузите справочники в разделе «Справочники» и повторите прогон")
+
+
+def match_failed(what: str, exc: BaseException | str) -> str:
+    """Причина пробела: сопоставление с БДУ/NVD (или MSRC) упало на хосте."""
+    err = exc if isinstance(exc, str) else f"{type(exc).__name__}: {exc}"
+    return f"{what} не выполнено — {err}"[:300]
+
+
+def reference_gap(matcher: object | None) -> str | None:
+    """Почему сопоставление версий с БДУ/NVD сейчас невозможно (None — возможно).
+
+    Пустой справочник БДУ ФСТЭК (свежая установка) или недоступная БД не
+    должны давать «уязвимостей нет»: на хостах, где было что сопоставлять,
+    такой прогон — частичный. Matcher без справочника с подсчётом записей
+    (тестовые заглушки) считается рабочим."""
+    if matcher is None:
+        return None
+    counts = getattr(getattr(matcher, "store", None), "counts", None)
+    if counts is None:
+        return None
+    try:
+        c = counts()
+    except Exception as e:  # noqa: BLE001 — недоступность справочника и есть причина
+        return f"справочники БДУ/NVD недоступны ({type(e).__name__}: {e})"[:300]
+    if not c.get("bdu"):
+        return ("справочник БДУ ФСТЭК пуст — версии ПО не сопоставлены с уязвимостями; "
+                + FEEDS_HINT)
+    return None
 
 
 @dataclass(slots=True)

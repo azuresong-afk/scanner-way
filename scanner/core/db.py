@@ -100,10 +100,12 @@ class HostCredentialRow(Base):
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
     # Повышение прав для аудита конфигураций: sudo | none (миграция 0008).
     become: Mapped[str] = mapped_column(Text, default="sudo", server_default="sudo")
-    # Способ входа: ssh | winrm (миграция 0014, R3).
+    # Способ входа: ssh | winrm (миграция 0014, R3) | netssh | snmp (0025).
     protocol: Mapped[str] = mapped_column(Text, default="ssh", server_default="ssh")
     # База / имя сервиса Oracle для учёток СУБД (миграция 0026, db_audit).
     db_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Несекретные параметры: платформа устройства, версия SNMP (миграция 0025).
+    options: Mapped[dict] = mapped_column(Jsonb, default=dict, server_default="{}")
 
 
 # ========== Наборы проверки учёток (аудит паролей) ==========

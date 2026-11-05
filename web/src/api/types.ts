@@ -330,8 +330,12 @@ export type CredentialBecome = "sudo" | "none";
 /** СУБД для аудита баз данных (db_audit): учётка СУБД только на чтение, только пароль. */
 export type DbProtocol = "postgresql" | "mysql" | "mssql" | "oracle";
 
-/** Способ входа: SSH (Linux), WinRM (Windows, только пароль) или СУБД. */
-export type CredentialProtocol = "ssh" | "winrm" | DbProtocol;
+/** Способ входа: SSH (Linux), WinRM (Windows, только пароль), SSH в CLI сетевого устройства (netssh), SNMP или СУБД. */
+export type CredentialProtocol = "ssh" | "winrm" | "netssh" | "snmp" | DbProtocol;
+
+/** Платформа сетевого устройства (учётка netssh); auto — определить по CLI. */
+export type NetdevPlatform =
+  | "auto" | "cisco_ios" | "cisco_xe" | "cisco_nxos" | "cisco_asa" | "junos" | "routeros" | "huawei_vrp" | "eltex_esr" | "eltex_mes";
 
 /** Учётка актива на вход. Секреты API принимает, но никогда не отдаёт. */
 export interface CredentialIn {
@@ -347,6 +351,12 @@ export interface CredentialIn {
   protocol?: CredentialProtocol;
   /** Домен Windows для WinRM: логин сохраняется как ДОМЕН\user. */
   domain?: string;
+  /** netssh: платформа устройства. */
+  platform?: NetdevPlatform;
+  /** snmp: 2c — community в password; 3 — USM (ключ auth в password, priv в passphrase). */
+  snmp_version?: "2c" | "3";
+  snmp_auth_proto?: string;
+  snmp_priv_proto?: string;
   /** СУБД: база для входа (PostgreSQL, MS SQL) или имя сервиса Oracle. */
   db_name?: string;
 }
@@ -365,6 +375,8 @@ export interface CredentialOut {
   created_at: string | null;
   become: CredentialBecome;
   protocol: CredentialProtocol;
+  /** Несекретные параметры: platform (netssh), snmp_version/auth_proto/priv_proto (snmp). */
+  options?: Record<string, string>;
   db_name?: string | null;
 }
 

@@ -5,12 +5,19 @@
 аудита конфигураций (`config_audit`). Для аудита конфигураций нужны права root:
 поле `become` (`sudo` | `none`) говорит, повышать ли права через sudo.
 
-Поле `protocol` (`ssh` | `winrm` | `postgresql` | `mysql` | `mssql` | `oracle`) —
-способ входа. Учётки WinRM (Windows, только пароль, логин `ДОМЕН\\user` или
-`user@домен`) использует модуль `win_inventory`; учётки СУБД (только пароль,
-учётная запись СУБД только на чтение) — модуль `db_audit`, `db_name` — база
-(PostgreSQL, MS SQL) или имя сервиса Oracle. SSH-модули чужих учёток не видят:
-`credentials_for_host` по умолчанию отдаёт только SSH.
+Поле `protocol` (`ssh` | `winrm` | `netssh` | `snmp` | `postgresql` | `mysql` |
+`mssql` | `oracle`) — способ входа. Учётки WinRM (Windows, только пароль, логин
+`ДОМЕН\\user` или `user@домен`) использует модуль `win_inventory`; учётки сетевого
+оборудования — `netssh` (SSH в CLI коммутатора или маршрутизатора) и `snmp`
+(SNMPv2c community или SNMPv3 USM, только чтение) — модуль `netdev_audit`; учётки
+СУБД (только пароль, учётная запись СУБД только на чтение) — модуль `db_audit`,
+`db_name` — база (PostgreSQL, MS SQL) или имя сервиса Oracle. SSH-модули чужие
+учётки не видят: `credentials_for_host` по умолчанию отдаёт только SSH.
+
+Несекретные параметры учётки (платформа сетевого устройства, версия SNMP,
+алгоритмы SNMPv3) — в `options`; секреты SNMP (community, ключи SNMPv3) шифруются
+как пароль: community / ключ аутентификации — `password`, ключ шифрования
+SNMPv3 — `passphrase`.
 
 Безопасность:
 - секреты (пароль, закрытый ключ, парольная фраза) хранятся в БД только
@@ -51,18 +58,33 @@ BECOME_KINDS = (BECOME_SUDO, BECOME_NONE)
 # Способ входа на хост: SSH (Linux/Unix) или WinRM (Windows, HTTPS + NTLM).
 PROTOCOL_SSH = "ssh"
 PROTOCOL_WINRM = "winrm"
+# Сетевое оборудование (netdev_audit): SSH в CLI устройства и SNMP только чтение.
+PROTOCOL_NETSSH = "netssh"
+PROTOCOL_SNMP = "snmp"
+NETDEV_PROTOCOLS = (PROTOCOL_NETSSH, PROTOCOL_SNMP)
 # СУБД (db_audit): вход учётной записью СУБД, только пароль. MariaDB — mysql.
 PROTOCOL_POSTGRESQL = "postgresql"
 PROTOCOL_MYSQL = "mysql"
 PROTOCOL_MSSQL = "mssql"
 PROTOCOL_ORACLE = "oracle"
 DB_PROTOCOLS = (PROTOCOL_POSTGRESQL, PROTOCOL_MYSQL, PROTOCOL_MSSQL, PROTOCOL_ORACLE)
-PROTOCOLS = (PROTOCOL_SSH, PROTOCOL_WINRM, *DB_PROTOCOLS)
-DEFAULT_PORTS = {PROTOCOL_SSH: 22, PROTOCOL_WINRM: 5986, PROTOCOL_POSTGRESQL: 5432,
-                 PROTOCOL_MYSQL: 3306, PROTOCOL_MSSQL: 1433, PROTOCOL_ORACLE: 1521}
+PROTOCOLS = (PROTOCOL_SSH, PROTOCOL_WINRM, PROTOCOL_NETSSH, PROTOCOL_SNMP, *DB_PROTOCOLS)
+DEFAULT_PORTS = {PROTOCOL_SSH: 22, PROTOCOL_WINRM: 5986, PROTOCOL_NETSSH: 22,
+                 PROTOCOL_SNMP: 161, PROTOCOL_POSTGRESQL: 5432, PROTOCOL_MYSQL: 3306,
+                 PROTOCOL_MSSQL: 1433, PROTOCOL_ORACLE: 1521}
 # База по умолчанию для входа (Oracle — имени сервиса по умолчанию нет).
 DEFAULT_DB_NAMES = {PROTOCOL_POSTGRESQL: "postgres", PROTOCOL_MSSQL: "master"}
 _DB_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.$#-]{0,127}$")
+
+# Платформы сетевых устройств (подсказка в учётке netssh; auto — определить по
+# приглашению CLI и выводу show version / display version).
+NETDEV_PLATFORMS = ("auto", "cisco_ios", "cisco_xe", "cisco_nxos", "cisco_asa", "junos",
+                    "routeros", "huawei_vrp", "eltex_esr", "eltex_mes")
+SNMP_VERSIONS = ("2c", "3")
+SNMP_AUTH_PROTOCOLS = ("sha", "sha224", "sha256", "sha384", "sha512", "md5")
+# aes192/aes256 — стандартное расширение ключа (Blumenthal), aes192c/aes256c —
+# вариант Cisco (Reeder); des — устаревший, только для старых устройств.
+SNMP_PRIV_PROTOCOLS = ("aes", "aes192", "aes256", "aes192c", "aes256c", "des", "none")
 
 # Сколько учёток пробовать на одном хосте: учётки задаёт оператор, но
 # серия неудачных входов может заблокировать учётную запись на цели.
@@ -248,7 +270,9 @@ class HostCredential:
     private_key: str | None = field(default=None, repr=False)
     passphrase: str | None = field(default=None, repr=False)
     become: str = BECOME_SUDO                   # sudo | none
-    protocol: str = PROTOCOL_SSH                # ssh | winrm | postgresql | mysql | …
+    protocol: str = PROTOCOL_SSH                # ssh | winrm | netssh | snmp | СУБД
+    # Несекретные параметры: platform (netssh), snmp_version/auth_proto/priv_proto.
+    options: dict = field(default_factory=dict, compare=False, hash=False)
     db_name: str | None = None                  # база / имя сервиса Oracle (СУБД)
 
     @property
@@ -272,10 +296,15 @@ class HostCredential:
 
     def describe(self) -> dict[str, object]:
         """Описание для аудита и находок — без секретов."""
-        return {"credential_id": self.id, "credential": self.name,
-                "user": self.username, "port": self.port, "auth": self.auth,
-                "become": self.become, "protocol": self.protocol,
-                **({"db_name": self.db_name} if self.db_name else {})}
+        out: dict[str, object] = {
+            "credential_id": self.id, "credential": self.name, "user": self.username,
+            "port": self.port, "auth": self.auth, "become": self.become,
+            "protocol": self.protocol}
+        if self.options:
+            out["options"] = dict(self.options)
+        if self.db_name:
+            out["db_name"] = self.db_name
+        return out
 
 
 def validate_become(become: str) -> str:
@@ -306,6 +335,37 @@ def validate_db_name(protocol: str, db_name: str | None) -> str | None:
     if not _DB_NAME_RE.match(name):
         raise CredentialError(f"недопустимое имя базы/сервиса: {name!r}")
     return name
+
+
+def validate_options(protocol: str, options: dict | None) -> dict:
+    """Несекретные параметры учётки по протоколу; лишние ключи отбрасываются.
+
+    netssh: platform (NETDEV_PLATFORMS, по умолчанию auto).
+    snmp: snmp_version (2c | 3), для v3 — auth_proto и priv_proto.
+    """
+    raw = dict(options or {})
+    if protocol == PROTOCOL_NETSSH:
+        platform = str(raw.get("platform") or "auto")
+        if platform not in NETDEV_PLATFORMS:
+            raise CredentialError(f"неизвестная платформа устройства: {platform!r} "
+                                  f"(допустимо: {', '.join(NETDEV_PLATFORMS)})")
+        return {"platform": platform}
+    if protocol == PROTOCOL_SNMP:
+        version = str(raw.get("snmp_version") or "3")
+        if version not in SNMP_VERSIONS:
+            raise CredentialError(f"версия SNMP: {version!r} (допустимо: 2c, 3)")
+        if version == "2c":
+            return {"snmp_version": "2c"}
+        auth = str(raw.get("auth_proto") or "sha").lower()
+        priv = str(raw.get("priv_proto") or "aes").lower()
+        if auth not in SNMP_AUTH_PROTOCOLS:
+            raise CredentialError(f"алгоритм аутентификации SNMPv3: {auth!r} "
+                                  f"(допустимо: {', '.join(SNMP_AUTH_PROTOCOLS)})")
+        if priv not in SNMP_PRIV_PROTOCOLS:
+            raise CredentialError(f"алгоритм шифрования SNMPv3: {priv!r} "
+                                  f"(допустимо: {', '.join(SNMP_PRIV_PROTOCOLS)})")
+        return {"snmp_version": "3", "auth_proto": auth, "priv_proto": priv}
+    return {}
 
 
 def credentials_for_host(host: str, creds: Sequence[HostCredential],

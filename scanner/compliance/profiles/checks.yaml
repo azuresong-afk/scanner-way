@@ -18,9 +18,12 @@
 #   services:        {names, tcp_ports, udp_ports}: открытые небезопасные сервисы
 #                    (по discovery);
 #   cred_audit:      true — слабые/стандартные учётные данные (по наборам
-#                    оператора).
+#                    оператора);
+#   netdev:          id правил аудита сетевого оборудования (netdev_audit,
+#                    scanner/modules/netdev/rules.py); выполнено — правило дало
+#                    pass/fail на устройстве (по конфигурации, прочитанной по SSH).
 #
-# platform: linux | windows | any — на каких хостах проверка имеет смысл.
+# platform: linux | windows | network | any — на каких хостах проверка имеет смысл.
 # Если ни один источник на хосте не выполнялся, проверка «не проверена» и в
 # процент не входит (ни как выполненная, ни как проваленная).
 
@@ -29,7 +32,8 @@ checks:
   # ---------- Идентификация, аутентификация, пароли ----------
   - id: lockout
     title: Блокировка учётной записи после неудачных попыток входа
-    platform: linux
+    platform: any
+    netdev: [login_block]
     password_policy: [lockout]
     openscap: [accounts_passwords_pam_faillock_deny, accounts_passwords_pam_faillock_unlock_time,
                accounts_passwords_pam_tally2]
@@ -48,7 +52,8 @@ checks:
 
   - id: password_complexity
     title: Требования к сложности пароля
-    platform: linux
+    platform: any
+    netdev: [password_strength]
     password_policy: [complexity]
     openscap: [accounts_password_pam_minclass, accounts_password_pam_dcredit,
                accounts_password_pam_ucredit, accounts_password_pam_lcredit,
@@ -85,6 +90,7 @@ checks:
   - id: weak_credentials
     title: Нет слабых и стандартных учётных данных
     platform: any
+    netdev: [snmp_default_community]
     cred_audit: true
     remediation: >-
       Сменить пароли учётных записей, подобранных из набора проверки; отключить
@@ -93,7 +99,8 @@ checks:
 
   - id: auth_hash_files
     title: Защита файлов учётных записей и хешей паролей
-    platform: linux
+    platform: any
+    netdev: [password_encryption, enable_secret, local_user_secret]
     openscap: [file_permissions_etc_shadow, file_owner_etc_shadow, file_permissions_etc_gshadow,
                file_permissions_etc_passwd, file_permissions_etc_group]
     remediation: Права /etc/shadow и /etc/gshadow — 0000 или 0640 (root:shadow), /etc/passwd и /etc/group — 0644.
@@ -101,7 +108,8 @@ checks:
 
   - id: ssh_root_login
     title: Запрет прямого входа root по SSH
-    platform: linux
+    platform: any
+    netdev: [ssh_root_login]
     openscap: [sshd_disable_root_login]
     remediation: В sshd_config задать PermitRootLogin no; администрирование — через личные учётки и sudo.
     doc: https://man.openbsd.org/sshd_config#PermitRootLogin
@@ -158,7 +166,8 @@ checks:
 
   - id: session_timeout
     title: Блокирование сеанса при неактивности
-    platform: linux
+    platform: any
+    netdev: [session_timeout]
     openscap: [accounts_tmout, sshd_set_idle_timeout, sshd_set_keepalive]
     lynis: [SHLL-6220]
     remediation: Задать TMOUT (например, 900) в профиле оболочки; в sshd_config — ClientAliveInterval и ClientAliveCountMax.
@@ -166,7 +175,8 @@ checks:
 
   - id: login_banner
     title: Предупреждение пользователя при входе
-    platform: linux
+    platform: any
+    netdev: [login_banner]
     openscap: [banner_etc_issue, banner_etc_issue_net, sshd_enable_warning_banner]
     lynis: [BANN-7126, BANN-7130]
     remediation: Разместить текст предупреждения в /etc/issue и /etc/issue.net; в sshd_config — Banner /etc/issue.net.
@@ -182,7 +192,8 @@ checks:
 
   - id: firewall_enabled
     title: Межсетевой экран узла включён
-    platform: linux
+    platform: any
+    netdev: [mgmt_acl]
     openscap: [service_firewalld_enabled, package_firewalld_installed, service_ufw_enabled,
                package_ufw_installed, service_nftables_enabled]
     lynis: [FIRE-4590]
@@ -191,7 +202,8 @@ checks:
 
   - id: ip_forwarding_redirects
     title: Сетевые параметры ядра (маршрутизация, ICMP-перенаправления)
-    platform: linux
+    platform: any
+    netdev: [source_route]
     openscap: [sysctl_net_ipv4_ip_forward, sysctl_net_ipv4_conf_all_accept_redirects,
                sysctl_net_ipv4_conf_all_send_redirects, sysctl_net_ipv4_conf_all_accept_source_route,
                sysctl_net_ipv4_conf_all_rp_filter, sysctl_net_ipv4_tcp_syncookies]
@@ -211,6 +223,7 @@ checks:
   - id: insecure_remote_protocols
     title: Нет открытых сервисов с передачей данных в открытом виде
     platform: any
+    netdev: [telnet_mgmt, http_mgmt, snmp_v12, snmp_rw]
     services:
       names: [telnet, ftp, tftp, login, shell, exec, rlogin, rsh, rexec, vnc]
       tcp_ports: [21, 23, 512, 513, 514]
@@ -231,7 +244,8 @@ checks:
 
   - id: ssh_crypto
     title: Стойкие криптоалгоритмы SSH
-    platform: linux
+    platform: any
+    netdev: [ssh_v2, ssh_crypto]
     openscap: [sshd_use_strong_ciphers, sshd_use_strong_macs, sshd_use_strong_kex,
                sshd_use_approved_ciphers, sshd_use_approved_macs]
     remediation: Ограничить Ciphers, MACs и KexAlgorithms в sshd_config стойкими алгоритмами.
@@ -296,7 +310,8 @@ checks:
 
   - id: syslog
     title: Сбор системных журналов (rsyslog/journald)
-    platform: linux
+    platform: any
+    netdev: [remote_logging]
     openscap: [package_rsyslog_installed, service_rsyslog_enabled, journald_storage,
                journald_compress, rsyslog_remote_loghost]
     lynis: [LOGG-2130]
@@ -305,7 +320,8 @@ checks:
 
   - id: time_sync
     title: Синхронизация системного времени
-    platform: linux
+    platform: any
+    netdev: [ntp]
     openscap: [service_chronyd_or_ntpd_enabled, chronyd_specify_remote_server, ntpd_specify_remote_server,
                package_chrony_installed, service_timesyncd_enabled, service_chronyd_enabled]
     lynis: [TIME-3104]
@@ -339,7 +355,8 @@ checks:
 
   - id: unneeded_services
     title: Отключены лишние сетевые службы
-    platform: linux
+    platform: any
+    netdev: [insecure_services, mac_server]
     openscap: [service_avahi-daemon_disabled, service_cups_disabled, package_avahi_removed,
                service_rpcbind_disabled, package_squid_removed, package_net-snmp_removed,
                package_vsftpd_removed, package_dhcp_removed, package_bind_removed,
@@ -377,14 +394,14 @@ checks:
   - id: no_critical_vulns
     title: Нет известных уязвимостей критического и высокого уровня
     platform: any
-    vulns: {min_severity: high, modules: [vuln, auth_inventory, win_inventory]}
+    vulns: {min_severity: high, modules: [vuln, auth_inventory, win_inventory, netdev_audit]}
     remediation: Устранить уязвимости критического и высокого уровня (обновления вендора, компенсирующие меры по БДУ ФСТЭК).
     doc: https://bdu.fstec.ru/
 
   - id: security_updates
     title: Установлены обновления безопасности ОС и ПО
     platform: any
-    vulns: {min_severity: medium, modules: [auth_inventory, win_inventory]}
+    vulns: {min_severity: medium, modules: [auth_inventory, win_inventory, netdev_audit]}
     openscap: [security_patches_up_to_date]
     lynis: [PKGS-7392]
     remediation: Установить доступные обновления безопасности ОС и ПО (для Windows — отсутствующие KB из отчёта).

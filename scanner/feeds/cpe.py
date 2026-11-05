@@ -163,6 +163,9 @@ def version_key(version: str) -> tuple:
     (``7.4p1``, ``1.1.1k``) — «после» базовой версии, а метки предрелиза
     (``rc``, ``beta``) — «до» неё: 2.4.0rc1 < 2.4.0 < 2.4.0p1 < 2.4.1.
     """
+    # «v200r009c00» и «200R009C00», «v6.49» и «6.49» — одна версия.
+    if version[:1] in "vV" and version[1:2].isdigit():
+        version = version[1:]
     chunks = re.findall(r"\d+|[a-zA-Z]+", version)
     key: list[tuple[int, object]] = []
     for c in chunks:

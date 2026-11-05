@@ -234,18 +234,33 @@ def build_parser() -> argparse.ArgumentParser:
     cadd.add_argument("--engagement", required=True, type=int, help="id договора")
     cadd.add_argument("--name", required=True, help="название учётки")
     cadd.add_argument("--user", required=True, dest="username", help="логин на активе")
-    cadd.add_argument("--protocol", choices=("ssh", "winrm", "postgresql", "mysql",
-                                             "mssql", "oracle"), default="ssh",
-                      help="способ входа: ssh (Linux/Unix), winrm (Windows, HTTPS + "
-                           "NTLM, логин ДОМЕН\\user) или СУБД для аудита баз данных: "
-                           "postgresql (и Postgres Pro), mysql (и MariaDB), mssql, "
-                           "oracle — учётка СУБД только на чтение; по умолчанию ssh")
+    cadd.add_argument("--protocol", choices=("ssh", "winrm", "netssh", "snmp", "postgresql",
+                                             "mysql", "mssql", "oracle"),
+                      default="ssh",
+                      help="способ входа: ssh (Linux/Unix), winrm (Windows, "
+                           "HTTPS + NTLM, логин ДОМЕН\\user), netssh (CLI сетевого "
+                           "устройства по SSH), snmp (SNMPv2c/v3, только чтение) или СУБД "
+                           "для аудита баз данных: postgresql (и Postgres Pro), mysql "
+                           "(и MariaDB), mssql, oracle — учётка СУБД только на чтение; "
+                           "по умолчанию ssh")
     cadd.add_argument("--port", type=int, default=None,
-                      help="порт (по умолчанию SSH 22, WinRM HTTPS 5986, PostgreSQL "
-                           "5432, MySQL 3306, MS SQL 1433, Oracle 1521)")
+                      help="порт (по умолчанию SSH 22, WinRM HTTPS 5986, SNMP 161, "
+                           "PostgreSQL 5432, MySQL 3306, MS SQL 1433, Oracle 1521)")
     cadd.add_argument("--db-name", default=None,
                       help="СУБД: база для входа (PostgreSQL — postgres, MS SQL — "
                            "master) или имя сервиса Oracle (обязательно)")
+    cadd.add_argument("--platform", default="auto",
+                      help="netssh: платформа устройства (auto, cisco_ios, cisco_xe, "
+                           "cisco_nxos, cisco_asa, junos, routeros, huawei_vrp, "
+                           "eltex_esr, eltex_mes); по умолчанию auto")
+    cadd.add_argument("--snmp-version", choices=("2c", "3"), default="3",
+                      help="snmp: версия (2c — community в пароле; 3 — USM)")
+    cadd.add_argument("--snmp-auth", default="sha",
+                      help="snmp v3: алгоритм аутентификации (sha, sha256, sha512, md5…)")
+    cadd.add_argument("--snmp-priv", default="aes",
+                      help="snmp v3: алгоритм шифрования (aes, aes256, aes256c, des, none)")
+    cadd.add_argument("--priv-env", metavar="VAR",
+                      help="snmp v3: ключ шифрования (priv) из переменной окружения VAR")
     auth = cadd.add_mutually_exclusive_group(required=True)
     auth.add_argument("--key-file", type=Path, help="закрытый ключ SSH (OpenSSH/PEM)")
     auth.add_argument("--password-env", metavar="VAR",
@@ -663,8 +678,10 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
                        "--confirm-authorized")
     if args.engine:
         engine_modules = {m for ms in VULN_ENGINES.values() for m in ms}
+        known = set(registry) if registry is not None else None
         args.modules = [*(m for m in args.modules if m not in engine_modules),
-                        *VULN_ENGINES[args.engine]]
+                        *(m for m in VULN_ENGINES[args.engine]
+                          if known is None or m in known)]
     cred_sets = list(getattr(args, "cred_sets", []) or [])
     if ("cred_audit" in args.modules or cred_sets) and not args.allow_cred_audit:
         raise CliError("cred_audit требует отдельного согласования: добавьте "
@@ -835,13 +852,24 @@ def cmd_credentials_add(args: argparse.Namespace, env: _Env) -> int:
                     else getpass.getpass(f"Пароль {args.username}: "))
         if not password:
             raise CliError("пустой пароль")
+        if args.protocol == "snmp" and args.snmp_version == "3":
+            passphrase = (os.environ.get(args.priv_env) if args.priv_env else None)
+            if passphrase is None and args.snmp_priv != "none":
+                passphrase = getpass.getpass("Ключ шифрования SNMPv3 (priv): ") or None
+    options = {}
+    if args.protocol == "netssh":
+        options = {"platform": args.platform}
+    elif args.protocol == "snmp":
+        options = {"snmp_version": args.snmp_version, "auth_proto": args.snmp_auth,
+                   "priv_proto": args.snmp_priv}
     try:
         with session_scope(env.sessions) as s:
             cid = repo.create_host_credential(
                 s, vault, engagement_id=args.engagement, name=args.name, auth=auth,
                 username=args.username, port=args.port, targets=args.targets,
                 password=password, private_key=private_key, passphrase=passphrase,
-                become=args.become, protocol=args.protocol, db_name=args.db_name)
+                become=args.become, protocol=args.protocol, options=options,
+                db_name=args.db_name)
             row = repo.list_host_credentials(s, args.engagement)[-1]
             fingerprint, targets = row.key_fingerprint, list(row.targets or [])
             port, become = row.port, row.become

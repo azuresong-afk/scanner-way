@@ -8,6 +8,9 @@
     и сразу закрытие сессии. Ни одной команды на хосте не выполняется;
   * WinRM — TCP-подключение, затем открытие и закрытие оболочки WS-Man
     (`winexec.connect`: именно здесь проходят TLS и NTLM). Ни одного скрипта;
+  * сетевое устройство по SSH (netssh) — как SSH: вход и выход, без команд;
+  * SNMP — один GET sysDescr (UDP, без TCP-пробы): ответ агента и есть
+    проверка учётки. Неверный community v2c неотличим от недоступного агента;
   * СУБД (PostgreSQL, MySQL/MariaDB, MS SQL, Oracle) — вход учётной записью
     СУБД (`dbexec.connect`) и сразу отключение. Ни одного запроса.
 
@@ -29,9 +32,10 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from scanner.core import dbexec, sshexec, winexec
+from scanner.core import dbexec, netexec, sshexec, winexec
 from scanner.core.credentials import (
     DB_PROTOCOLS,
+    PROTOCOL_SNMP,
     PROTOCOL_WINRM,
     PROTOCOLS,
     CredentialError,
@@ -60,9 +64,11 @@ Probe = Callable[[str, int, float], PortResult]
 SshConnect = Callable[[str, HostCredential, sshexec.SshOptions], sshexec.RemoteShell]
 WinConnect = Callable[[str, HostCredential, winexec.WinRmOptions], winexec.WinShell]
 DbConnect = Callable[[str, HostCredential, dbexec.DbOptions], dbexec.DbSession]
+SnmpGet = Callable[..., dict[str, str]]
 
-PROTOCOL_TITLES = {"ssh": "SSH", "winrm": "WinRM", "postgresql": "PostgreSQL",
-                   "mysql": "MySQL/MariaDB", "mssql": "MS SQL", "oracle": "Oracle"}
+PROTOCOL_TITLES = {"ssh": "SSH", "winrm": "WinRM", "netssh": "SSH (сетевое устройство)",
+                   "snmp": "SNMP", "postgresql": "PostgreSQL", "mysql": "MySQL/MariaDB",
+                   "mssql": "MS SQL", "oracle": "Oracle"}
 
 
 @dataclass(slots=True)
@@ -95,6 +101,8 @@ class Connectors:
     probe: Probe = tcp_probe
     ssh_connect: SshConnect = sshexec.connect
     win_connect: WinConnect = winexec.connect
+    snmp_get: SnmpGet = netexec.snmp_get
+    snmp_options: netexec.SnmpOptions = field(default_factory=netexec.SnmpOptions)
     precheck_timeout: float = PRECHECK_TIMEOUT_SEC
     db_options: dbexec.DbOptions = field(default_factory=dbexec.DbOptions)
     db_connect: DbConnect = dbexec.connect
@@ -187,12 +195,31 @@ def _login_db(host: str, cred: HostCredential, c: Connectors) -> tuple[str, str]
     return OK, f"{label}: вход выполнен"
 
 
+def _login_snmp(host: str, cred: HostCredential, c: Connectors) -> tuple[str, str]:
+    try:
+        values = c.snmp_get(host, cred, (netexec.OID_SYS_DESCR,), c.snmp_options)
+    except netexec.SnmpAuthFailed:
+        return AUTH_FAILED, "SNMPv3: логин или ключи отклонены агентом"
+    except netexec.SnmpTimeout:
+        return TIMEOUT, (f"SNMP: агент не ответил (UDP/{cred.port}) — устройство "
+                         "недоступно, адрес сканера не разрешён на устройстве или "
+                         "неверный community")
+    except netexec.NetError as e:
+        return ERROR, str(e)[:200]
+    descr = " ".join((values.get(netexec.OID_SYS_DESCR) or "").split())[:80]
+    return OK, "SNMP: агент ответил" + (f" ({descr})" if descr else "")
+
+
 def check_login(host: str, cred: HostCredential, c: Connectors) -> LoginResult:
-    """Одна попытка входа по учётке: TCP-проба порта, затем вход и выход."""
+    """Одна попытка входа по учётке: TCP-проба порта, затем вход и выход
+    (SNMP — UDP: сразу запрос sysDescr)."""
     start = time.monotonic()
     label = PROTOCOL_TITLES.get(cred.protocol, cred.protocol)
-    pre = c.probe(host, cred.port, c.precheck_timeout)
-    if pre.state == "closed":
+    pre = (c.probe(host, cred.port, c.precheck_timeout) if cred.protocol != PROTOCOL_SNMP
+           else None)
+    if pre is None:
+        status, message = _login_snmp(host, cred, c)
+    elif pre.state == "closed":
         status, message = UNREACHABLE, f"{label}: порт {cred.port} закрыт"
     elif pre.state != "open":
         status, message = TIMEOUT, (f"{label}: порт {cred.port} не ответил за "

@@ -1,6 +1,6 @@
 """Учётки СУБД для аудита баз данных (db_audit).
 
-* host_credentials.protocol — к ``ssh`` и ``winrm`` добавлены способы входа в
+* host_credentials.protocol — к ``ssh``, ``winrm``, ``netssh`` и ``snmp`` добавлены способы входа в
   СУБД: ``postgresql`` (в т. ч. Postgres Pro), ``mysql`` (MySQL и MariaDB),
   ``mssql`` и ``oracle``. Существующие учётки не меняются.
 * host_credentials.db_name — база для входа (PostgreSQL, MS SQL) или имя
@@ -25,14 +25,17 @@ def upgrade() -> None:
                "host_credentials_protocol_check")
     op.execute("ALTER TABLE host_credentials ADD CONSTRAINT "
                "host_credentials_protocol_check CHECK (protocol IN "
-               "('ssh', 'winrm', 'postgresql', 'mysql', 'mssql', 'oracle'))")
+               "('ssh', 'winrm', 'netssh', 'snmp', 'postgresql', 'mysql', 'mssql', "
+               "'oracle'))")
     op.execute("ALTER TABLE host_credentials ADD COLUMN IF NOT EXISTS db_name TEXT")
 
 
 def downgrade() -> None:
-    op.execute("DELETE FROM host_credentials WHERE protocol NOT IN ('ssh', 'winrm')")
+    op.execute("DELETE FROM host_credentials WHERE protocol IN "
+               "('postgresql', 'mysql', 'mssql', 'oracle')")
     op.execute("ALTER TABLE host_credentials DROP COLUMN IF EXISTS db_name")
     op.execute("ALTER TABLE host_credentials DROP CONSTRAINT IF EXISTS "
                "host_credentials_protocol_check")
     op.execute("ALTER TABLE host_credentials ADD CONSTRAINT "
-               "host_credentials_protocol_check CHECK (protocol IN ('ssh', 'winrm'))")
+               "host_credentials_protocol_check CHECK "
+               "(protocol IN ('ssh', 'winrm', 'netssh', 'snmp'))")

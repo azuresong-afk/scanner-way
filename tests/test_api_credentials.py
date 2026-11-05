@@ -335,3 +335,94 @@ def test_config_audit_run_uses_saved_credential(cfg_api, sqlite_factory):
     with sqlite_factory() as s:
         row = s.scalars(select(FindingRow).where(FindingRow.vuln_id == "LYNIS:SSH-7408")).one()
     assert row.remediation.startswith("Set PermitRootLogin to no")
+
+
+def test_create_network_device_credentials(api, sqlite_factory):
+    """Учётки сетевого оборудования: SSH-CLI (платформа) и SNMPv3/v2c — секреты
+    не возвращаются, несекретные параметры — в options."""
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    r = _cred(api, eid, holder, name="Коммутаторы", protocol="netssh", platform="cisco_ios",
+              targets=["10.0.0.0/28"])
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["protocol"] == "netssh" and body["port"] == 22 and body["become"] == "none"
+    assert body["options"] == {"platform": "cisco_ios"}
+    r = _cred(api, eid, holder, name="SNMPv3", username="nms", protocol="snmp",
+              password="AuthKey-do-not-leak", passphrase="PrivKey-do-not-leak",
+              snmp_version="3", snmp_auth_proto="sha256", snmp_priv_proto="aes")
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["port"] == 161
+    assert body["options"] == {"snmp_version": "3", "auth_proto": "sha256", "priv_proto": "aes"}
+    assert "PrivKey" not in r.text and "AuthKey" not in r.text
+    r = _cred(api, eid, holder, name="SNMPv2c", username="community", protocol="snmp",
+              password="c0mmunity-do-not-leak", snmp_version="2c")
+    assert r.status_code == 201, r.text
+    # v3 без ключа шифрования при priv=aes — отказ; неизвестная платформа — отказ
+    assert _cred(api, eid, holder, name="bad", username="nms", protocol="snmp",
+                 password="AuthKey12345", snmp_version="3").status_code == 422
+    assert _cred(api, eid, holder, name="bad2", protocol="netssh",
+                 platform="cisco; reload").status_code == 422
+    listed = api.c.get(f"/engagements/{eid}/credentials", headers=holder)
+    for secret in ("AuthKey-do-not-leak", "PrivKey-do-not-leak", "c0mmunity-do-not-leak"):
+        assert secret not in listed.text
+    with sqlite_factory() as s:
+        audit = repr(list(s.execute(select(AuditLogRow.details))))
+        rows = list(s.scalars(select(HostCredentialRow)))
+    assert "PrivKey-do-not-leak" not in audit and "c0mmunity" not in audit
+    assert all("PrivKey" not in r.secret_enc for r in rows)
+
+
+# ---------- сетевое оборудование (netdev_audit) ----------
+@pytest.fixture
+def net_api(sqlite_factory, rec):
+    """API с настоящим модулем netdev_audit поверх фейкового CLI устройства."""
+    from scanner.modules.netdev_audit import NetdevAuditModule
+    from tests.test_netdev import _ios_session
+
+    registry = {"discovery": lambda: FakeDiscovery(rec),
+                "vuln": lambda: FakeVuln(rec, []),
+                "auth_inventory": lambda: FakeInventory(rec),
+                "win_inventory": lambda: FakeWinInventory(rec),
+                "netdev_audit": lambda: NetdevAuditModule(
+                    cli_opener=lambda *a: _ios_session(), sleep=lambda s: None)}
+    settings = ApiSettings(secret=SECRET, bootstrap_admin="root",
+                           bootstrap_password=PASSWORD)
+    app = create_app(session_factory=sqlite_factory, settings=settings, registry=registry,
+                     executor=inline_executor(),
+                     resolver_factory=lambda findings: RemediationResolver())
+    with TestClient(app) as c:
+        yield Api(c)
+
+
+def test_network_devices_profile_end_to_end(net_api):
+    api = net_api
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    cid = _cred(api, eid, holder, name="Коммутаторы", protocol="netssh").json()["id"]
+    body = {"targets": ["10.0.0.20"], "modules": ["discovery"], "profile": "network_devices",
+            "credential_ids": [cid]}
+    plan = api.c.post(f"/engagements/{eid}/runs/plan", headers=holder, json=body)
+    assert plan.status_code == 200, plan.text
+    plan = plan.json()
+    assert [m["name"] for m in plan["modules"]] == ["discovery", "netdev_audit"]
+    r = api.c.post(f"/engagements/{eid}/runs", headers=holder, json=body)
+    assert r.status_code == 202, r.text
+    assert r.json()["name"].startswith("Обнаружение + сетевое оборудование")
+    run_id = r.json()["id"]
+    run = api.c.get(f"/runs/{run_id}", headers=holder).json()
+    assert run["status"] in ("done", "partial"), run
+    findings = api.c.get(f"/runs/{run_id}/findings", headers=holder).json()
+    ids = {f["vuln_id"] for f in findings}
+    assert {"NETDEV:telnet_mgmt", "NETDEV:snmp_default_community",
+            "INFO:netdev-inventory"} <= ids
+    assert HOST_PASSWORD not in repr(findings) and "Wr1teC0mm" not in repr(findings)
+    hosts = api.c.get(f"/engagements/{eid}/hosts", headers=holder).json()
+    assert any("Cisco IOS" in (h.get("os_guess") or "") and h["os_family"] == "network"
+               for h in hosts), hosts
+    comp = api.c.get(f"/runs/{run_id}/compliance", headers=holder)
+    assert comp.status_code == 200
+    assert "insecure_remote_protocols" in comp.text or "УПД.13" in comp.text
+    report = api.c.get(f"/runs/{run_id}/report?format=html", headers=holder)
+    assert report.status_code == 200 and "Сетевое оборудование" in report.text
