@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from scanner.compliance.facts import record as record_fact
+from scanner.core import coverage as cv
 from scanner.core.models import Finding, FindingType, ServiceInfo, Severity
 from scanner.modules.base import ScanContext, ScanModule
 
@@ -277,7 +278,6 @@ class CredentialAuditModule(ScanModule):
         # из согласованного набора проверки (ctx.cred_candidates). Нет ни того, ни
         # другого — модуль не делает ни одной попытки (осознанный пропуск в аудите).
         base_creds = self._base_credentials(ctx)
-        from scanner.core import coverage as cv
         if not base_creds and not self.options.service_credentials:
             for h in allowed:
                 ctx.coverage.mark(h, self.name, cv.SKIPPED,
@@ -370,6 +370,10 @@ class CredentialAuditModule(ScanModule):
                                      target=host, result="stopped",
                                      details={"service": probe.service,
                                               "user": cred.username})
+                    # проверка остановлена на середине — «слабых паролей нет» неверно
+                    ctx.coverage.mark(host, self.name, cv.ERROR,
+                                      f"остановлено: блокировка входа на {probe.service} — "
+                                      "проверены не все учётные данные")
                     findings.append(Finding(
                         module=self.name, host=host, port=probe.port,
                         finding_type=FindingType.INFO, severity=Severity.INFO,
@@ -384,6 +388,10 @@ class CredentialAuditModule(ScanModule):
                         ctx.audit.record(subject="scanner", action="cred_audit_stop",
                                          target=host, result="too_many_errors",
                                          details={"consecutive_errors": consecutive_errors})
+                        ctx.coverage.mark(host, self.name, cv.ERROR,
+                                          f"остановлено: {consecutive_errors} ошибок соединения "
+                                          f"подряд ({probe.service}) — проверены не все "
+                                          "учётные данные")
                         findings.append(Finding(
                             module=self.name, host=host, port=probe.port,
                             finding_type=FindingType.INFO, severity=Severity.INFO,

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from libnmap.parser import NmapParser, NmapParserException
 
+from scanner.core import coverage as cv
 from scanner.core.models import Finding, FindingType, HostOs, ServiceInfo, Severity
 from scanner.core.osfamily import GENERIC_LINUX, classify, family_label, is_distro
 from scanner.core.ratelimit import RateProfile
@@ -130,6 +131,26 @@ def host_os(addr: str, os_matches: list, banners: Sequence[str]) -> HostOs:
             break
         if out.family is None and fam == "windows":
             out.family, out.source, out.name = fam, "banner", family_label(fam)
+    return out
+
+
+def nmap_timed_out_hosts(xml: str) -> list[str]:
+    """Хосты, сканирование которых nmap оборвал по --host-timeout
+    (``<host timedout="true">``): их список портов неполный, и следующие модули
+    проверили бы только часть сервисов — это пробел покрытия, не «чисто»."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return []
+    out: list[str] = []
+    for h in root.iter("host"):
+        if str(h.get("timedout", "")).lower() != "true":
+            continue
+        for a in h.iter("address"):
+            if a.get("addrtype") in ("ipv4", "ipv6") and a.get("addr"):
+                out.append(a.get("addr"))
+                break
     return out
 
 
@@ -243,11 +264,14 @@ class DiscoveryModule(ScanModule):
             ctx.services.extend(services)
             ctx.hosts.update((h.host, h) for h in hosts)
             findings.extend(batch_findings)
+            for h in nmap_timed_out_hosts(xml):
+                ctx.coverage.mark(h, self.name, cv.TIMEOUT,
+                                  "nmap прервал сканирование хоста по host-timeout — "
+                                  "открытые порты определены не полностью")
         self._mark_coverage(ctx, targets, no_ping)
         return findings
 
     def _mark_coverage(self, ctx: ScanContext, targets: Sequence[str], no_ping: bool) -> None:
-        from scanner.core import coverage as cv
         with_ports = {s.host for s in ctx.services or []}
         for t in targets:
             if t in ctx.hosts and (t in with_ports or not no_ping):
