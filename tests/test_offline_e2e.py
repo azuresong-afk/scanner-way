@@ -171,7 +171,7 @@ def test_tampered_and_foreign_results_rejected(offline, tmp_path):
 
 
 def test_export_rules(offline, stack):
-    api, rec, _app, eid, node_id, node = offline
+    api, _rec, _app, eid, node_id, _node = offline
     run_id = _start(api, eid, node_id)
     _export(api, run_id)
     # второй раз выгрузить нельзя, но можно скачать тот же файл
