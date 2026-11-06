@@ -447,6 +447,10 @@ export interface RunOut {
   warnings?: RunWarning[];
   /** Ход идущего прогона; null — в очереди или прогон до миграции 0023. */
   progress?: RunProgress | null;
+  /** Узел-сканер, на котором выполняется прогон (null — центр). */
+  node_id?: number | null;
+  node_name?: string | null;
+  node_mode?: "online" | "offline" | null;
 }
 
 /** Ход идущего прогона: этап (модуль), хостов готово из всех, общий процент. */
@@ -1172,4 +1176,69 @@ export interface SearchOut {
   vulns: SearchVuln[];
   actions: SearchAction[];
   commands: SearchCommand[];
+}
+
+/** Автономный узел: задание, перенесённое на носителе (GET /runs/{id}/offline). */
+export type OfflineJobStatus = "exported" | "imported" | "cancelled" | "expired";
+
+export interface OfflineJobOut {
+  job_id: string;
+  run_id: number;
+  node_id: number | null;
+  node_name: string | null;
+  status: OfflineJobStatus;
+  status_label: string;
+  node_fingerprint: string;
+  job_sha256: string;
+  exported_by: string;
+  exported_at: string;
+  expires_at: string;
+  imported_by: string | null;
+  imported_at: string | null;
+  result_sha256: string | null;
+  result_summary: {
+    hosts?: number;
+    findings?: number;
+    severity?: Record<string, number>;
+    errors?: string[];
+    started_at?: string;
+    finished_at?: string;
+    reference_as_of?: string | null;
+  } | null;
+}
+
+/** Открытый ключ центра или узла и его отпечаток. */
+export interface OfflineKeyOut {
+  public_key: string | null;
+  fingerprint: string | null;
+}
+
+/** Итог «Загрузить результат». */
+export interface OfflineImportOut {
+  run_id: number;
+  status: RunStatus;
+  job_id: string;
+  node: string;
+  findings: number | null;
+  hosts: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** Открытый заголовок файла результата (до загрузки). */
+export interface OfflineResultHeader {
+  job_id: string;
+  run_id: number;
+  /** Из БД центра по id задания (в файле этих сведений нет). */
+  run_name?: string | null;
+  engagement?: string | null;
+  known_job?: boolean;
+  job_status?: OfflineJobStatus | null;
+  node_name: string;
+  started_at: string;
+  finished_at: string;
+  hosts: number;
+  findings: number;
+  severity?: Record<string, number>;
+  reference_as_of?: string | null;
 }

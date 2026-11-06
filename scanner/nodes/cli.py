@@ -22,6 +22,9 @@ def add_node_commands(sub: Any) -> argparse.ArgumentParser:
     ncheck = nsub.add_parser("check", help="проверить настройки узла и связь с центром")
     ncheck.set_defaults(handler=cmd_node_check, no_db=True)
     node.set_defaults(node_subparsers=nsub)
+    # автономный режим: node init / show / inspect / run-job, offline center-key
+    from scanner.nodes.offline_cli import add_offline_commands
+    add_offline_commands(sub, nsub)
     return node
 
 

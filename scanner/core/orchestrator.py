@@ -1018,6 +1018,7 @@ class RunService:
         Каждое изменение — условным UPDATE по наблюдённым статусу и отметке:
         если владелец «ожил» и успел обновить прогон, сторож его не тронет."""
         now = now or datetime.now(UTC)
+        self._expire_offline(now)
         stale_before = now - timedelta(seconds=self.stale_seconds)
         interrupted: list[int] = []
         requeued: list[tuple[int, list[str]]] = []
@@ -1071,6 +1072,17 @@ class RunService:
                               details={"reason": "executor_lost"})
             self._enqueue(run_id, targets)
         return {"interrupted": interrupted, "requeued": [r for r, _ in requeued]}
+
+    def _expire_offline(self, now: datetime) -> None:
+        """Автономные задания без результата дольше срока: прогон -> ошибка."""
+        try:
+            from scanner.nodes.offline_center import expire_jobs
+            expired = expire_jobs(self.sessions, self.audit, now=now)
+        except Exception:   # вторично к сторожу; повторится на следующем тике
+            log.exception("offline jobs expiry check failed")
+            return
+        for run_id in expired:
+            self._notify(run_id)
 
     def request_stop(self, scan_run_id: int, *, actor: str) -> str:
         """Останавливает pending/running прогон; возвращает итоговый статус."""

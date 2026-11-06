@@ -12,6 +12,7 @@ import { Pager } from "../components/Pager";
 import { ReportMenu } from "../components/ReportMenu";
 import { RunProgressPanel } from "../components/RunProgressPanel";
 import { CoverageTable, RunResultNotes } from "../components/RunCoverage";
+import { isOfflineRun, OfflineJobPanel } from "../components/OfflineJob";
 import { ServicesTable } from "../components/ServicesTable";
 import { Empty, ErrorAlert, Kpi, Loading, RunStatusPill } from "../components/ui";
 import { fmtDateFull, fmtDuration } from "../lib/format";
@@ -50,7 +51,8 @@ export function RunDetailPage() {
   const [stopError, setStopError] = useState<string | null>(null);
   const [, tick] = useState(0);
 
-  useInterval(() => void run.reload(), 3000, !!run.data && !finished);
+  // автономный прогон ждёт носитель часами и днями — опрашивать часто незачем
+  useInterval(() => void run.reload(), run.data && isOfflineRun(run.data) ? 30_000 : 3000, !!run.data && !finished);
   useInterval(() => tick((n) => n + 1), 1000, !!run.data && !finished);
   useEffect(() => setOpen(null), [id]);
 
@@ -154,6 +156,8 @@ export function RunDetailPage() {
         </dl>
       </section>
 
+      {isOfflineRun(r) && <OfflineJobPanel run={r} onChanged={run.reload} />}
+
       {r.status === "running" && r.progress && (
         <div className="card card-pad">
           <RunProgressPanel run={r} />
@@ -163,7 +167,7 @@ export function RunDetailPage() {
         </div>
       )}
 
-      {!finished && !(r.status === "running" && r.progress) && (
+      {!finished && !isOfflineRun(r) && !(r.status === "running" && r.progress) && (
         <div className="card">
           <Empty title={r.status === "pending" ? "Прогон в очереди" : "Идёт сканирование"} icon={<span className="spinner" style={{ width: 28, height: 28 }} />}>
             Результаты появятся после завершения. Страница обновляется автоматически.
