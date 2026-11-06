@@ -504,3 +504,25 @@ def test_node_config_requires_local_allowlist():
     cfg = config_from_env({"SCANNER_NODE_SERVER": "https://c", "SCANNER_NODE_TOKEN": "t",
                            "SCANNER_NODE_ALLOWLIST": "10.1.0.0/24, 10.2.0.1-10.2.0.5"})
     assert cfg.allowlist == ["10.1.0.0/24", "10.2.0.1-10.2.0.5"]
+
+
+def test_schedule_runs_on_node(stack, sqlite_factory):
+    api, rec, _app = stack
+    eid = api.engagement("10.0.0.0/8")
+    op = api.user("op", "operator")
+    node = _create_node(api)
+    r = api.c.post(f"/engagements/{eid}/schedules", headers=op,
+                   json={"targets": ["10.1.0.5"], "modules": ["discovery"], "kind": "daily",
+                         "time_of_day": "03:00", "node_id": node["id"]})
+    assert r.status_code == 201, r.text
+    assert r.json()["node_id"] == node["id"]
+    sid = r.json()["id"]
+    assert api.c.post(f"/schedules/{sid}/run", headers=op).status_code == 200
+    with sqlite_factory() as s:
+        run = s.scalars(select(ScanRun).where(ScanRun.schedule_id == sid)).one()
+        assert run.node_id == node["id"] and run.status == "pending"
+    assert "discovery" not in rec.seen          # центр сам не исполнял
+    bad = api.c.post(f"/engagements/{eid}/schedules", headers=op,
+                     json={"targets": ["10.1.0.5"], "modules": ["discovery"], "kind": "daily",
+                           "time_of_day": "03:00", "node_id": 999})
+    assert bad.status_code == 422

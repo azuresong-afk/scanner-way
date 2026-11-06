@@ -388,6 +388,8 @@ class ScheduleIn(BaseModel):
     run_at: datetime | None = None             # для once
     timezone: str | None = None                # IANA; пусто — пояс сервера
     enabled: bool = True
+    # Где исполнять: None — центральный сервер, иначе узел-сканер.
+    node_id: int | None = None
 
 
 class ScheduleToggle(BaseModel):
@@ -417,6 +419,7 @@ class ScheduleOut(_Orm):
     last_run_id: int | None = None
     owner_id: int | None
     created_at: datetime | None
+    node_id: int | None = None
 
     @field_validator("run_at", "next_run_at", "last_run_at", "created_at")
     @classmethod

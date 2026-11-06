@@ -68,6 +68,7 @@ def cmd_node_run(args: argparse.Namespace, env: Any) -> int:
     import threading
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)   # опрос раз в несколько секунд
     agent = _node_agent()
     if args.once:
         agent.hello()
