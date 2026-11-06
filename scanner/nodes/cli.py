@@ -43,6 +43,8 @@ def add_node_commands(sub) -> None:
     init.add_argument("--center-key", required=True, type=Path,
                       help="файл открытого ключа центра (center.pub из «Сканеры» → "
                            "«Ключ центра»)")
+    init.add_argument("--pub-out", type=Path, default=None,
+                      help="куда ещё записать открытый ключ узла (например, на носитель)")
     init.add_argument("--force", action="store_true",
                       help="заменить ключи уже установленного узла")
     _home(init)
@@ -102,11 +104,18 @@ def cmd_node_init(args: argparse.Namespace, env=None) -> int:
         node = on.OfflineNode.load(home)
     except on.OfflineNodeError as e:
         raise _err(str(e)) from e
+    pub_path = home / on.NODE_PUB_FILE
+    if args.pub_out:
+        try:
+            args.pub_out.write_text(pub_path.read_text("utf-8"), encoding="utf-8")
+        except OSError as e:
+            raise _err(f"не записан {args.pub_out}: {e}") from e
+        pub_path = args.pub_out
     print(f"Узел «{node.name}» установлен в {home}")
     print(f"  сети узла: {', '.join(node.scope)}")
     print(f"  ключ центра: {node.center.fingerprint}  ← сверьте с «Сканеры» → «Ключ центра»")
     print(f"  ключ узла:   {pub.fingerprint}")
-    print(f"Перенесите {home / on.NODE_PUB_FILE} в центр: «Сканеры» → «{node.name}» → "
+    print(f"Перенесите {pub_path} в центр: «Сканеры» → «{node.name}» → "
           "«Ключ узла». Закрытый ключ (node-keys.json) с узла не выносится.")
     return 0
 
