@@ -57,6 +57,8 @@ def infer(f: Finding) -> tuple[str, str]:
         msrc = "MSRC" in (f.evidence or "") or (f.vuln_id or "").startswith("KB")
         return (f.source or ("vendor_advisory" if msrc else "authenticated_package"),
                 f.confidence or ("high" if msrc else "medium"))
+    if m == "db_audit":
+        return f.source or "authenticated_package", f.confidence or "medium"
     if m == "netdev_audit":
         # версия ОС устройства: точная по CLI, по sysDescr — чуть менее точная
         return f.source or "vendor_version", f.confidence or "high"

@@ -1,13 +1,20 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { KeyRound, Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
-import type { CredentialAuth, CredentialBecome, CredentialOut, CredentialProtocol, NetdevPlatform } from "../api/types";
+import type { CredentialAuth, CredentialBecome, CredentialOut, CredentialProtocol, DbProtocol, NetdevPlatform } from "../api/types";
 import { fmtDate } from "../lib/format";
+import { DB_PROTOCOLS, PROTOCOL_LABEL, isDbProtocol } from "../lib/labels";
 import { parseTargets } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
 import { Empty, ErrorAlert, Loading, Modal } from "./ui";
 
-const DEFAULT_PORT: Record<CredentialProtocol, string> = { ssh: "22", winrm: "5986", netssh: "22", snmp: "161" };
+const DEFAULT_PORT: Record<CredentialProtocol, string> = {
+  ssh: "22",
+  winrm: "5986",
+  netssh: "22",
+  snmp: "161",
+  ...(Object.fromEntries(DB_PROTOCOLS.map((d) => [d.id, d.port])) as Record<DbProtocol, string>),
+};
 
 const PLATFORMS: { id: NetdevPlatform; label: string }[] = [
   { id: "auto", label: "Определить автоматически" },
@@ -37,6 +44,7 @@ const SNMP_PRIV = [
 function loginLabel(c: CredentialOut): string {
   const o = c.options ?? {};
   if (c.protocol === "winrm") return "WinRM · пароль";
+  if (isDbProtocol(c.protocol)) return `${PROTOCOL_LABEL[c.protocol]}${c.db_name ? ` · ${c.db_name}` : ""}`;
   if (c.protocol === "snmp") return o.snmp_version === "2c" ? "SNMP v2c · community" : `SNMPv3 · ${(o.auth_proto ?? "sha").toUpperCase()}/${(o.priv_proto ?? "aes").toUpperCase()}`;
   if (c.protocol === "netssh") {
     const p = o.platform && o.platform !== "auto" ? PLATFORM_LABEL[o.platform] ?? o.platform : "сетевое устройство";
@@ -45,7 +53,7 @@ function loginLabel(c: CredentialOut): string {
   return c.auth === "key" ? "SSH · ключ" : "SSH · пароль";
 }
 
-/** Учётные записи активов договора: серверы (SSH, WinRM) и сетевое оборудование (SSH, SNMP). */
+/** Учётные записи активов договора: серверы (SSH, WinRM), сетевое оборудование (SSH, SNMP) и СУБД. */
 export function CredentialsCard({ engagementId }: { engagementId: number }) {
   const list = useAsync(() => api.credentials(engagementId), [engagementId]);
   const [adding, setAdding] = useState(false);
@@ -60,9 +68,10 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
         </button>
       </div>
       <p className="muted" style={{ margin: "0 20px 14px", fontSize: 13 }}>
-        Для движка «По учётной записи»: Linux по SSH (пакеты → БДУ ФСТЭК и CVE), Windows по WinRM (обновления и ПО → KB/CVE и БДУ) и сетевое
-        оборудование по SSH или SNMP (версия ОС устройства → CVE/БДУ, аудит конфигурации), а также для аудита конфигураций серверов (CIS,
-        ФСТЭК/ГОСТ — нужен sudo). Пароли, ключи и community хранятся зашифрованными и никогда не показываются.
+        Для движка «По учётной записи»: Linux по SSH (пакеты → БДУ ФСТЭК и CVE), Windows по WinRM (обновления и ПО → KB/CVE и БДУ), сетевое
+        оборудование по SSH или SNMP (версия ОС устройства → CVE/БДУ, аудит конфигурации) и СУБД (учётка СУБД только на чтение: версия →
+        CVE/БДУ, конфигурация по CIS), а также для аудита конфигураций серверов (CIS, ФСТЭК/ГОСТ — нужен sudo). Пароли, ключи и community
+        хранятся зашифрованными и никогда не показываются.
       </p>
       {list.loading && !list.data ? (
         <Loading />
@@ -156,6 +165,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
   const [passphrase, setPassphrase] = useState("");
   const [scope, setScope] = useState("");
   const [become, setBecome] = useState<CredentialBecome>("sudo");
+  const [dbName, setDbName] = useState("");
   const [platform, setPlatform] = useState<NetdevPlatform>("auto");
   const [snmpVersion, setSnmpVersion] = useState<"2c" | "3">("3");
   const [authProto, setAuthProto] = useState("sha");
@@ -164,16 +174,19 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
   const [error, setError] = useState<string | null>(null);
 
   const isWinrm = protocol === "winrm";
+  const isDb = isDbProtocol(protocol);
+  const dbInfo = DB_PROTOCOLS.find((d) => d.id === protocol);
   const isNetssh = protocol === "netssh";
   const isSnmp = protocol === "snmp";
   const isV2c = isSnmp && snmpVersion === "2c";
   const needPriv = isSnmp && !isV2c && privProto !== "none";
-  // WinRM входит только по паролю (NTLM), SNMP — community или ключами USM.
-  const effectiveAuth: CredentialAuth = isWinrm || isSnmp ? "password" : auth;
+  // WinRM (NTLM) и СУБД входят только по паролю, SNMP — community или ключами USM.
+  const effectiveAuth: CredentialAuth = isWinrm || isSnmp || isDb ? "password" : auth;
 
   const switchProtocol = (p: CredentialProtocol) => {
     setProtocol(p);
     if (!portTouched) setPort(DEFAULT_PORT[p]);   // порт по умолчанию, пока его не трогали
+    setDbName(DB_PROTOCOLS.find((d) => d.id === p)?.dbName ?? "");
   };
 
   const parsed = parseTargets(scope);
@@ -184,7 +197,8 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
       ? password.length > 0 && (!isSnmp || isV2c || password.length >= 8) && (!needPriv || passphrase.length >= 8)
       : key.trim().length > 0;
   const userOk = isV2c || username.trim().length > 0;
-  const canSubmit = name.trim() && userOk && portOk && secretOk && parsed.invalid.length === 0 && !busy;
+  const dbOk = protocol !== "oracle" || dbName.trim().length > 0;   // Oracle: имя сервиса обязательно
+  const canSubmit = name.trim() && userOk && portOk && secretOk && dbOk && parsed.invalid.length === 0 && !busy;
 
   const readKey = async (ev: ChangeEvent<HTMLInputElement>) => {
     const file = ev.target.files?.[0];
@@ -205,6 +219,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
         auth: effectiveAuth,
         protocol,
         ...(isWinrm && domain.trim() ? { domain: domain.trim() } : {}),
+        ...(isDb && dbName.trim() ? { db_name: dbName.trim() } : {}),
         ...(isNetssh ? { platform } : {}),
         ...(isSnmp
           ? { snmp_version: snmpVersion, ...(isV2c ? {} : { snmp_auth_proto: authProto, snmp_priv_proto: privProto }) }
@@ -213,7 +228,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
           ? { password, ...(needPriv ? { passphrase } : {}) }
           : { private_key: key, passphrase: passphrase || undefined }),
         targets: parsed.targets,
-        // sudo — только для SSH-аудита конфигураций серверов.
+        // sudo — только для SSH-аудита конфигураций серверов; WinRM, сетевые устройства и СУБД права не повышают.
         become: protocol === "ssh" ? become : "none",
       });
       onDone();
@@ -223,9 +238,9 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
     }
   };
 
-  const userLabel = isWinrm ? "Логин Windows" : isNetssh ? "Логин на устройстве" : isSnmp ? "Пользователь SNMPv3" : "Логин на хосте";
-  const portLabel = isWinrm ? "Порт WinRM" : isSnmp ? "Порт SNMP (UDP)" : "Порт SSH";
-  const passwordLabel = isWinrm ? "Пароль Windows" : isV2c ? "Community" : isSnmp ? "Ключ аутентификации (auth)" : "Пароль";
+  const userLabel = isWinrm ? "Логин Windows" : isNetssh ? "Логин на устройстве" : isSnmp ? "Пользователь SNMPv3" : isDb ? "Логин СУБД" : "Логин на хосте";
+  const portLabel = isWinrm ? "Порт WinRM" : isSnmp ? "Порт SNMP (UDP)" : isDb ? "Порт СУБД" : "Порт SSH";
+  const passwordLabel = isWinrm ? "Пароль Windows" : isV2c ? "Community" : isSnmp ? "Ключ аутентификации (auth)" : isDb ? "Пароль СУБД" : "Пароль";
 
   return (
     <Modal
@@ -249,7 +264,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
         </label>
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
           <span>Способ входа</span>
-          <div className="grid-2">
+          <div className="grid-3">
             <label className="option-card">
               <input type="radio" name="protocol" checked={protocol === "ssh"} onChange={() => switchProtocol("ssh")} />
               <span>
@@ -278,8 +293,27 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
                 <small>Коммутатор, маршрутизатор: только версия ОС (v3 или v2c)</small>
               </span>
             </label>
+            <label className="option-card">
+              <input type="radio" name="protocol" checked={isDb} onChange={() => switchProtocol(isDb ? protocol : "postgresql")} />
+              <span>
+                <b style={{ fontWeight: 500 }}>СУБД</b>
+                <small>Аудит баз данных: версия → CVE/БДУ, конфигурация по CIS</small>
+              </span>
+            </label>
           </div>
         </fieldset>
+        {isDb && (
+          <label className="field">
+            <span>СУБД</span>
+            <select className="input" value={protocol} onChange={(e) => switchProtocol(e.target.value as CredentialProtocol)}>
+              {DB_PROTOCOLS.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.label} ({d.hint})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {isSnmp && (
           <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
             <span>Версия SNMP</span>
@@ -309,7 +343,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
                 className="input mono"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder={isWinrm ? "svc_scan" : isSnmp ? "nms" : "audit"}
+                placeholder={isWinrm ? "svc_scan" : isSnmp ? "nms" : isDb ? "scan_ro" : "audit"}
                 maxLength={128}
               />
             </label>
@@ -332,6 +366,15 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
             <span>Домен Windows (необязательно)</span>
             <input className="input mono" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="CORP" maxLength={64} />
             <small>Логин будет сохранён как ДОМЕН\user. Пусто — локальная учётная запись хоста.</small>
+          </label>
+        )}
+        {isDb && dbInfo && (
+          <label className="field">
+            <span>{dbInfo.dbLabel}</span>
+            <input className="input mono" value={dbName} onChange={(e) => setDbName(e.target.value)} placeholder={protocol === "oracle" ? "ORCLPDB1" : dbInfo.dbName} maxLength={128} />
+            <small>
+              Учётке СУБД нужны только права на чтение системных представлений — список прав для каждой СУБД в руководстве администратора.
+            </small>
           </label>
         )}
         {isNetssh && (

@@ -5,12 +5,14 @@
 аудита конфигураций (`config_audit`). Для аудита конфигураций нужны права root:
 поле `become` (`sudo` | `none`) говорит, повышать ли права через sudo.
 
-Поле `protocol` (`ssh` | `winrm` | `netssh` | `snmp`) — способ входа. Учётки WinRM
-(Windows, только пароль, логин `ДОМЕН\\user` или `user@домен`) использует модуль
-`win_inventory`; учётки сетевого оборудования — `netssh` (SSH в CLI коммутатора
-или маршрутизатора) и `snmp` (SNMPv2c community или SNMPv3 USM, только чтение) —
-модуль `netdev_audit`. SSH-модули чужие учётки не видят: `credentials_for_host`
-по умолчанию отдаёт только SSH.
+Поле `protocol` (`ssh` | `winrm` | `netssh` | `snmp` | `postgresql` | `mysql` |
+`mssql` | `oracle`) — способ входа. Учётки WinRM (Windows, только пароль, логин
+`ДОМЕН\\user` или `user@домен`) использует модуль `win_inventory`; учётки сетевого
+оборудования — `netssh` (SSH в CLI коммутатора или маршрутизатора) и `snmp`
+(SNMPv2c community или SNMPv3 USM, только чтение) — модуль `netdev_audit`; учётки
+СУБД (только пароль, учётная запись СУБД только на чтение) — модуль `db_audit`,
+`db_name` — база (PostgreSQL, MS SQL) или имя сервиса Oracle. SSH-модули чужие
+учётки не видят: `credentials_for_host` по умолчанию отдаёт только SSH.
 
 Несекретные параметры учётки (платформа сетевого устройства, версия SNMP,
 алгоритмы SNMPv3) — в `options`; секреты SNMP (community, ключи SNMPv3) шифруются
@@ -59,10 +61,20 @@ PROTOCOL_WINRM = "winrm"
 # Сетевое оборудование (netdev_audit): SSH в CLI устройства и SNMP только чтение.
 PROTOCOL_NETSSH = "netssh"
 PROTOCOL_SNMP = "snmp"
-PROTOCOLS = (PROTOCOL_SSH, PROTOCOL_WINRM, PROTOCOL_NETSSH, PROTOCOL_SNMP)
 NETDEV_PROTOCOLS = (PROTOCOL_NETSSH, PROTOCOL_SNMP)
+# СУБД (db_audit): вход учётной записью СУБД, только пароль. MariaDB — mysql.
+PROTOCOL_POSTGRESQL = "postgresql"
+PROTOCOL_MYSQL = "mysql"
+PROTOCOL_MSSQL = "mssql"
+PROTOCOL_ORACLE = "oracle"
+DB_PROTOCOLS = (PROTOCOL_POSTGRESQL, PROTOCOL_MYSQL, PROTOCOL_MSSQL, PROTOCOL_ORACLE)
+PROTOCOLS = (PROTOCOL_SSH, PROTOCOL_WINRM, PROTOCOL_NETSSH, PROTOCOL_SNMP, *DB_PROTOCOLS)
 DEFAULT_PORTS = {PROTOCOL_SSH: 22, PROTOCOL_WINRM: 5986, PROTOCOL_NETSSH: 22,
-                 PROTOCOL_SNMP: 161}
+                 PROTOCOL_SNMP: 161, PROTOCOL_POSTGRESQL: 5432, PROTOCOL_MYSQL: 3306,
+                 PROTOCOL_MSSQL: 1433, PROTOCOL_ORACLE: 1521}
+# База по умолчанию для входа (Oracle — имени сервиса по умолчанию нет).
+DEFAULT_DB_NAMES = {PROTOCOL_POSTGRESQL: "postgres", PROTOCOL_MSSQL: "master"}
+_DB_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.$#-]{0,127}$")
 
 # Платформы сетевых устройств (подсказка в учётке netssh; auto — определить по
 # приглашению CLI и выводу show version / display version).
@@ -79,7 +91,8 @@ SNMP_PRIV_PROTOCOLS = ("aes", "aes192", "aes256", "aes192c", "aes256c", "des", "
 MAX_CREDENTIALS_PER_HOST = 3
 
 MAX_SECRET_LEN = 16 * 1024
-_USER_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@\\-]{0,127}$")
+# «#» и «$» — общие пользователи Oracle (C##SCAN) и служебные учётки.
+_USER_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@\\#$-]{0,127}$")
 
 
 class CredentialError(ValueError):
@@ -257,9 +270,14 @@ class HostCredential:
     private_key: str | None = field(default=None, repr=False)
     passphrase: str | None = field(default=None, repr=False)
     become: str = BECOME_SUDO                   # sudo | none
-    protocol: str = PROTOCOL_SSH                # ssh | winrm | netssh | snmp
+    protocol: str = PROTOCOL_SSH                # ssh | winrm | netssh | snmp | СУБД
     # Несекретные параметры: platform (netssh), snmp_version/auth_proto/priv_proto.
     options: dict = field(default_factory=dict, compare=False, hash=False)
+    db_name: str | None = None                  # база / имя сервиса Oracle (СУБД)
+
+    @property
+    def is_db(self) -> bool:
+        return self.protocol in DB_PROTOCOLS
 
     def scope_prefix(self, host: str) -> int | None:
         """Длина префикса самой узкой подсети области, куда входит хост.
@@ -284,6 +302,8 @@ class HostCredential:
             "protocol": self.protocol}
         if self.options:
             out["options"] = dict(self.options)
+        if self.db_name:
+            out["db_name"] = self.db_name
         return out
 
 
@@ -299,6 +319,22 @@ def validate_protocol(protocol: str) -> str:
         raise CredentialError(f"недопустимый протокол входа: {protocol!r} "
                               f"(допустимо: {', '.join(PROTOCOLS)})")
     return protocol
+
+
+def validate_db_name(protocol: str, db_name: str | None) -> str | None:
+    """База для входа в СУБД: имя без кавычек и пробелов (в запросы не подставляется,
+    передаётся драйверу параметром подключения). Для Oracle обязательно имя сервиса."""
+    if protocol not in DB_PROTOCOLS:
+        return None
+    name = (db_name or "").strip() or DEFAULT_DB_NAMES.get(protocol)
+    if not name and protocol == PROTOCOL_MYSQL:
+        return None                     # MySQL/MariaDB: база для входа не нужна
+    if not name:
+        raise CredentialError("для Oracle укажите имя сервиса (service name), "
+                              "например ORCLPDB1")
+    if not _DB_NAME_RE.match(name):
+        raise CredentialError(f"недопустимое имя базы/сервиса: {name!r}")
+    return name
 
 
 def validate_options(protocol: str, options: dict | None) -> dict:

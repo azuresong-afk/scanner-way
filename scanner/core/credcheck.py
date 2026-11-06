@@ -10,7 +10,9 @@
     (`winexec.connect`: именно здесь проходят TLS и NTLM). Ни одного скрипта;
   * сетевое устройство по SSH (netssh) — как SSH: вход и выход, без команд;
   * SNMP — один GET sysDescr (UDP, без TCP-пробы): ответ агента и есть
-    проверка учётки. Неверный community v2c неотличим от недоступного агента.
+    проверка учётки. Неверный community v2c неотличим от недоступного агента;
+  * СУБД (PostgreSQL, MySQL/MariaDB, MS SQL, Oracle) — вход учётной записью
+    СУБД (`dbexec.connect`) и сразу отключение. Ни одного запроса.
 
 Перед входом — быстрая TCP-проба порта учётки (`reachability.tcp_probe`):
 закрытый порт и молчащий хост дают понятный ответ за секунды, без ожидания
@@ -30,8 +32,9 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from scanner.core import netexec, sshexec, winexec
+from scanner.core import dbexec, netexec, sshexec, winexec
 from scanner.core.credentials import (
+    DB_PROTOCOLS,
     PROTOCOL_SNMP,
     PROTOCOL_WINRM,
     PROTOCOLS,
@@ -60,7 +63,12 @@ LOGIN_TIMEOUT_SEC = 10.0
 Probe = Callable[[str, int, float], PortResult]
 SshConnect = Callable[[str, HostCredential, sshexec.SshOptions], sshexec.RemoteShell]
 WinConnect = Callable[[str, HostCredential, winexec.WinRmOptions], winexec.WinShell]
+DbConnect = Callable[[str, HostCredential, dbexec.DbOptions], dbexec.DbSession]
 SnmpGet = Callable[..., dict[str, str]]
+
+PROTOCOL_TITLES = {"ssh": "SSH", "winrm": "WinRM", "netssh": "SSH (сетевое устройство)",
+                   "snmp": "SNMP", "postgresql": "PostgreSQL", "mysql": "MySQL/MariaDB",
+                   "mssql": "MS SQL", "oracle": "Oracle"}
 
 
 @dataclass(slots=True)
@@ -96,6 +104,8 @@ class Connectors:
     snmp_get: SnmpGet = netexec.snmp_get
     snmp_options: netexec.SnmpOptions = field(default_factory=netexec.SnmpOptions)
     precheck_timeout: float = PRECHECK_TIMEOUT_SEC
+    db_options: dbexec.DbOptions = field(default_factory=dbexec.DbOptions)
+    db_connect: DbConnect = dbexec.connect
 
 
 def default_connectors(login_timeout: float = LOGIN_TIMEOUT_SEC) -> Connectors:
@@ -106,7 +116,9 @@ def default_connectors(login_timeout: float = LOGIN_TIMEOUT_SEC) -> Connectors:
     win = winexec.options_from_env()
     win.connect_timeout_sec = min(win.connect_timeout_sec, login_timeout)
     win.operation_timeout_sec = max(1, int(min(win.operation_timeout_sec, login_timeout)))
-    return Connectors(ssh_options=ssh, win_options=win)
+    db = dbexec.options_from_env()
+    db.connect_timeout_sec = min(db.connect_timeout_sec, login_timeout)
+    return Connectors(ssh_options=ssh, win_options=win, db_options=db)
 
 
 def _timed_out(e: BaseException) -> bool:
@@ -166,6 +178,23 @@ def _login_winrm(host: str, cred: HostCredential, c: Connectors) -> tuple[str, s
     return OK, "WinRM: вход выполнен"
 
 
+def _login_db(host: str, cred: HostCredential, c: Connectors) -> tuple[str, str]:
+    label = PROTOCOL_TITLES.get(cred.protocol, cred.protocol)
+    try:
+        session = c.db_connect(host, cred, c.db_options)
+    except dbexec.DbAuthFailed:
+        return AUTH_FAILED, f"{label}: логин или пароль отклонены СУБД"
+    except dbexec.DbUnreachable as e:
+        if dbexec.is_timeout(e):
+            return TIMEOUT, (f"{label}: СУБД не ответила за "
+                             f"{c.db_options.connect_timeout_sec:.0f} с")
+        return UNREACHABLE, f"{label}: нет соединения с портом {cred.port}"
+    except dbexec.DbError as e:
+        return ERROR, f"{label}: {str(e)[:200]}"
+    session.close()
+    return OK, f"{label}: вход выполнен"
+
+
 def _login_snmp(host: str, cred: HostCredential, c: Connectors) -> tuple[str, str]:
     try:
         values = c.snmp_get(host, cred, (netexec.OID_SYS_DESCR,), c.snmp_options)
@@ -181,15 +210,11 @@ def _login_snmp(host: str, cred: HostCredential, c: Connectors) -> tuple[str, st
     return OK, "SNMP: агент ответил" + (f" ({descr})" if descr else "")
 
 
-_LABELS = {"ssh": "SSH", "winrm": "WinRM", "netssh": "SSH (сетевое устройство)",
-           "snmp": "SNMP"}
-
-
 def check_login(host: str, cred: HostCredential, c: Connectors) -> LoginResult:
     """Одна попытка входа по учётке: TCP-проба порта, затем вход и выход
     (SNMP — UDP: сразу запрос sysDescr)."""
     start = time.monotonic()
-    label = _LABELS.get(cred.protocol, cred.protocol)
+    label = PROTOCOL_TITLES.get(cred.protocol, cred.protocol)
     pre = (c.probe(host, cred.port, c.precheck_timeout) if cred.protocol != PROTOCOL_SNMP
            else None)
     if pre is None:
@@ -202,6 +227,8 @@ def check_login(host: str, cred: HostCredential, c: Connectors) -> LoginResult:
                                     "или порт закрыт межсетевым экраном")
     elif cred.protocol == PROTOCOL_WINRM:
         status, message = _login_winrm(host, cred, c)
+    elif cred.protocol in DB_PROTOCOLS:
+        status, message = _login_db(host, cred, c)
     else:
         status, message = _login_ssh(host, cred, c)
     return LoginResult(credential_id=cred.id, credential=cred.name,

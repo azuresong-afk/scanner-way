@@ -56,7 +56,8 @@ MODULE_PERMISSIONS: dict[str, Perm] = {"cred_audit": Perm.CRED_AUDIT,
                                        "auth_inventory": Perm.HOST_CREDENTIALS,
                                        "win_inventory": Perm.HOST_CREDENTIALS,
                                        "netdev_audit": Perm.HOST_CREDENTIALS,
-                                       "config_audit": Perm.HOST_CREDENTIALS}
+                                       "config_audit": Perm.HOST_CREDENTIALS,
+                                       "db_audit": Perm.HOST_CREDENTIALS}
 
 
 user_roles = Table(

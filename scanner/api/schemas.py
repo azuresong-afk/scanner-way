@@ -151,9 +151,15 @@ class CredentialIn(BaseModel):
     become: str = Field(default="sudo", pattern="^(sudo|none)$")
     # Способ входа: ssh | winrm (Windows, только пароль). domain — домен Windows:
     # логин сохраняется как ДОМЕН\\user.
-    protocol: str = Field(default="ssh", pattern="^(ssh|winrm|netssh|snmp)$")
+    # Сетевое оборудование: netssh | snmp; СУБД (db_audit): postgresql | mysql
+    # (и MariaDB) | mssql | oracle — только пароль.
+    protocol: str = Field(
+        default="ssh",
+        pattern="^(ssh|winrm|netssh|snmp|postgresql|mysql|mssql|oracle)$")
     domain: str | None = Field(default=None, max_length=64,
                                pattern=r"^[A-Za-z0-9][A-Za-z0-9.\-]*$")
+    # База для входа (PostgreSQL — postgres, MS SQL — master) или имя сервиса Oracle.
+    db_name: str | None = Field(default=None, max_length=128)
     # Сетевое оборудование: платформа устройства (netssh, auto — определить),
     # параметры SNMP (snmp).
     platform: str | None = Field(default=None, max_length=32)
@@ -198,6 +204,7 @@ class CredentialOut(_Orm):
     created_at: datetime | None
     become: str = "sudo"
     protocol: str = "ssh"
+    db_name: str | None = None
     options: dict = {}
 
     @field_validator("options", mode="before")
@@ -688,7 +695,7 @@ class CredentialCheckIn(BaseModel):
 class CredentialLoginOut(BaseModel):
     credential_id: int
     credential: str
-    protocol: str                 # ssh | winrm | netssh | snmp
+    protocol: str                 # ssh | winrm | netssh | snmp | postgresql | mysql | mssql | oracle
     username: str
     port: int
     status: str                   # ok | auth_failed | timeout | unreachable | host_key_mismatch | error
