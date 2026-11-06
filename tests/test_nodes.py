@@ -20,7 +20,7 @@ from scanner.core.models import (
     ServiceInfo,
     Severity,
 )
-from scanner.core.orchestrator import RunOutcome, inline_executor
+from scanner.core.orchestrator import MSG_NO_TARGETS_NODE, RunOutcome, inline_executor
 from scanner.modules.base import ScanContext, ScanModule
 from scanner.nodes import store as nodes
 from scanner.nodes.agent import BufferedAudit, NodeAgent, NodeConfig, execute_job
@@ -268,6 +268,31 @@ def test_node_result_cannot_inject_foreign_hosts(stack, sqlite_factory):
         acts = [a.action for a in s.scalars(select(AuditLogRow))]
     assert hosts == {"10.1.0.5"}
     assert "node_result_filtered" in acts
+
+
+def test_node_local_allowlist_denies_everything(stack, sqlite_factory):
+    """Центр выдал цель, но она вне локального allowlist узла: узел её не
+    трогает, отказ — в аудите от имени узла, прогон «Ошибка» с понятной причиной."""
+    api, rec, _app = stack
+    eid = api.engagement("10.0.0.0/8")
+    node = _create_node(api)
+    r = api.c.post(f"/engagements/{eid}/runs", headers=api.user("op", "operator"),
+                   json={"targets": ["10.1.0.200"], "modules": ["discovery"],
+                         "node_id": node["id"]})
+    run_id = r.json()["id"]
+    client = _node_client(api.c, node["token"])
+    cfg = NodeConfig("http://central", node["token"], ["10.1.0.0/25"], spool=None,
+                     heartbeat_seconds=0.05)
+    agent = NodeAgent(client, cfg, registry={"discovery": lambda: NodeDiscovery(rec)})
+    assert agent.run_once() is True
+    assert "node_targets" not in rec.seen            # модуль не запускался
+    run = api.c.get(f"/runs/{run_id}", headers=api.admin).json()
+    assert run["status"] == "failed"
+    assert run["error_message"] == MSG_NO_TARGETS_NODE
+    with sqlite_factory() as s:
+        denies = [(a.subject, a.target) for a in s.scalars(
+            select(AuditLogRow).where(AuditLogRow.action == "deny"))]
+    assert ("node:Филиал-1", "10.1.0.200") in denies
 
 
 def test_node_auth_is_separate_from_users(stack):

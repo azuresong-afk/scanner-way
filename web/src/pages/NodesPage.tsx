@@ -249,7 +249,7 @@ function NodeCard({ node, canEdit, busy, onEdit, onToken, onToggle, onDelete }: 
 
       {node.outside_local_allowlist.length > 0 && (
         <div className="alert alert-warn" role="status">
-          Эти сети не входят в локальный allowlist узла и проверяться не будут: {node.outside_local_allowlist.join(", ")}.
+          Эти сети узла не входят в локальный allowlist узла (целиком или частично): адреса вне него узел проверять не будет — {node.outside_local_allowlist.join(", ")}.
         </div>
       )}
       {node.status === "online" && missing.length > 0 && (

@@ -658,6 +658,9 @@ MSG_NODE_LOST = ("Прогон прерван: узел-сканер перес�
                  "Результаты не получены — запустите прогон повторно (кнопка «Повторить»).")
 MSG_NO_TARGETS = ("Ни одна цель не прошла allowlist договора на момент запуска "
                   "(allowlist мог измениться после постановки прогона).")
+MSG_NO_TARGETS_NODE = ("Ни одна цель не прошла allowlist: договора и сетей узла в центре "
+                       "либо локальный allowlist узла (SCANNER_NODE_ALLOWLIST). Какие "
+                       "цели и где отклонены — в журнале аудита, действие deny.")
 
 
 def make_worker_id() -> str:
@@ -1351,7 +1354,8 @@ class RunService:
             if out.stopped or run.status == "stopped":
                 final = "stopped"
             elif not out.allowed:
-                final, message = "failed", MSG_NO_TARGETS
+                final = "failed"
+                message = MSG_NO_TARGETS_NODE if run.node_id is not None else MSG_NO_TARGETS
             else:
                 # итог по покрытию: недоступный хост, таймаут SSH, нет учётки —
                 # не «успешно»; ошибки модулей входят в покрытие как error
