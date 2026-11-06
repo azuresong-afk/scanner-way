@@ -57,6 +57,13 @@ scanner credentials add --engagement 1 --name "Коммутаторы" --protoco
 # SNMP v3 (ключ аутентификации — --password-env, шифрования — --priv-env); v2c: --snmp-version 2c, community — в пароле
 scanner credentials add --engagement 1 --name "SNMP" --protocol snmp --snmp-version 3 --user scan \
     --snmp-auth sha --password-env SNMP_AUTH --snmp-priv aes --priv-env SNMP_PRIV --targets 192.0.2.0/27
+# СУБД: postgresql | mysql | mssql | oracle (порт по умолчанию 5432 / 3306 / 1433 / 1521)
+scanner credentials add --engagement 1 --name "PostgreSQL" --protocol postgresql --user scan_ro \
+    --password-env DB_PASS --targets 192.0.2.30 [--db-name postgres]
+scanner credentials add --engagement 1 --name "Oracle ERP" --protocol oracle --user scan_ro \
+    --password-env DB_PASS --db-name ERPPDB --targets 192.0.2.31
+scanner run --engagement 1 --targets 192.0.2.30 --modules discovery db_audit --credential 3 \
+    --confirm-authorized --allow-credentials
 scanner credentials list --engagement 1
 scanner credentials delete --engagement 1 --id 2
 
@@ -236,6 +243,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | `linux_full` | Полная проверка Linux | `discovery`, `vuln`, `auth_inventory`, `config_audit`, `password_policy` |
 | `windows_full` | Полная проверка Windows | `discovery`, `vuln`, `win_inventory` |
 | `network_devices` | Сетевое оборудование | `discovery`, `netdev_audit` |
+| `dbms` | Проверка СУБД | `discovery`, `db_audit` |
 | `network` | Только сетевая проверка | `discovery`, `vuln` |
 | `discovery` | Только обнаружение | `discovery` |
 
@@ -258,6 +266,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | `netdev_audit` | Сетевое оборудование | `host_credentials` | CLI по SSH (только просмотр), SNMP; NVD/БДУ по версии ОС устройства |
 | `config_audit` | Аудит конфигураций | `host_credentials` | OpenSCAP, Lynis; добавляет `auth_inventory` и `password_policy` |
 | `password_policy` | Парольная политика | — | чтение файлов PAM и `login.defs` |
+| `db_audit` | Аудит СУБД | `host_credentials` | psycopg, PyMySQL, pymssql, python-oracledb; NVD/БДУ, MSRC для SQL Server |
 | `cred_audit` | Аудит учётных данных | `cred_audit` | SSH, наборы проверки |
 
 Движок `nuclei` = `vuln`; `credentialed` = `auth_inventory` + `win_inventory` +
@@ -272,6 +281,9 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | `CVE-ГГГГ-N` | CVE/NVD |
 | `[OpenSCAP] …`, `LYNIS:…` | правила аудита конфигураций |
 | `POLICY:password-…` | парольная политика |
+| `DB-PG-…`, `DB-MY-…`, `DB-MS-…`, `DB-ORA-…` | правила аудита СУБД (таблица ниже) |
+| `DB-EOL` | ветка СУБД не поддерживается производителем |
+| `INFO:db-audit…` | сводка аудита СУБД, отказ входа, СУБД недоступна |
 | `CRED:ssh/<логин>` | слабая учётная запись |
 | `NETDEV:<правило>` | правило конфигурации сетевого устройства (см. 5.4а) |
 
@@ -308,6 +320,26 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | `mac_server` | MAC-Telnet / MAC-Winbox (MikroTik) | средний |
 
 Правила участвуют в профилях соответствия (ФСТЭК, CIS) через факт `netdev`.
+
+#### Правила аудита СУБД
+
+Правила — по мотивам CIS Benchmarks соответствующих СУБД (раздел указан в
+рекомендации каждой находки). «Не проверено» — у учётки нет права на нужное
+представление; такое правило не считается выполненным.
+
+| СУБД | Правила |
+|---|---|
+| PostgreSQL, Postgres Pro | `DB-PG-SSL` TLS выключен · `DB-PG-PWENC` пароли не SCRAM · `DB-PG-HBA-TRUST` сетевой вход без пароля · `DB-PG-HBA-WEAK` password/md5 в pg_hba · `DB-PG-SUPERUSER` лишние суперпользователи · `DB-PG-PUBLIC-CREATE` CREATE в схеме public · `DB-PG-LOGCONN`, `DB-PG-LOGDISCONN`, `DB-PG-LOGSTMT` журналирование · `DB-PG-PGAUDIT` нет pgaudit |
+| MySQL, MariaDB | `DB-MY-EMPTYPW` пустые пароли · `DB-MY-ANON` анонимные учётки · `DB-MY-REMOTEROOT` root по сети · `DB-MY-LOCALINFILE` · `DB-MY-SECUREFILE` · `DB-MY-TLS` require_secure_transport · `DB-MY-NAMERES` · `DB-MY-STRICT` · `DB-MY-PWLIFE` · `DB-MY-LOGERR` · `DB-MY-TESTDB` |
+| MS SQL Server | `DB-MS-XPCMD` xp_cmdshell · `DB-MS-ADHOC` · `DB-MS-CLR` · `DB-MS-OLE` · `DB-MS-XDBCHAIN` · `DB-MS-REMOTEACCESS` · `DB-MS-DAC` · `DB-MS-STARTUPPROCS` · `DB-MS-DBMAIL` · `DB-MS-SA` sa включена · `DB-MS-SANAME` · `DB-MS-POLICY` · `DB-MS-EXPIRATION` · `DB-MS-MIXED` смешанная проверка подлинности |
+| Oracle Database | `DB-ORA-REMOTEOS` · `DB-ORA-REMOTEROLES` · `DB-ORA-O7DICT` · `DB-ORA-AUDIT` · `DB-ORA-SQL92` · `DB-ORA-FAILEDLOGIN` · `DB-ORA-PWLIFE` · `DB-ORA-PWVERIFY` · `DB-ORA-DEFPWD` пароли по умолчанию · `DB-ORA-PUBLICEXEC` опасные пакеты у PUBLIC |
+
+Уязвимости версии: PostgreSQL, MySQL, MariaDB, Oracle — NVD по CPE и БДУ ФСТЭК
+по названию ПО; Postgres Pro — БДУ по названиям Postgres Pro и NVD по версии
+PostgreSQL, на которой основана сборка; MS SQL Server — справочник MSRC:
+сборка экземпляра против исправлений той же ветки обслуживания (GDR или CU).
+После обновления сканера перезагрузите справочник MSRC (`scanner feeds
+sync-msrc`): продукты SQL Server в него раньше не попадали.
 
 ### 5.5. Ограничения и лимиты
 
@@ -352,7 +384,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | Проекты, allowlist, активы | `engagement_create`, `engagement_update`, `engagement_delete`, `allowlist_add`, `allowlist_remove`, `asset_create`, `asset_update`, `asset_bulk_update`, `asset_delete`, `asset_import`, `asset_group_create`, `asset_group_rename`, `asset_group_delete` |
 | Учётки и наборы | `credential_create`, `credential_delete`, `credential_check`, `cred_set_create`, `cred_set_delete` |
 | Прогоны | `scan_request` (в т. ч. отказ без допустимых целей), `scan_queue`, `scan_start`, `scan_stop`, `scan_finish`, `scan_requeue`, `deny` (цель вне allowlist), `module_start`, `module_finish`, `module_skip`, `coverage` |
-| Движки и модули | `nmap_exec`, `nuclei_exec`, `banner_match`, `auth_inventory_*`, `win_inventory_*`, `netdev_ssh`, `netdev_snmp`, `netdev_match`, `netdev_skip`, `config_audit_*`, `password_policy_*`, `cred_audit_*` (в т. ч. `cred_audit_attempt`, `cred_audit_lockout`, `cred_audit_limit`), `*_deny` |
+| Движки и модули | `nmap_exec`, `nuclei_exec`, `banner_match`, `auth_inventory_*`, `win_inventory_*`, `netdev_ssh`, `netdev_snmp`, `netdev_match`, `netdev_skip`, `config_audit_*`, `db_audit_*`, `password_policy_*`, `cred_audit_*` (в т. ч. `cred_audit_attempt`, `cred_audit_lockout`, `cred_audit_limit`), `*_deny` |
 | Сетевой поиск | `port_scan`, `reachability_check` |
 | Расписание | `schedule_create`, `schedule_update`, `schedule_delete`, `schedule_fire` |
 | Находки и отчёты | `false_positive_mark`, `false_positive_unmark`, `false_positive_mark_software`, `export` |
@@ -426,6 +458,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | `SCANNER_WINRM_ALLOW_HTTP` | 0 | 1 — разрешить WinRM по HTTP (5985) |
 | `SCANNER_NETDEV_COMMAND_TIMEOUT_SEC` | 60 | предел одной команды CLI сетевого устройства, с |
 | `SCANNER_NETDEV_SNMP_TIMEOUT_SEC`, `SCANNER_NETDEV_SNMP_RETRIES` | 3, 1 | таймаут запроса SNMP и число повторов |
+| `SCANNER_DBAUDIT_CONNECT_TIMEOUT`, `SCANNER_DBAUDIT_QUERY_TIMEOUT` | 10, 30 | аудит СУБД: таймаут подключения и запроса, с |
 
 **Аудит конфигураций**
 

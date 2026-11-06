@@ -31,6 +31,11 @@ dependencies = [
     "segno>=1.6",
     # SNMP (v2c/v3 USM) для учёток сетевого оборудования: scanner/core/netexec.py
     "pysnmp>=7.1,<8",
+    # Аудит СУБД (db_audit): MySQL/MariaDB, MS SQL Server, Oracle (тонкий режим,
+    # без Oracle Client). PostgreSQL — psycopg выше.
+    "pymysql>=1.1",
+    "pymssql>=2.3",
+    "oracledb>=2.0",
 ]
 
 [project.scripts]

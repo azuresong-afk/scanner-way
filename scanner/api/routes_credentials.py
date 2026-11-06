@@ -1,5 +1,5 @@
 """Учётные записи активов договора (инвентаризация и аудит конфигураций по
-SSH/WinRM, сетевое оборудование по SSH-CLI/SNMP).
+SSH/WinRM, сетевое оборудование по SSH-CLI/SNMP, аудит СУБД).
 
 Все операции — только с правом host_credentials. Секреты принимаются на вход
 и сразу шифруются; ни один ответ API и ни одна запись аудита их не содержат.
@@ -51,7 +51,7 @@ def create_credential(engagement_id: int, body: CredentialIn, request: Request,
             passphrase=(body.passphrase
                         if body.auth == "key" or body.protocol == "snmp" else None),
             created_by=user.id, become=body.become, protocol=body.protocol,
-            options=body.options())
+            options=body.options(), db_name=body.db_name)
     except CredentialError as e:
         audit.record(subject=user.subject, action="credential_create",
                      target=f"engagement:{engagement_id}", result="rejected",
@@ -67,6 +67,7 @@ def create_credential(engagement_id: int, body: CredentialIn, request: Request,
                  details={"credential_id": cid, "name": row.name, "user": row.username,
                           "port": row.port, "auth": row.auth, "become": row.become,
                           "protocol": row.protocol, "options": dict(row.options or {}),
+                          "db_name": row.db_name,
                           "targets": list(row.targets or []),
                           "key_fingerprint": row.key_fingerprint})
     return row

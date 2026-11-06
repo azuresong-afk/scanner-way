@@ -7,6 +7,7 @@ import type {
   CredentialHostCheckOut,
 } from "../api/types";
 import { ErrorAlert, Modal } from "./ui";
+import { PROTOCOL_LABEL } from "../lib/labels";
 
 /** Сколько хостов уходит в один запрос: результаты появляются по мере проверки. */
 const CHECK_BATCH = 4;
@@ -36,8 +37,6 @@ const TONE: Record<CredHostStatus, string> = {
 };
 
 /** Подсказка, что делать, — для итогов, где причина не очевидна из названия. */
-const PROTOCOL_SHORT: Record<string, string> = { ssh: "SSH", winrm: "WinRM", netssh: "SSH", snmp: "SNMP" };
-
 const HINT: Partial<Record<CredLoginStatus | CredHostStatus, string>> = {
   auth_failed:
     "Проверьте логин и пароль/ключ учётки; для SSH — что вход по паролю разрешён (PasswordAuthentication).",
@@ -298,7 +297,7 @@ export function CredentialCheckModal({
                           <b>{x.credential}</b>
                           <span className="mono faint">
                             {x.username} ·{" "}
-                            {PROTOCOL_SHORT[x.protocol] ?? "SSH"}:{x.port}
+                            {PROTOCOL_LABEL[x.protocol] ?? x.protocol}:{x.port}
                           </span>
                           <span className="muted">{x.message}</span>
                           <span

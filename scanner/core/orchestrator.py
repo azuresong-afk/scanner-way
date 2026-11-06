@@ -61,6 +61,7 @@ from scanner.reporting.diff import diff_runs
 # остальным модулям.
 MODULE_ORDER: tuple[str, ...] = ("discovery", "vuln", "auth_inventory", "win_inventory",
                                  "netdev_audit", "config_audit", "password_policy",
+                                 "db_audit",
                                  "cred_audit")
 
 # Движки поиска уязвимостей (выбор оператора): сетевые проверки Nuclei без
@@ -76,7 +77,7 @@ VULN_ENGINES: dict[str, tuple[str, ...]] = {
 }
 # Модули, которые входят на хосты по учётным записям договора (ctx.credentials).
 CREDENTIAL_MODULES = frozenset({"auth_inventory", "win_inventory", "netdev_audit",
-                                "config_audit"})
+                                "config_audit", "db_audit"})
 # Модули-спутники: ставятся в прогон вместе с основным. password_policy оценивает
 # парольную политику, которую собирает config_audit (ctx.host_policy_configs);
 # сам по себе в сеть не ходит и без config_audit инертен.
@@ -145,6 +146,11 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
         from scanner.modules.config_audit import ConfigAuditModule, options_from_env
         return ConfigAuditModule(options_from_env())
 
+    def db_audit() -> ScanModule:
+        from scanner.core.dbexec import options_from_env
+        from scanner.modules.db_audit import DbAuditModule, DbAuditOptions
+        return DbAuditModule(DbAuditOptions(db=options_from_env()), matcher=matcher)
+
     def password_policy() -> ScanModule:
         from scanner.modules.password_policy import PasswordPolicyModule
         return PasswordPolicyModule()
@@ -159,7 +165,8 @@ def default_module_registry(matcher: object | None = None) -> dict[str, ModuleFa
     return {"discovery": discovery, "vuln": vuln, "auth_inventory": auth_inventory,
             "win_inventory": win_inventory, "netdev_audit": netdev_audit,
             "config_audit": config_audit,
-            "password_policy": password_policy, "cred_audit": cred_audit}
+            "password_policy": password_policy, "db_audit": db_audit,
+            "cred_audit": cred_audit}
 
 
 def _advisory_store(matcher: object | None):

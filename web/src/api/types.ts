@@ -146,7 +146,7 @@ export interface RunProfile {
   title: string;
   description: string;
   modules: string[];
-  /** Протоколы учёток, без которых профиль неполон: ssh | winrm. */
+  /** Протоколы учёток, без которых профиль неполон: ssh | winrm | dbms (любая учётка СУБД). */
   needs: string[];
 }
 
@@ -358,8 +358,11 @@ export type CredentialAuth = "password" | "key";
 /** Повышение прав для аудита конфигураций: sudo (пароль учётки / NOPASSWD) или без него. */
 export type CredentialBecome = "sudo" | "none";
 
-/** Способ входа: SSH (Linux), WinRM (Windows, только пароль), SSH в CLI сетевого устройства (netssh) или SNMP. */
-export type CredentialProtocol = "ssh" | "winrm" | "netssh" | "snmp";
+/** СУБД для аудита баз данных (db_audit): учётка СУБД только на чтение, только пароль. */
+export type DbProtocol = "postgresql" | "mysql" | "mssql" | "oracle";
+
+/** Способ входа: SSH (Linux), WinRM (Windows, только пароль), SSH в CLI сетевого устройства (netssh), SNMP или СУБД. */
+export type CredentialProtocol = "ssh" | "winrm" | "netssh" | "snmp" | DbProtocol;
 
 /** Платформа сетевого устройства (учётка netssh); auto — определить по CLI. */
 export type NetdevPlatform =
@@ -385,6 +388,8 @@ export interface CredentialIn {
   snmp_version?: "2c" | "3";
   snmp_auth_proto?: string;
   snmp_priv_proto?: string;
+  /** СУБД: база для входа (PostgreSQL, MS SQL) или имя сервиса Oracle. */
+  db_name?: string;
 }
 
 export interface CredentialOut {
@@ -403,6 +408,7 @@ export interface CredentialOut {
   protocol: CredentialProtocol;
   /** Несекретные параметры: platform (netssh), snmp_version/auth_proto/priv_proto (snmp). */
   options?: Record<string, string>;
+  db_name?: string | null;
 }
 
 export interface PackageOut {

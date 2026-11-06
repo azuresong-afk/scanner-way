@@ -20,7 +20,7 @@ class Profile:
     title: str
     description: str
     modules: tuple[str, ...]
-    needs: tuple[str, ...] = ()          # протоколы учёток: ssh | winrm | netssh | snmp
+    needs: tuple[str, ...] = ()          # потребности в учётках: ssh | winrm | netssh | dbms
 
 
 PROFILES: dict[str, Profile] = {p.id: p for p in (
@@ -35,6 +35,12 @@ PROFILES: dict[str, Profile] = {p.id: p for p in (
             "установленные обновления и ПО по WinRM (MSRC, CVE/БДУ ФСТЭК). Нужна "
             "WinRM-учётка.",
             ("discovery", "vuln", "win_inventory"), ("winrm",)),
+    Profile("dbms", "Проверка СУБД",
+            "Обнаружение хостов и сервисов, затем вход в СУБД учётной записью только на "
+            "чтение: версия → CVE/БДУ ФСТЭК (SQL Server — по обновлениям Microsoft), "
+            "окончание поддержки и конфигурация по CIS. PostgreSQL и Postgres Pro, "
+            "MySQL и MariaDB, MS SQL Server, Oracle. Нужна учётка СУБД.",
+            ("discovery", "db_audit"), ("dbms",)),
     Profile("network_devices", "Сетевое оборудование",
             "Коммутаторы, маршрутизаторы и межсетевые экраны (Cisco, Juniper, MikroTik, "
             "Huawei, Eltex): версия ОС устройства → CVE/БДУ ФСТЭК и аудит конфигурации "
@@ -54,14 +60,22 @@ PROFILES: dict[str, Profile] = {p.id: p for p in (
 
 # Что модуль НЕ проверит без учётки/как ограничен — для предупреждений до запуска.
 _NEEDS = {"auth_inventory": "ssh", "config_audit": "ssh", "win_inventory": "winrm",
-          "netdev_audit": "netdev"}
-# «netdev» — любая учётка сетевого оборудования: SSH-CLI или SNMP.
+          "netdev_audit": "netdev", "db_audit": "dbms"}
+# Группы протоколов: «netdev» — любая учётка сетевого оборудования (SSH-CLI или
+# SNMP), «dbms» — любая учётка СУБД.
 _NETDEV = frozenset({"netssh", "snmp"})
-_NEED_LABEL = {"ssh": "SSH", "winrm": "WinRM", "netdev": "сетевого оборудования (SSH/SNMP)"}
+_DB_PROTOCOLS = frozenset({"postgresql", "mysql", "mssql", "oracle"})
+_GROUPS = {"netdev": _NETDEV, "dbms": _DB_PROTOCOLS}
+_NEED_LABEL = {"ssh": "SSH", "winrm": "WinRM", "netdev": "сетевого оборудования (SSH/SNMP)",
+               "dbms": "СУБД"}
+
+
+def _need_protocols(need: str) -> frozenset[str]:
+    return _GROUPS.get(need, frozenset({need}))
 
 
 def _has(need: str, protocols: set[str]) -> bool:
-    return bool(protocols & _NETDEV) if need == "netdev" else need in protocols
+    return bool(protocols & _need_protocols(need))
 
 
 @dataclass(slots=True)
@@ -113,13 +127,15 @@ def plan_modules(requested: Iterable[str], *, protocols: set[str],
     for name in req:
         need = _NEEDS.get(name)
         if need and not _has(need, protocols) and name in auto and (
-                protocols - ({need} if need != "netdev" else _NETDEV)):
+                protocols - _need_protocols(need)):
             plan.removed.append(PlannedModule(
                 name, MODULE_TITLES.get(name, name),
                 note=("нет учётки WinRM — Windows-хосты этим модулем не проверяются"
                       if need == "winrm" else
                       "нет учётки сетевого оборудования — коммутаторы и маршрутизаторы "
                       "этим модулем не проверяются" if need == "netdev" else
+                      "нет учётки СУБД — базы данных этим модулем не проверяются"
+                      if need == "dbms" else
                       "нет SSH-учётки — Linux-хосты этим модулем не проверяются")))
             continue
         keep.append(name)

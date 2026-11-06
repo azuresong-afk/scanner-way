@@ -23,6 +23,7 @@ from scanner.core.credentials import (
     AUTH_PASSWORD,
     BECOME_NONE,
     BECOME_SUDO,
+    DB_PROTOCOLS,
     DEFAULT_PORTS,
     PROTOCOL_NETSSH,
     PROTOCOL_SNMP,
@@ -35,6 +36,7 @@ from scanner.core.credentials import (
     normalize_scope,
     validate_become,
     validate_cred_set_entries,
+    validate_db_name,
     validate_options,
     validate_protocol,
     validate_username,
@@ -223,7 +225,8 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
                            created_by: int | None = None,
                            become: str = BECOME_SUDO,
                            protocol: str = PROTOCOL_SSH,
-                           options: dict | None = None) -> int:
+                           options: dict | None = None,
+                           db_name: str | None = None) -> int:
     """Завести учётку договора. Секреты шифруются, в БД открытым текстом не попадают.
 
     Область действия (targets) обязана входить в allowlist договора: учётка не
@@ -234,6 +237,8 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
     (уровень доступа задаётся на устройстве: только просмотр); snmp — секрет в
     password (community v2c или ключ аутентификации v3) и passphrase (ключ
     шифрования v3), параметры — в options.
+    Учётка СУБД (postgresql/mysql/mssql/oracle) — только по паролю, без повышения
+    прав; db_name — база для входа или имя сервиса Oracle.
     """
     protocol = validate_protocol(protocol)
     options = validate_options(protocol, options)
@@ -263,6 +268,11 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
                                  ("шифрования", passphrase)):
                 if value and len(value) < 8:
                     raise CredentialError(f"SNMPv3: ключ {label} короче 8 символов")
+    if protocol in DB_PROTOCOLS:
+        if auth != AUTH_PASSWORD:
+            raise CredentialError("учётка СУБД входит только по паролю")
+        become = BECOME_NONE
+    db_name = validate_db_name(protocol, db_name)
     username = validate_username(username)
     become = validate_become(become)
     scope = normalize_scope(targets)
@@ -290,7 +300,8 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
                             username=username, port=port, targets=scope,
                             secret_enc=vault.encrypt(secrets),
                             key_fingerprint=fingerprint, created_by=created_by,
-                            become=become, protocol=protocol, options=options)
+                            become=become, protocol=protocol, options=options,
+                            db_name=db_name)
     session.add(row)
     session.flush()
     return row.id
@@ -325,7 +336,7 @@ def load_host_credentials(session: Session, vault: CredentialVault, engagement_i
             passphrase=(sec.get("passphrase")
                         if r.auth == AUTH_KEY or r.protocol == PROTOCOL_SNMP else None),
             become=r.become or BECOME_SUDO, protocol=r.protocol or PROTOCOL_SSH,
-            options=dict(r.options or {})))
+            options=dict(r.options or {}), db_name=getattr(r, "db_name", None)))
     return out
 
 
