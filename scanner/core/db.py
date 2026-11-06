@@ -548,6 +548,29 @@ class ComplianceFactsRow(Base):
     facts: Mapped[dict] = mapped_column(Jsonb, default=dict)
 
 
+# ========== Автономные узлы (миграция 0029) ==========
+class OfflineJobRow(Base):
+    """Задание автономному узлу, переносимое на носителе (scanner.nodes.offline_center)."""
+    __tablename__ = "offline_jobs"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("scan_runs.id", ondelete="CASCADE"), unique=True)
+    node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scan_nodes.id", ondelete="SET NULL"), index=True)
+    node_fingerprint: Mapped[str] = mapped_column(Text)
+    # exported | imported | cancelled | expired
+    status: Mapped[str] = mapped_column(Text, default="exported")
+    job_sha256: Mapped[str] = mapped_column(Text)
+    job_file: Mapped[str | None] = mapped_column(Text)
+    exported_by: Mapped[str] = mapped_column(Text)
+    exported_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(TsTz)
+    imported_by: Mapped[str | None] = mapped_column(Text)
+    imported_at: Mapped[datetime | None] = mapped_column(TsTz)
+    result_sha256: Mapped[str | None] = mapped_column(Text)
+    result_summary: Mapped[dict | None] = mapped_column(Jsonb)
+
+
 def make_engine(url: str | None = None, **kwargs) -> Engine:
     """Engine по URL; по умолчанию — Postgres из настроек окружения."""
     if url is None:

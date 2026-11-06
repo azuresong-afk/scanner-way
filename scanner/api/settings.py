@@ -20,6 +20,13 @@ class ApiSettings(BaseSettings):
     credentials_key: str = Field(default="", validation_alias=AliasChoices(
         "SCANNER_CREDENTIALS_KEY", "SCANNER_API_CREDENTIALS_KEY"))
 
+    # Секрет ключей центра для автономных узлов (подпись заданий, расшифровка
+    # результатов). Пусто — ключ учёток, иначе secret. Отдельный секрет нужен,
+    # чтобы смена SCANNER_API_SECRET не требовала переустанавливать ключ центра
+    # на автономные узлы. Смена этого секрета = новый ключ центра.
+    offline_key: str = Field(default="", validation_alias=AliasChoices(
+        "SCANNER_OFFLINE_KEY", "SCANNER_API_OFFLINE_KEY"))
+
     # Первый администратор: создаётся при старте, только если в БД нет ни одного
     # пользователя. После создания переменные стоит убрать из окружения.
     bootstrap_admin: str = ""
