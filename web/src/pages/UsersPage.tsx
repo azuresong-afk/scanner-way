@@ -111,6 +111,23 @@ function EditUser({ user, onClose, onDone, self }: { user: UserOut; onClose: () 
   const [roles, setRoles] = useState<string[]>(user.roles);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mfaOn, setMfaOn] = useState(!!user.mfa_enabled);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const ldap = user.auth_source === "ldap";
+
+  const resetMfa = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.resetUserMfa(user.id);
+      setMfaOn(false);
+      setConfirmReset(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -123,7 +140,7 @@ function EditUser({ user, onClose, onDone, self }: { user: UserOut; onClose: () 
       if (password) patch.password = password;
       if (Object.keys(patch).length) await api.updateUser(user.id, patch);
       const sorted = (a: string[]) => [...a].sort().join(",");
-      if (sorted(roles) !== sorted(user.roles)) await api.setRoles(user.id, roles);
+      if (!ldap && sorted(roles) !== sorted(user.roles)) await api.setRoles(user.id, roles);
       onDone();
     } catch (err) {
       const msg = (err as Error).message;
@@ -152,11 +169,17 @@ function EditUser({ user, onClose, onDone, self }: { user: UserOut; onClose: () 
           <span>Имя</span>
           <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
         </label>
-        <label className="field">
-          <span>Новый пароль</span>
-          <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder="Оставьте пустым, чтобы не менять" />
-          {password && password.length < MIN_PASSWORD && <small style={{ color: "var(--danger)" }}>Не короче {MIN_PASSWORD} символов</small>}
-        </label>
+        {ldap ? (
+          <div className="alert alert-info" role="note">
+            Учётная запись домена (AD). Пароль меняется в домене, роли назначаются по группам AD при каждом входе. Здесь можно только отключить вход в «Сканер».
+          </div>
+        ) : (
+          <label className="field">
+            <span>Новый пароль</span>
+            <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder="Оставьте пустым, чтобы не менять" />
+            {password && password.length < MIN_PASSWORD && <small style={{ color: "var(--danger)" }}>Не короче {MIN_PASSWORD} символов</small>}
+          </label>
+        )}
         <label className="check">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} disabled={self} />
           <span>
@@ -164,10 +187,56 @@ function EditUser({ user, onClose, onDone, self }: { user: UserOut; onClose: () 
             <small>{self ? "Свою учётную запись отключить нельзя" : "Отключённый пользователь не сможет войти"}</small>
           </span>
         </label>
-        <RolePicker value={roles} onChange={setRoles} />
+        {ldap ? (
+          <div className="field">
+            <span>Роли (из групп AD)</span>
+            <RoleList roles={user.roles} />
+          </div>
+        ) : (
+          <RolePicker value={roles} onChange={setRoles} />
+        )}
+        {mfaOn && (
+          <div className="field">
+            <span>Двухфакторный вход</span>
+            <div className="inline" style={{ gap: 8, flexWrap: "wrap" }}>
+              <span className="pill pill-ok">Включён</span>
+              {confirmReset ? (
+                <>
+                  <button type="button" className="btn btn-sm btn-danger" onClick={() => void resetMfa()} disabled={busy}>
+                    Да, сбросить
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={() => setConfirmReset(false)}>
+                    Отмена
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn btn-sm" onClick={() => setConfirmReset(true)}>
+                  Сбросить 2FA
+                </button>
+              )}
+            </div>
+            <small>Если пользователь потерял телефон и коды восстановления. При следующем входе он настроит 2FA заново (или войдёт без неё, если 2FA необязательна).</small>
+          </div>
+        )}
         {error && <ErrorAlert error={error} />}
       </form>
     </Modal>
+  );
+}
+
+function RoleList({ roles }: { roles: string[] }) {
+  return (
+    <span className="inline" style={{ gap: 6, flexWrap: "wrap" }}>
+      {roles.length ? (
+        roles.map((r) => (
+          <span key={r} className={`pill ${r === "admin" ? "pill-warn" : r === "cred_audit" || r === "host_credentials" ? "pill-danger" : "pill-info"}`}>
+            {ROLE_LABEL[r] ?? r}
+          </span>
+        ))
+      ) : (
+        <span className="faint">нет</span>
+      )}
+    </span>
   );
 }
 
@@ -198,12 +267,13 @@ export function UsersPage() {
           <Empty title="Пользователей нет" />
         ) : (
           <div className="table-wrap">
-            <table className="table" style={{ minWidth: 640 }}>
+            <table className="table" style={{ minWidth: 760 }}>
               <thead>
                 <tr>
                   <th>Логин</th>
                   <th>Имя</th>
                   <th>Роли</th>
+                  <th>Вход</th>
                   <th>Статус</th>
                   <th />
                 </tr>
@@ -214,16 +284,12 @@ export function UsersPage() {
                     <td className="mono">{u.username}</td>
                     <td>{u.display_name ?? "—"}</td>
                     <td>
+                      <RoleList roles={u.roles} />
+                    </td>
+                    <td>
                       <span className="inline" style={{ gap: 6 }}>
-                        {u.roles.length ? (
-                          u.roles.map((r) => (
-                            <span key={r} className={`pill ${r === "admin" ? "pill-warn" : r === "cred_audit" || r === "host_credentials" ? "pill-danger" : "pill-info"}`}>
-                              {ROLE_LABEL[r] ?? r}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="faint">нет</span>
-                        )}
+                        <span className={`pill ${u.auth_source === "ldap" ? "pill-info" : "pill-muted"}`}>{u.auth_source === "ldap" ? "Домен" : "Локальный"}</span>
+                        {u.mfa_enabled && <span className="pill pill-ok" title="Двухфакторный вход включён">2FA</span>}
                       </span>
                     </td>
                     <td>{u.is_active ? <span className="pill pill-ok">Активен</span> : <span className="pill pill-muted">Отключён</span>}</td>
