@@ -121,6 +121,7 @@ export function RunsPage() {
                     </td>
                     <td>
                       <RunName run={r} />
+                      {r.node_name && <small className="muted"> · узел «{r.node_name}»</small>}
                     </td>
                     <td className="muted">{RATE_PROFILES.find((p) => p.id === r.rate_profile)?.label ?? r.rate_profile}</td>
                     <td title={r.error_message ?? undefined}>

@@ -6,6 +6,7 @@ import { useAuth, type Perm } from "../auth/AuthContext";
 import { localToIso, toLocalInput } from "../lib/format";
 import { CREDENTIAL_MODULES, ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, applyProfile, runTitle, type EngineInfo } from "../lib/labels";
 import { compactAddresses, mergeTargets, parseTargets, specSize, splitTargets } from "../lib/targets";
+import { NODE_STATUS_LABEL } from "../lib/nodes";
 import { useAsync } from "../lib/useAsync";
 import { HostPicker } from "./HostPicker";
 import { ErrorAlert, Modal } from "./ui";
@@ -80,6 +81,10 @@ export function StartRunModal({
   const profiles = useAsync(() => api.runProfiles(), []);
   const [checkProfile, setCheckProfile] = useState<string>("custom");
   const [noPing, setNoPing] = useState(false);
+  const nodes = useAsync(() => api.nodes(), []);
+  const [nodeId, setNodeId] = useState<number | null>(schedule?.node_id ?? null);
+  const nodeList = (nodes.data ?? []).filter((n) => n.enabled || n.id === nodeId);
+  const node = nodeList.find((n) => n.id === nodeId) ?? null;
   const [plan, setPlan] = useState<RunPlan | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const pickProfile = (p: RunProfile | null) => {
@@ -162,6 +167,7 @@ export function StartRunModal({
         credential_ids: needsCreds ? credIds : [],
         cred_set_ids: credAuditOn ? credSetIds : [],
         name: name.trim() || undefined,
+        node_id: nodeId,
       };
       if (scheduled) {
         const data: ScheduleIn = {
@@ -551,6 +557,34 @@ export function StartRunModal({
               </>
             )}
           </section>
+        )}
+
+        {nodeList.length > 0 && (
+          <label className="field">
+            <span>Где выполнять</span>
+            <select
+              className="select"
+              aria-label="Где выполнять"
+              value={nodeId ?? ""}
+              onChange={(e) => setNodeId(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">Центральный сервер</option>
+              {nodeList.map((n) => (
+                <option key={n.id} value={n.id}>
+                  Узел «{n.name}» — {NODE_STATUS_LABEL[n.status].toLowerCase()} · {n.scope.join(", ")}
+                </option>
+              ))}
+            </select>
+            {node ? (
+              <small>
+                Цели, которые не входят в сети узла ({node.scope.join(", ")}), узел не получит.
+                {node.mode === "online" && node.status !== "online" && " Узел сейчас не на связи — прогон дождётся его подключения."}
+                {needsCreds && !node.allow_credentials && " Этому узлу запрещено передавать учётные записи."}
+              </small>
+            ) : (
+              <small>Узел-сканер — для сегментов, куда у центрального сервера нет доступа («Сканеры»).</small>
+            )}
+          </label>
         )}
 
         <label className="field">

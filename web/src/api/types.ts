@@ -138,6 +138,8 @@ export interface RunCreate {
   no_ping?: boolean;
   /** Готовый профиль проверки (GET /run-profiles). */
   profile?: string;
+  /** Где выполнять: не задано — центральный сервер, иначе узел-сканер. */
+  node_id?: number | null;
 }
 
 /** Готовый профиль проверки («Полная проверка Linux» и др.). */
@@ -239,6 +241,8 @@ export interface ScheduleIn extends RunCreate {
   /** IANA-пояс; по умолчанию — пояс браузера. */
   timezone?: string;
   enabled?: boolean;
+  /** Где выполнять: не задано — центральный сервер, иначе узел-сканер. */
+  node_id?: number | null;
 }
 
 export interface ScheduleOut {
@@ -265,6 +269,8 @@ export interface ScheduleOut {
   last_result: string | null;
   last_run_id: number | null;
   owner_id: number | null;
+  /** Узел-сканер расписания; null — центральный сервер. */
+  node_id?: number | null;
   created_at: string | null;
 }
 
@@ -478,6 +484,10 @@ export interface RunOut {
   warnings?: RunWarning[];
   /** Ход идущего прогона; null — в очереди или прогон до миграции 0023. */
   progress?: RunProgress | null;
+  /** Узел-сканер, на котором выполняется прогон; null — центральный сервер. */
+  node_id?: number | null;
+  node_name?: string | null;
+  node_mode?: NodeMode | null;
 }
 
 /** Ход идущего прогона: этап (модуль), хостов готово из всех, общий процент. */
@@ -1203,4 +1213,58 @@ export interface SearchOut {
   vulns: SearchVuln[];
   actions: SearchAction[];
   commands: SearchCommand[];
+}
+
+// ---- узлы-сканеры (распределённое сканирование) ----
+/** online — сетевой узел (сам выходит на центр), offline — автономный (обмен файлами). */
+export type NodeMode = "online" | "offline";
+/** Состояние узла: на связи, нет связи, ещё не подключался, отключён, автономный. */
+export type NodeStatus = "online" | "offline" | "never" | "disabled" | "autonomous";
+
+export interface ScanNode {
+  id: number;
+  name: string;
+  description: string | null;
+  mode: NodeMode;
+  status: NodeStatus;
+  /** Сети узла, заданные администратором (CIDR, диапазоны). */
+  scope: string[];
+  allow_credentials: boolean;
+  enabled: boolean;
+  /** Первые символы токена — чтобы опознать его, сам токен не хранится. */
+  token_prefix: string | null;
+  hostname: string | null;
+  version: string | null;
+  /** Локальный allowlist, который узел сообщил о себе. */
+  local_allowlist: string[];
+  /** Сети узла в центре вне локального allowlist узла — проверяться не будут. */
+  outside_local_allowlist: string[];
+  tools: Record<string, boolean>;
+  created_at: string | null;
+  registered_at: string | null;
+  last_seen_at: string | null;
+  active_runs: number[];
+  queued_runs: number;
+  has_public_key: boolean;
+}
+
+export interface ScanNodeCreated extends ScanNode {
+  /** Токен узла — показывается один раз. */
+  token: string | null;
+}
+
+export interface ScanNodeIn {
+  name: string;
+  description?: string | null;
+  mode: NodeMode;
+  scope: string[];
+  allow_credentials: boolean;
+}
+
+export interface ScanNodeUpdate {
+  name?: string;
+  description?: string | null;
+  scope?: string[];
+  allow_credentials?: boolean;
+  enabled?: boolean;
 }

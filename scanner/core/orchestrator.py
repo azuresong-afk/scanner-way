@@ -653,8 +653,14 @@ MSG_INTERRUPTED_SAVED = ("Прогон прерван после сохране�
                          "остановилась до его штатного завершения (расчёт "
                          "соответствия мог не выполниться). Находки доступны; "
                          "для полного результата повторите прогон.")
+MSG_NODE_LOST = ("Прогон прерван: узел-сканер перестал выходить на связь во время "
+                 "выполнения (выключен, перезапущен или потерял связь с центром). "
+                 "Результаты не получены — запустите прогон повторно (кнопка «Повторить»).")
 MSG_NO_TARGETS = ("Ни одна цель не прошла allowlist договора на момент запуска "
                   "(allowlist мог измениться после постановки прогона).")
+MSG_NO_TARGETS_NODE = ("Ни одна цель не прошла allowlist: договора и сетей узла в центре "
+                       "либо локальный allowlist узла (SCANNER_NODE_ALLOWLIST). Какие "
+                       "цели и где отклонены — в журнале аудита, действие deny.")
 
 
 def make_worker_id() -> str:
@@ -725,6 +731,22 @@ def error_summary(errors: Mapping[str, str]) -> str:
     """Ошибки модулей — одной строкой для пользователя."""
     parts = [f"модуль {m}: {e}" for m, e in errors.items()]
     return "Прогон завершён с ошибками — " + "; ".join(parts)
+
+
+@dataclass(slots=True)
+class _Prepared:
+    """Параметры захваченного прогона (RunService._prepare)."""
+    engagement_id: int
+    names: list[str]
+    options: dict
+    history: dict[str, float]
+    rate: RateProfile
+    gate: AllowlistGate
+    credentials: list[HostCredential]
+    cred_candidates: list[tuple[str, str]]
+    set_ids: list[int]
+    targets: list[str]
+    name: str | None = None
 
 
 class RunService:
@@ -844,10 +866,13 @@ class RunService:
                cred_set_ids: list[int] | None = None,
                name: str | None = None, schedule_id: int | None = None,
                retry_of: int | None = None,
-               options: Mapping[str, object] | None = None) -> int:
+               options: Mapping[str, object] | None = None,
+               node_id: int | None = None) -> int:
         """Создаёт прогон (pending) и отдаёт его исполнителю. Права проверяет API.
 
         name — имя, заданное оператором; без него имя строится по модулям и целям.
+        node_id — исполнить на узле-сканере (scanner.nodes): прогон остаётся
+        pending, пока узел его не заберёт; локальная очередь его не берёт.
         """
         unknown = [m for m in modules if m not in self.registry]
         if unknown:
@@ -860,6 +885,7 @@ class RunService:
         set_ids = list(dict.fromkeys(cred_set_ids or []))
         self.check_credentials(engagement_id, names, cred_ids)
         self.check_cred_sets(engagement_id, set_ids)
+        node_name = self.check_node(node_id, credential_ids=cred_ids, cred_set_ids=set_ids)
         # имя — по выбору оператора, без автоматически добавленных спутников
         title = clean_name(name) or run_title(order_modules(modules), requested_targets)
         with session_scope(self.sessions) as s:
@@ -869,7 +895,8 @@ class RunService:
                                           cred_set_ids=set_ids,
                                           name=title, targets=requested_targets[:1024],
                                           schedule_id=schedule_id, retry_of=retry_of,
-                                          worker_id=self.worker_id, options=opts)
+                                          worker_id=None if node_id else self.worker_id,
+                                          options=opts, node_id=node_id)
         self.audit.record(subject=actor, action="scan_queue", target=f"scan_run:{run_id}",
                           result="ok",
                           details={"engagement_id": engagement_id, "name": title,
@@ -878,9 +905,32 @@ class RunService:
                                    "credential_ids": cred_ids,
                                    "cred_set_ids": set_ids,
                                    "retry_of": retry_of, "options": opts or None,
+                                   "node_id": node_id, "node": node_name,
                                    "requested_targets": requested_targets[:100]})
-        self._enqueue(run_id, list(requested_targets))
+        if node_id is None:
+            self._enqueue(run_id, list(requested_targets))
+        else:
+            ev.safe_add(self.sessions, run_id, [ev.Event(
+                "run_queued", ev.SUBJECT_RUN, f"ожидает узел «{node_name}»")])
         return run_id
+
+    def check_node(self, node_id: int | None, *, credential_ids: list[int] | None = None,
+                   cred_set_ids: list[int] | None = None) -> str | None:
+        """Узел прогона существует, включён и допускает учётки. -> имя узла.
+        ValueError — понятная оператору причина (422)."""
+        if node_id is None:
+            return None
+        from scanner.core.db import ScanNode
+        with session_scope(self.sessions) as s:
+            node = s.get(ScanNode, node_id)
+            if node is None:
+                raise ValueError(f"узел-сканер {node_id} не найден")
+            if not node.enabled:
+                raise ValueError(f"узел-сканер «{node.name}» отключён администратором")
+            if (credential_ids or cred_set_ids) and not node.allow_credentials:
+                raise ValueError(f"узлу «{node.name}» запрещено передавать учётные "
+                                 "записи: уберите учётки или разрешите их в «Сканерах»")
+            return node.name
 
     def retry(self, scan_run_id: int, *, actor: str, started_by: int | None = None) -> int:
         """Новый прогон с параметрами завершившегося (ошибка, прерван,
@@ -899,7 +949,7 @@ class RunService:
                       "credential_ids": list(run.credential_ids or []),
                       "cred_set_ids": list(run.cred_set_ids or []),
                       "name": run.name, "schedule_id": run.schedule_id,
-                      "options": dict(run.options or {})}
+                      "options": dict(run.options or {}), "node_id": run.node_id}
         if not params["requested_targets"]:
             raise ValueError("у прогона не сохранены цели — запустите новый прогон")
         return self.submit(**params, actor=actor, started_by=started_by,
@@ -977,8 +1027,14 @@ class RunService:
         with self._lock:
             owned = set(self._owned)
         with session_scope(self.sessions) as s:
+            offline_nodes = repo.offline_node_ids(s)
             for run in repo.active_scan_runs(s):
                 if run.id in owned:
+                    continue
+                # прогон узла: pending ждёт, пока узел его заберёт; прогон
+                # автономного узла едет на носителе — его снимает срок задания
+                if run.node_id is not None and (run.status == "pending"
+                                                or run.node_id in offline_nodes):
                     continue
                 seen = _aware(run.heartbeat_at or run.started_at or run.created_at)
                 dead = owner_is_dead(run.worker_id, self.worker_id)
@@ -990,9 +1046,11 @@ class RunService:
                 if run.status == "running":
                     saved = s.scalar(select(func.count(FindingRow.id)).where(
                         FindingRow.scan_run_id == run.id)) or 0
+                    msg = MSG_INTERRUPTED_SAVED if saved else MSG_INTERRUPTED
+                    if run.node_id is not None:
+                        msg = MSG_NODE_LOST
                     res = s.execute(update(ScanRun).where(*cond).values(
-                        status="interrupted", finished_at=now,
-                        error_message=MSG_INTERRUPTED_SAVED if saved else MSG_INTERRUPTED)
+                        status="interrupted", finished_at=now, error_message=msg)
                         .execution_options(synchronize_session=False))
                     if res.rowcount == 1:
                         interrupted.append(run.id)
@@ -1097,7 +1155,9 @@ class RunService:
                               target=f"scan_run:{scan_run_id}", result="error",
                               details={"error": f"{type(e).__name__}: {e}"[:500]})
 
-    def _execute(self, scan_run_id: int, requested_targets: list[str]) -> str:
+    def _prepare(self, scan_run_id: int, worker_id: str) -> _Prepared | str:
+        """Параметры прогона из БД и захват pending -> running за worker_id.
+        -> _Prepared или итоговый статус, если прогон уже не pending."""
         with session_scope(self.sessions) as s:
             run = repo.get_scan_run(s, scan_run_id)
             if run is None:
@@ -1127,32 +1187,125 @@ class RunService:
             if set_ids:
                 cred_candidates = repo.load_cred_set_entries(s, self.vault,
                                                              engagement_id, set_ids)
+            prepared = _Prepared(engagement_id=engagement_id, names=names,
+                                 options=run_options, history=history, rate=rate,
+                                 gate=gate, credentials=credentials,
+                                 cred_candidates=cred_candidates, set_ids=set_ids,
+                                 targets=list(run.targets or []), name=run.name)
             # pending -> running атомарно: прогон, поставленный в очередь повторно,
             # не исполнится дважды.
-            if not repo.claim_scan_run(s, scan_run_id, self.worker_id):
+            if not repo.claim_scan_run(s, scan_run_id, worker_id):
                 s.expire_all()
                 run = repo.get_scan_run(s, scan_run_id)
                 return run.status
+        return prepared
+
+    def _audit_start(self, scan_run_id: int, p: _Prepared, **extra: object) -> None:
         self.audit.record(subject="scanner", action="scan_start",
                           target=f"scan_run:{scan_run_id}", result="ok",
-                          details={"engagement_id": engagement_id, "modules": names,
-                                   "rate_profile": rate.name,
-                                   "credentials": [c.describe() for c in credentials]
+                          details={"engagement_id": p.engagement_id, "modules": p.names,
+                                   "rate_profile": p.rate.name,
+                                   "credentials": [c.describe() for c in p.credentials]
                                    or None,
-                                   "cred_set_ids": set_ids or None,
-                                   "cred_candidates": len(cred_candidates) or None})
+                                   "cred_set_ids": p.set_ids or None,
+                                   "cred_candidates": len(p.cred_candidates) or None,
+                                   **extra})
 
-        modules = [self.registry[n]() for n in names]
-        orch = Orchestrator(gate, self.audit,
+    def _execute(self, scan_run_id: int, requested_targets: list[str]) -> str:
+        p = self._prepare(scan_run_id, self.worker_id)
+        if isinstance(p, str):
+            return p
+        self._audit_start(scan_run_id, p)
+        modules = [self.registry[n]() for n in p.names]
+        orch = Orchestrator(p.gate, self.audit,
                             should_stop=lambda: self._status(scan_run_id) == "stopped",
                             events=ev.recorder(self.sessions, scan_run_id))
-        out = orch.run_detailed(engagement_id=engagement_id, scan_run_id=scan_run_id,
+        out = orch.run_detailed(engagement_id=p.engagement_id, scan_run_id=scan_run_id,
                                 requested_targets=requested_targets, modules=modules,
-                                rate=rate, credentials=credentials,
-                                cred_candidates=cred_candidates, options=run_options,
+                                rate=p.rate, credentials=p.credentials,
+                                cred_candidates=p.cred_candidates, options=p.options,
                                 progress=lambda snap: self._save_progress(scan_run_id, snap),
-                                progress_history=history)
-        del credentials, cred_candidates    # секреты больше не нужны
+                                progress_history=p.history)
+        p.credentials, p.cred_candidates = [], []    # секреты больше не нужны
+        return self.persist_outcome(scan_run_id, out)
+
+    # --- прогоны на узлах-сканерах (scanner.nodes) --------------------------
+    def claim_for_node(self, scan_run_id: int, node: object) -> dict | None:
+        """Узел забирает свой pending-прогон: захват pending -> running за узлом
+        и задание (scanner.nodes.codec.encode_job). None — прогон уже не pending
+        или назначен другому узлу.
+
+        Цели проходят allowlist договора, урезанный до сетей узла: узел получает
+        только адреса своего сегмента; отказы пишутся в аудит центра. Учётки
+        расшифровываются и уходят в задании — только если узлу это разрешено."""
+        from scanner.nodes import store as nodes
+        from scanner.nodes.codec import encode_job
+        from scanner.nodes.jobs import build_job
+        node_id = int(node.id)
+        node_name = getattr(node, "name", str(node_id))
+        with session_scope(self.sessions) as s:
+            run = repo.get_scan_run(s, scan_run_id)
+            if run is None or run.node_id != node_id or run.status != "pending":
+                return None
+        p = self._prepare(scan_run_id, nodes.node_worker_id(node_id, uuid.uuid4().hex[:12]))
+        if isinstance(p, str):
+            return None
+        if (p.credentials or p.cred_candidates) and not getattr(node, "allow_credentials",
+                                                                 False):
+            # админ запретил учётки узлу после постановки прогона
+            p.credentials, p.cred_candidates = [], []
+            msg = (f"Узлу «{node_name}» запрещено передавать учётные записи — "
+                   "прогон с учётками ему не выдан.")
+            with session_scope(self.sessions) as s:
+                repo.set_scan_run_status(s, scan_run_id, "failed", error_message=msg)
+            self.audit.record(subject="scanner", action="node_job",
+                              target=f"scan_run:{scan_run_id}",
+                              result="credentials_forbidden",
+                              details={"node_id": node_id, "node": node_name})
+            ev.safe_add(self.sessions, scan_run_id, [ev.run_finish("failed", message=msg)])
+            self._notify(scan_run_id)
+            return None
+        job, plan = build_job(scan_run_id, p, node)
+        p.credentials, p.cred_candidates = [], []
+        for d in plan.denied:
+            self.audit.record(subject="scanner", action="deny", target=d.target,
+                              result=d.reason,
+                              details={"scan_run_id": scan_run_id, "count": d.count,
+                                       "node_id": node_id})
+        self._audit_start(scan_run_id, p, node_id=node_id, node=node_name,
+                          targets=len(job.targets))
+        self.audit.record(subject="scanner", action="node_job",
+                          target=f"scan_run:{scan_run_id}", result="issued",
+                          details={"node_id": node_id, "node": node_name,
+                                   "targets": len(job.targets),
+                                   "credentials": [c.describe() for c in job.credentials]
+                                   or None})
+        ev.safe_add(self.sessions, scan_run_id, [ev.Event(
+            "run_node", ev.SUBJECT_RUN, f"выполняется на узле «{node_name}»")])
+        return encode_job(job)
+
+    def node_heartbeat(self, scan_run_id: int, node_id: int,
+                       progress: dict | None = None) -> str | None:
+        """Отметка «жив» прогона на узле (+ снимок хода). -> текущий статус
+        (stopped — узлу пора остановиться); None — прогон не этого узла."""
+        with session_scope(self.sessions) as s:
+            run = repo.get_scan_run(s, scan_run_id)
+            if run is None or run.node_id != node_id:
+                return None
+            if run.status == "running":
+                run.heartbeat_at = datetime.now(UTC)
+                if progress is not None:
+                    run.progress = progress
+            return run.status
+
+    def persist_outcome(self, scan_run_id: int, out: RunOutcome) -> str:
+        """Сохраняет результат прогона (локального или с узла) и выставляет
+        итоговый статус. Прогон должен быть running (или stopped)."""
+        with session_scope(self.sessions) as s:
+            run = repo.get_scan_run(s, scan_run_id)
+            if run is None:
+                raise LookupError(f"scan_run {scan_run_id} not found")
+            engagement_id = run.engagement_id
 
         with session_scope(self.sessions) as s:
             # в той же транзакции — результаты прошлой попытки этого прогона
@@ -1201,7 +1354,8 @@ class RunService:
             if out.stopped or run.status == "stopped":
                 final = "stopped"
             elif not out.allowed:
-                final, message = "failed", MSG_NO_TARGETS
+                final = "failed"
+                message = MSG_NO_TARGETS_NODE if run.node_id is not None else MSG_NO_TARGETS
             else:
                 # итог по покрытию: недоступный хост, таймаут SSH, нет учётки —
                 # не «успешно»; ошибки модулей входят в покрытие как error

@@ -96,6 +96,19 @@ scanner cred-sets delete --engagement 1 --id 1
 | `scanner auth ldap-check` | проверить настройки `SCANNER_API_LDAP_*`: связь с контроллером, служебную учётку, таблицу групп и ролей |
 | `scanner auth ldap-check --username ivanov [--password-stdin]` | то же и пробный вход пользователя: DN, группы, роли (пароль спрашивается без эха) |
 
+### 1.6. Узел-сканер
+
+Команды выполняются на узле (`docker-compose.node.yml`), без БД; параметры —
+переменные `SCANNER_NODE_*` (раздел 5.8). В контейнере узла точка входа уже
+`scanner node`, поэтому в compose пишется только действие:
+`docker compose -f docker-compose.node.yml --env-file .env.node run --rm node check`.
+
+| Команда | Действие |
+|---|---|
+| `scanner node run` | агент сетевого узла: подключиться к центру, забирать и выполнять прогоны (так узел работает постоянно) |
+| `scanner node run --once` | забрать не больше одного задания, выполнить и выйти (отладка) |
+| `scanner node check` | показать центр, локальный allowlist и инструменты узла, проверить связь и токен; предупредить, если сети узла в центре шире локального allowlist |
+
 ## 2. REST API
 
 **Адрес.** Через веб: `http://<сервер>:8080/api/…`; напрямую с сервера:
@@ -179,6 +192,10 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | **Уведомления** | | |
 | `GET /integrations/types`, `GET /integrations/channels`, `GET /integrations/log` | `view_engagements` | типы, каналы, журнал доставки |
 | `POST/PATCH/DELETE /integrations/channels[/{id}]`, `POST …/{id}/test`, `POST /integrations/log/{id}/retry` | `manage_engagements` | управление каналами |
+| **Узлы-сканеры** | | |
+| `GET /nodes`, `GET /nodes/{id}` | `view_engagements` или `run_scan` | узлы: статус, сети, локальный allowlist, инструменты, прогоны в работе и в очереди |
+| `POST /nodes`, `PATCH /nodes/{id}`, `DELETE /nodes/{id}` | `manage_nodes` | завести (ответ содержит токен — один раз), изменить, отключить (`{"enabled": false}`), удалить (409, если есть прогоны в очереди или в работе) |
+| `POST /nodes/{id}/token` | `manage_nodes` | перевыпустить токен узла |
 | **Журнал аудита** | | |
 | `GET /audit`, `GET /audit/actions`, `GET /audit/export?format=csv\|json` | `view_audit` | журнал, перечень действий, выгрузка |
 
@@ -196,11 +213,37 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
   "cred_set_ids": [],
   "rate_profile": "gentle",
   "no_ping": false,
-  "name": "Ежемесячная проверка ДМЗ"
+  "name": "Ежемесячная проверка ДМЗ",
+  "node_id": null
 }
 ```
 
 В ответе — прогон, число принятых целей и `denied_targets` с причинами.
+`node_id` — id узла-сканера (пусто — центральный сервер); то же поле есть у
+расписания. У прогона в ответе `node_id`, `node_name`, `node_mode`.
+
+**Узел** `POST /nodes`: `{"name": "Филиал Казань", "mode": "online",
+"scope": ["10.1.0.0/24", "10.1.5.10-10.1.5.60"], "description": null,
+"allow_credentials": true}`. Сетей — от 1 до 256, в тех же форматах, что allowlist.
+
+### 2.3. Протокол узла-сканера
+
+Путь `/api/node/v1/…` (через веб) — только для узлов: вход по токену узла
+`Authorization: Bearer snode_…`, токены пользователей здесь не действуют, а
+токен узла не действует в API людей. Узел соединяется только по HTTPS
+(исключения — `localhost` и `SCANNER_NODE_ALLOW_HTTP=1`). При mTLS прокси
+передаёт результат проверки сертификата заголовками, раздел 5.8.
+
+| Метод и путь | Назначение |
+|---|---|
+| `POST /node/v1/hello` | регистрация и «на связи»: хост, версия, локальный allowlist, инструменты. Ответ — узел в центре и сети вне локального allowlist |
+| `POST /node/v1/jobs/next` | забрать задание: `{"job": null}` или задание (цели уже обрезаны центром, модули, профиль нагрузки, учётки — если разрешены) |
+| `POST /node/v1/jobs/{r}/heartbeat` | «жив» и ход прогона; ответ `{"status", "stop"}`, `stop: true` — остановить. 409 — прогон уже не выполняется |
+| `POST /node/v1/jobs/{r}/events`, `POST /node/v1/jobs/{r}/audit` | лента прогона (до 500 событий за запрос) и записи аудита узла (до 5000 за запрос) |
+| `POST /node/v1/jobs/{r}/result` | результат прогона (JSON, gzip, до `SCANNER_NODE_MAX_RESULT_MB`) |
+| `POST /node/v1/jobs/{r}/fail` | узел не смог выполнить прогон: прогон «Ошибка» с причиной |
+| `GET /node/v1/nuclei-templates` | архив шаблонов Nuclei центра (`ETag`, 304 без изменений) |
+| `POST /node/v1/reference` | чтение справочников центра (БДУ/NVD, бюллетени ОС, MSRC) — только перечисленные методы чтения |
 
 **Находки** `GET /runs/{r}/findings`: `limit` (до 1000), `offset`, `sort`
 (`severity`, `priority`, `cvss`, `host`, `title`, `module`, `id`), `order`,
@@ -223,6 +266,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | Проверка учётки | `ok` · `auth_failed` · `timeout` · `unreachable` · `host_key_mismatch` · `no_credential` · `not_in_allowlist` · `partial` |
 | Доставка уведомления | `pending` · `retry` · `sent` · `failed` |
 | Мера соответствия | `passed` · `failed` · `manual` (проверяется вручную) · `na` (не проверена) |
+| Узел-сканер | `online` На связи (запрос не позже 90 с назад) · `offline` Нет связи · `never` Ещё не подключался · `disabled` Отключён · `autonomous` Автономный |
 
 ## 4. Профили соответствия
 
@@ -391,6 +435,7 @@ sync-msrc`): продукты SQL Server в него раньше не попа�
 | Соответствие | `compliance_eval`, `compliance_recompute`, `compliance_profile_set`, `compliance_profile_delete` |
 | Справочники | `feed_sync`, `feed_fetch`, `feed_schedule_update`, `bdu_upload`, `advisory_fetch`, `advisory_release_load`, `feed_bundle_export`, `feed_bundle_import` |
 | Уведомления | `channel_create`, `channel_update`, `channel_delete`, `channel_test`, `notification`, `notification_retry` |
+| Узлы-сканеры | `node_create`, `node_update`, `node_token_rotate`, `node_delete` (администратор); `node_register`, `node_hello`, `node_auth` (отказ во входе узла: токен, сертификат), `node_job` (задание выдано), `node_result`, `node_result_filtered` (центр отбросил адреса вне разрешённых сетей). Действия на узле (`module_*`, `*_exec`, `deny` по локальному allowlist) пишутся от имени `node:<название>` |
 | Журнал | `audit_view`, `audit_export` |
 
 ### 5.8. Параметры окружения
@@ -486,6 +531,28 @@ sync-msrc`): продукты SQL Server в него раньше не попа�
 | `SCANNER_NUCLEI_UPDATE` | 1 | обновлять шаблоны Nuclei при старте |
 | `NUCLEI_TEMPLATES_DIR` | `$HOME/nuclei-templates` | каталог шаблонов |
 | `SCANNER_BUNDLE_AUTOLOAD`, `SCANNER_DATA_BUNDLE_URL` | 1, пусто | автоимпорт комплекта данных и адрес для скачивания |
+
+**Узлы-сканеры: центр** (`.env` центра)
+
+| Параметр | По умолчанию | Назначение |
+|---|---|---|
+| `SCANNER_NODE_MTLS_VERIFY_HEADER` | пусто (выкл.) | заголовок, в котором HTTPS-прокси передаёт итог проверки сертификата узла (`SUCCESS`); задан — узел без сертификата не входит |
+| `SCANNER_NODE_MTLS_FINGERPRINT_HEADER` | пусто | заголовок с отпечатком сертификата; отпечаток закрепляется за узлом при первом входе |
+| `SCANNER_NODE_MAX_RESULT_MB` | 256 | наибольший размер результата от узла |
+
+**Узлы-сканеры: узел** (`.env.node`, образец — `.env.node.example`)
+
+| Параметр | По умолчанию | Назначение |
+|---|---|---|
+| `SCANNER_NODE_SERVER` | — | адрес центра (`https://…`) |
+| `SCANNER_NODE_TOKEN` / `SCANNER_NODE_TOKEN_FILE` | — | токен узла или файл с ним |
+| `SCANNER_NODE_ALLOWLIST` | — | обязательный локальный allowlist узла |
+| `SCANNER_NODE_CA` | системные CA | CA сертификата центра |
+| `SCANNER_NODE_CLIENT_CERT`, `SCANNER_NODE_CLIENT_KEY` | пусто | сертификат и ключ для mTLS |
+| `SCANNER_NODE_POLL_SECONDS`, `SCANNER_NODE_HEARTBEAT_SECONDS` | 5, 10 | опрос заданий, отметка «жив» |
+| `SCANNER_NODE_TEMPLATES_FROM_CENTER` | 1 | шаблоны Nuclei из центра раз в сутки |
+| `SCANNER_NODE_SPOOL` | `/var/lib/scanner-node/spool` | очередь неотправленных результатов |
+| `SCANNER_NODE_ALLOW_HTTP` | 0 | 1 — центр без TLS (только стенд) |
 
 **Обслуживание**
 

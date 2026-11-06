@@ -12,7 +12,8 @@ export type Perm =
   | "view_audit"
   | "cred_audit"
   | "host_credentials"
-  | "triage_findings";
+  | "triage_findings"
+  | "manage_nodes";
 
 interface AuthValue {
   me: MeOut | null;

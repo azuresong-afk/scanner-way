@@ -31,7 +31,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    relationship,
+    sessionmaker,
+)
 
 # BIGSERIAL в Postgres; в SQLite автоинкремент работает только у INTEGER PRIMARY KEY.
 PK = BigInteger().with_variant(Integer(), "sqlite")
@@ -167,6 +174,37 @@ class ScanSchedule(Base):
     last_result: Mapped[str | None] = mapped_column(Text)
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    # Где исполнять (миграция 0028): None — центральный сервер, иначе узел.
+    node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scan_nodes.id", ondelete="SET NULL"))
+
+
+# ========== Распределённые сканеры ==========
+class ScanNode(Base):
+    """Узел-сканер в изолированном сегменте (миграция 0028).
+
+    mode online — узел сам выходит на центр по HTTPS с токеном (в БД только
+    SHA-256 токена), offline — обмен файлами. scope — сети узла (CIDR и
+    диапазоны), заданные администратором."""
+    __tablename__ = "scan_nodes"
+    id: Mapped[int] = mapped_column(PK, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    mode: Mapped[str] = mapped_column(Text, default="online")
+    scope: Mapped[list[str]] = mapped_column(Jsonb, default=list)
+    allow_credentials: Mapped[bool] = mapped_column(Boolean, default=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    token_hash: Mapped[str | None] = mapped_column(Text, unique=True)
+    token_prefix: Mapped[str | None] = mapped_column(Text)
+    public_key: Mapped[str | None] = mapped_column(Text)
+    hostname: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[str | None] = mapped_column(Text)
+    info: Mapped[dict] = mapped_column(Jsonb, default=dict)
+    created_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    registered_at: Mapped[datetime | None] = mapped_column(TsTz)
+    last_seen_at: Mapped[datetime | None] = mapped_column(TsTz)
 
 
 class FeedSync(Base):
@@ -241,6 +279,18 @@ class ScanRun(Base):
     warnings: Mapped[list[dict]] = mapped_column(Jsonb, default=list)
     # Ход идущего прогона (миграция 0023): этап, хостов готово/всего, процент.
     progress: Mapped[dict | None] = mapped_column(Jsonb)
+    # Где исполняется (миграция 0028): None — центральный сервер, иначе узел.
+    node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scan_nodes.id", ondelete="SET NULL"), index=True)
+    node: Mapped[ScanNode | None] = relationship(lazy="selectin", viewonly=True)
+
+    @property
+    def node_name(self) -> str | None:
+        return self.node.name if self.node is not None else None
+
+    @property
+    def node_mode(self) -> str | None:
+        return self.node.mode if self.node is not None else None
 
 
 class RunEventRow(Base):

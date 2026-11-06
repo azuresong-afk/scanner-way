@@ -27,7 +27,7 @@ export function me(roles: string[], permissions: string[]): MeOut {
 }
 
 export const OPERATOR = ["view_engagements", "run_scan", "view_report", "triage_findings"];
-export const ADMIN = ["manage_users", "manage_engagements", "manage_allowlist", "view_engagements", "view_report", "view_audit"];
+export const ADMIN = ["manage_users", "manage_engagements", "manage_nodes", "manage_allowlist", "view_engagements", "view_report", "view_audit"];
 
 type Handler = (init: RequestInit | undefined, url: URL) => unknown | Response;
 
