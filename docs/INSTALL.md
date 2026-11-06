@@ -1347,6 +1347,27 @@ API: `GET/POST /api/integrations/channels`, `PATCH/DELETE
 /api/integrations/channels/{id}`, `POST …/{id}/test`, `GET
 /api/integrations/log`, `POST /api/integrations/log/{id}/retry`.
 
+## 13в. Автономный узел-сканер (закрытый сегмент)
+
+Для сегмента, куда нельзя провести даже одно исходящее правило (АСУ ТП,
+закрытый контур), узел ставится в автономном режиме: связи с центром нет,
+задание и результат переносятся файлами на носителе, оба подписаны и
+зашифрованы. Установка, связность, обмен ключами и команды узла —
+[offline-node.md](offline-node.md). Коротко:
+
+1. «Сканеры» → «Добавить узел», тип «Автономный»; скачать `center.pub`.
+2. На узле с носителя: `docker load`, `scanner node init … --center-key center.pub`,
+   `scanner bundle import scanner-data-<дата>.tar` (compose-файл —
+   `docker-compose.node-offline.yml`, без API и PostgreSQL).
+3. Загрузить `node.pub` с узла в карточку узла, сверить отпечатки.
+4. Прогон на узел → «Выгрузить задание» → `scanner node run-job` на узле →
+   «Загрузить результат».
+
+Ключ центра выводится из `SCANNER_OFFLINE_KEY` (иначе из
+`SCANNER_CREDENTIALS_KEY` / `SCANNER_API_SECRET`). Задайте отдельный
+`SCANNER_OFFLINE_KEY` в `.env` с самого начала: тогда смена секрета API не
+потребует переустанавливать ключ центра на узлах.
+
 ## 14. Работа из командной строки
 
 Всё то же доступно через CLI внутри контейнера (договор и allowlist заводятся
