@@ -89,6 +89,13 @@ scanner cred-sets delete --engagement 1 --id 1
 | `scanner bundle info ФАЙЛ.tar` | состав и даты комплекта |
 | `scanner bundle import [ФАЙЛ.tar] [--force]` | загрузить комплект |
 
+### 1.5. Вход через AD
+
+| Команда | Действие |
+|---|---|
+| `scanner auth ldap-check` | проверить настройки `SCANNER_API_LDAP_*`: связь с контроллером, служебную учётку, таблицу групп и ролей |
+| `scanner auth ldap-check --username ivanov [--password-stdin]` | то же и пробный вход пользователя: DN, группы, роли (пароль спрашивается без эха) |
+
 ## 2. REST API
 
 **Адрес.** Через веб: `http://<сервер>:8080/api/…`; напрямую с сервера:
@@ -120,7 +127,12 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 |---|---|---|
 | **Служебные** | | |
 | `GET /health`, `GET /health/ready` | — | живость и готовность |
-| `POST /auth/token` | — | вход, выдача токена |
+| `GET /auth/config` | — | включены ли вход через AD (`ldap`) и режим 2FA (`mfa`: `off`/`optional`/`required`) |
+| `POST /auth/token` | — | вход: токен доступа или, если нужна 2FA, `mfa_required` + `mfa_token` (5 минут; `mfa_enroll` — 2FA ещё не настроена) |
+| `POST /auth/mfa` | `mfa_token` | второй шаг: код из приложения или код восстановления → токен доступа |
+| `POST /auth/mfa/enroll`, `POST /auth/mfa/enroll/confirm` | `mfa_token` | настройка обязательной 2FA при входе: QR-код, затем код → токен и коды восстановления |
+| `GET /me/mfa`, `POST /me/mfa/setup`, `POST /me/mfa/confirm`, `POST /me/mfa/recovery-codes`, `POST /me/mfa/disable` | вход | своя 2FA: состояние, QR-код, включение, новые коды восстановления, отключение (по коду) |
+| `DELETE /users/{id}/mfa` | `manage_users` | сбросить 2FA пользователя |
 | `GET /me` | вход | текущий пользователь, роли, права |
 | `GET/POST /users`, `PATCH /users/{id}`, `PUT /users/{id}/roles` | `manage_users` | пользователи и роли |
 | **Проекты и активы** | | |
@@ -368,7 +380,7 @@ sync-msrc`): продукты SQL Server в него раньше не попа�
 
 | Группа | Действия |
 |---|---|
-| Вход и пользователи | `login`, `user_create`, `user_update`, `user_roles`, `access_denied` |
+| Вход и пользователи | `login` (результат `ok`, `failure`, `locked`, `mfa_pending`, `mfa_failure`, `ldap_unavailable`; в деталях `method`: `local`/`ldap`), `user_create`, `user_update`, `user_roles` (от `ldap` — по группам AD), `mfa_enable`, `mfa_disable`, `mfa_reset`, `mfa_recovery_codes`, `access_denied` |
 | Проекты, allowlist, активы | `engagement_create`, `engagement_update`, `engagement_delete`, `allowlist_add`, `allowlist_remove`, `asset_create`, `asset_update`, `asset_bulk_update`, `asset_delete`, `asset_import`, `asset_group_create`, `asset_group_rename`, `asset_group_delete` |
 | Учётки и наборы | `credential_create`, `credential_delete`, `credential_check`, `cred_set_create`, `cred_set_delete` |
 | Прогоны | `scan_request` (в т. ч. отказ без допустимых целей), `scan_queue`, `scan_start`, `scan_stop`, `scan_finish`, `scan_requeue`, `deny` (цель вне allowlist), `module_start`, `module_finish`, `module_skip`, `coverage` |
@@ -407,6 +419,15 @@ sync-msrc`): продукты SQL Server в него раньше не попа�
 | `SCANNER_API_TOKEN_TTL_MINUTES` | 60 | срок токена |
 | `SCANNER_API_LOGIN_MAX_FAILURES`, `SCANNER_API_LOGIN_LOCKOUT_MINUTES` | 5, 15 | защита от перебора |
 | `SCANNER_API_CORS_ORIGINS` | пусто | CORS выключен (веб и API на одном origin) |
+| `SCANNER_API_LDAP_URL` | пусто (выкл.) | вход через AD/LDAP: контроллеры `ldaps://…` через запятую |
+| `SCANNER_API_LDAP_START_TLS`, `SCANNER_API_LDAP_TLS_VERIFY`, `SCANNER_API_LDAP_CA_FILE` | false, true, пусто | STARTTLS для `ldap://`, проверка сертификата, свой корневой сертификат |
+| `SCANNER_API_LDAP_BIND_DN`, `SCANNER_API_LDAP_BIND_PASSWORD` | пусто | служебная учётка для поиска |
+| `SCANNER_API_LDAP_USER_BASE`, `SCANNER_API_LDAP_USER_FILTER` | —, по `sAMAccountName`/`userPrincipalName` | где и как искать пользователя |
+| `SCANNER_API_LDAP_USERNAME_ATTR`, `SCANNER_API_LDAP_DISPLAY_NAME_ATTR` | `sAMAccountName`, `displayName` | логин и имя в «Сканере» |
+| `SCANNER_API_LDAP_GROUP_ROLES` | — | группы → роли: `DN=>роль,роль;DN2=>роль` |
+| `SCANNER_API_LDAP_NESTED_GROUPS`, `SCANNER_API_LDAP_TIMEOUT_SECONDS` | false, 5 | вложенные группы AD, таймаут |
+| `SCANNER_API_MFA` | `off` | двухфакторный вход: `off`, `optional`, `required` |
+| `SCANNER_API_MFA_EXEMPT_USERS`, `SCANNER_API_MFA_ISSUER` | пусто, `Scanner` | учётки без 2FA при `required`; имя в приложении-аутентификаторе |
 
 **Прогоны и планировщики**
 

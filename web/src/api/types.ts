@@ -15,10 +15,38 @@ export interface ReportSections {
   compliance?: string[];
 }
 
+/** Итог входа: токен доступа или второй шаг (2FA) — mfa_token + код из приложения. */
 export interface TokenOut {
-  access_token: string;
+  access_token?: string;
   token_type: string;
-  expires_in: number;
+  expires_in?: number;
+  mfa_required?: boolean;
+  /** 2FA обязательна, но ещё не настроена — настроить при входе. */
+  mfa_enroll?: boolean;
+  mfa_token?: string;
+  /** Только при первом подтверждении 2FA. */
+  recovery_codes?: string[];
+}
+
+export type MfaMode = "off" | "optional" | "required";
+
+/** Способы входа на этом сервере (GET /auth/config, без авторизации). */
+export interface AuthConfigOut {
+  ldap: boolean;
+  mfa: MfaMode;
+}
+
+export interface MfaSetupOut {
+  secret: string;
+  otpauth_uri: string;
+  qr_svg: string | null;
+}
+
+export interface MfaStatusOut {
+  mode: MfaMode;
+  enabled: boolean;
+  required: boolean;
+  recovery_codes_left: number;
 }
 
 export interface UserOut {
@@ -27,6 +55,9 @@ export interface UserOut {
   display_name: string | null;
   is_active: boolean;
   roles: string[];
+  /** local — логин и пароль «Сканера»; ldap — учётная запись домена. */
+  auth_source?: "local" | "ldap" | "platform";
+  mfa_enabled?: boolean;
 }
 
 export interface MeOut extends UserOut {

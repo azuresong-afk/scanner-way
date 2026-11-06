@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, getToken, setToken, setUnauthorizedHandler } from "../api/client";
-import type { MeOut } from "../api/types";
+import type { MeOut, TokenOut } from "../api/types";
 
 export type Perm =
   | "manage_users"
@@ -18,7 +18,10 @@ export type Perm =
 interface AuthValue {
   me: MeOut | null;
   ready: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  /** Пароль. Если нужна 2FA — возвращает второй шаг (mfa_token), иначе входит сразу. */
+  login: (username: string, password: string) => Promise<TokenOut>;
+  /** Завершить вход готовым токеном доступа (после кода 2FA). */
+  acceptToken: (accessToken: string) => Promise<void>;
   logout: () => void;
   has: (perm: Perm) => boolean;
 }
@@ -48,9 +51,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setUnauthorizedHandler(null);
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
-    const t = await api.login(username, password);
-    setToken(t.access_token);
+  const acceptToken = useCallback(async (accessToken: string) => {
+    setToken(accessToken);
     try {
       setMe(await api.me());
     } catch (e) {
@@ -59,15 +61,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const t = await api.login(username, password);
+      if (t.access_token) await acceptToken(t.access_token);
+      return t;
+    },
+    [acceptToken],
+  );
+
   const value = useMemo<AuthValue>(
     () => ({
       me,
       ready,
       login,
+      acceptToken,
       logout,
       has: (perm) => !!me?.permissions.includes(perm),
     }),
-    [me, ready, login, logout],
+    [me, ready, login, acceptToken, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

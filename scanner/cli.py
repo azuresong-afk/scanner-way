@@ -323,6 +323,17 @@ def build_parser() -> argparse.ArgumentParser:
                      help="без раздела «План устранения» (рекомендации по находкам остаются)")
     rep.set_defaults(handler=cmd_report)
 
+    # --- auth ---
+    auth = sub.add_parser("auth", help="проверка входа через LDAP/AD")
+    asub = auth.add_subparsers(dest="auth_command", required=True, metavar="action")
+    lchk = asub.add_parser(
+        "ldap-check", help="проверить настройки LDAP/AD из окружения: связь с каталогом, "
+                           "служебную учётку и (с --username) вход и роли пользователя")
+    lchk.add_argument("--username", help="логин пользователя домена для пробного входа")
+    lchk.add_argument("--password-stdin", action="store_true",
+                      help="пароль пользователя — из stdin (иначе спросит без эха)")
+    lchk.set_defaults(handler=cmd_auth_ldap_check, no_db=True)
+
     # --- node: узел-сканер (распределённое сканирование) — scanner/nodes/cli.py ---
     from scanner.nodes.cli import add_node_commands
     add_node_commands(sub)
@@ -1024,6 +1035,57 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     except KeyboardInterrupt:
         return 130
+
+
+def cmd_auth_ldap_check(args: argparse.Namespace, env: _Env | None) -> int:
+    """Проверка LDAP без запуска API. Пароли не печатаются и не пишутся в журнал."""
+    import getpass
+
+    from scanner.api.ldap_auth import (
+        LdapAuthenticator,
+        LdapConfig,
+        LdapConfigError,
+        LdapDenied,
+        LdapUnavailable,
+    )
+    from scanner.api.settings import ApiSettings
+
+    try:
+        cfg = LdapConfig.from_settings(ApiSettings())
+    except LdapConfigError as e:
+        raise CliError(f"настройки LDAP: {e}") from None
+    if cfg is None:
+        print("LDAP выключен: SCANNER_API_LDAP_URL не задан (вход только локальными учётками).")
+        return 0
+    print(f"Каталог: {', '.join(cfg.urls)}{' + STARTTLS' if cfg.start_tls else ''}"
+          f"{'' if cfg.tls_verify else ' (сертификат НЕ проверяется)'}")
+    print(f"Поиск: {cfg.user_base}  {cfg.user_filter}")
+    for dn, roles in sorted(cfg.group_roles.items()):
+        print(f"  группа {dn} => {', '.join(sorted(roles))}")
+    auth = LdapAuthenticator(cfg)
+    try:
+        conn = auth.service_connection()
+        conn.unbind()
+        print(f"Служебная учётка: OK ({cfg.bind_dn or 'анонимно'})")
+        if not args.username:
+            return 0
+        password = (sys.stdin.readline().rstrip("\n") if args.password_stdin
+                    else getpass.getpass(f"Пароль {args.username}: "))
+        ident = auth.authenticate(args.username, password)
+    except LdapUnavailable as e:
+        print(f"Каталог недоступен: {e}", file=sys.stderr)
+        return 1
+    except LdapDenied as e:
+        reasons = {"bad_credentials": "неверный логин или пароль (или учётка отключена в домене)",
+                   "not_found": "пользователь не найден по фильтру",
+                   "ambiguous": "фильтр находит больше одного пользователя",
+                   "no_group": "пользователь не состоит ни в одной группе из сопоставления"}
+        print(f"Вход отклонён: {reasons.get(e.reason, e.reason)}", file=sys.stderr)
+        return 1
+    print(f"Вход: OK  логин в «Сканере»: {ident.username}  DN: {ident.dn}")
+    print(f"Группы: {', '.join(ident.groups)}")
+    print(f"Роли: {', '.join(sorted(ident.roles))}")
+    return 0
 
 
 if __name__ == "__main__":
