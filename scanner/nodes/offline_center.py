@@ -102,7 +102,7 @@ def center_keys(material: str | None) -> KeyPair:
 def node_public(node: ScanNode) -> PublicKeys:
     if not node.public_key:
         raise OfflineError(f"у узла «{node.name}» не загружен открытый ключ: "
-                           "«Сканеры» → узел → «Ключ узла»", code="node_key_missing")
+                           "«Сканеры» → карточка узла → «Загрузить ключ узла»", code="node_key_missing")
     try:
         return parse_public(node.public_key, ROLE_NODE)
     except OfflineCryptoError as e:
@@ -313,8 +313,10 @@ def import_result(sessions: sessionmaker[Session], runs, audit, *, data: bytes,
                     "по заданию уже загружен другой результат", code="already_imported",
                     run_id=run_id)
         if row.status != STATUS_EXPORTED:
-            _refuse(f"job_{row.status}", f"задание {STATUS_LABELS[row.status].lower()} — "
-                    "результат не принимается", code=f"job_{row.status}", run_id=run_id)
+            why = {STATUS_CANCELLED: "задание отменено",
+                   STATUS_EXPIRED: "срок задания истёк"}.get(row.status, "задание закрыто")
+            _refuse(f"job_{row.status}", f"{why} — результат не принимается",
+                    code=f"job_{row.status}", run_id=run_id)
         node = s.get(ScanNode, row.node_id) if row.node_id else None
         if node is None:
             _refuse("node_missing", "узел, для которого выпускалось задание, удалён",

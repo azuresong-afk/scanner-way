@@ -304,15 +304,20 @@ export function OfflineResultUpload({ onDone, expectRunId }: { onDone: (r: Offli
   );
 }
 
-/** Ключи автономного узла: ключ центра для установки и загрузка node.pub с узла. */
-export function NodeKeyCard({ nodeId, nodeName }: { nodeId: number; nodeName: string }) {
+/**
+ * Ключи автономного узла в его карточке на «Сканерах»: ключ центра для
+ * установки узла и загрузка node.pub с узла (без ключа узла задание не выгрузить).
+ */
+export function NodeKeyCard({ nodeId, nodeName, onChanged }: { nodeId: number; nodeName: string; onChanged?: () => void }) {
   const { has } = useAuth();
   const center = useAsync(() => api.centerKey(), []);
   const key = useAsync(() => api.nodeKey(nodeId), [nodeId]);
+  const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canEdit = has("manage_nodes");
+  const fingerprint = key.data?.fingerprint ?? null;
 
   const download = async () => {
     try {
@@ -325,12 +330,19 @@ export function NodeKeyCard({ nodeId, nodeName }: { nodeId: number; nodeName: st
   const readFile = async (f: File | undefined) => {
     if (f) setText(await f.text());
   };
+  const cancel = () => {
+    setOpen(false);
+    setText("");
+    setError(null);
+  };
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
       key.setData(await api.setNodeKey(nodeId, text));
       setText("");
+      setOpen(false);
+      onChanged?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -339,61 +351,84 @@ export function NodeKeyCard({ nodeId, nodeName }: { nodeId: number; nodeName: st
   };
 
   return (
-    <section className="card card-pad stack" style={{ gap: 12 }} aria-label="Ключи автономного узла">
-      <div className="inline" style={{ gap: 10 }}>
-        <KeyRound size={18} aria-hidden="true" />
-        <h2 style={{ margin: 0 }}>Ключи</h2>
-      </div>
-      <dl className="kv" style={{ gridTemplateColumns: "180px minmax(0,1fr)", margin: 0 }}>
-        <dt>Ключ центра</dt>
-        <dd>
-          {center.error ? (
-            <span style={{ color: "var(--danger)" }}>{center.error.message}</span>
-          ) : (
-            <span className="inline" style={{ gap: 10, flexWrap: "wrap" }}>
-              <span className="mono">{center.data?.fingerprint ?? "…"}</span>
-              <button type="button" className="btn btn-sm" onClick={download}>
-                <Download size={13} /> Скачать center.pub
-              </button>
-            </span>
-          )}
-        </dd>
-        <dt>Ключ узла</dt>
-        <dd>
-          {key.data?.fingerprint ? (
-            <span className="mono">{key.data.fingerprint}</span>
-          ) : (
-            <span className="muted">не загружен: задания для узла выгрузить нельзя</span>
-          )}
-        </dd>
+    <section className="node-offline stack" style={{ gap: 10 }} aria-label={`Ключи автономного узла «${nodeName}»`}>
+      <dl className="node-facts">
+        <div>
+          <dt>Ключ центра</dt>
+          <dd>
+            {center.error ? (
+              <span style={{ color: "var(--danger)" }}>{center.error.message}</span>
+            ) : (
+              <span className="inline" style={{ gap: 8, flexWrap: "wrap" }}>
+                <span className="mono" style={{ fontSize: 12 }}>
+                  {center.data?.fingerprint ?? "…"}
+                </span>
+                <button type="button" className="btn btn-sm" onClick={download}>
+                  <Download size={12} /> center.pub
+                </button>
+              </span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Ключ узла</dt>
+          <dd>
+            {key.loading && !key.data ? (
+              "…"
+            ) : fingerprint ? (
+              <span className="mono" style={{ fontSize: 12 }}>
+                {fingerprint}
+              </span>
+            ) : (
+              <span style={{ color: "var(--warn)" }}>не загружен — задания узлу не выгрузить</span>
+            )}
+          </dd>
+        </div>
       </dl>
-      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-        Установка узла «{nodeName}»: перенесите center.pub на узел и выполните{" "}
-        <code>scanner node init --name "{nodeName}" --scope &lt;сети&gt; --center-key center.pub --pub-out node.pub</code>. Сверьте
-        отпечатки по телефону или по акту, затем загрузите node.pub сюда.
-      </p>
-      {canEdit && (
-        <div className="stack" style={{ gap: 8 }}>
-          <textarea
-            className="textarea mono"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="scanner-node-key:v1:…"
-            spellCheck={false}
-            aria-label="Открытый ключ узла"
-            style={{ fontSize: 12, minHeight: 64 }}
-          />
-          <div className="inline" style={{ gap: 10 }}>
-            <label className="btn btn-sm" style={{ cursor: "pointer" }}>
-              Из файла node.pub
-              <input type="file" hidden onChange={(e) => void readFile(e.target.files?.[0])} />
-            </label>
-            <button type="button" className="btn btn-sm btn-primary" disabled={!text.trim() || busy} onClick={save}>
-              {key.data?.fingerprint ? "Заменить ключ узла" : "Сохранить ключ узла"}
+      {!fingerprint && !key.loading && (
+        <small className="faint">
+          Установка: перенесите center.pub на узел, выполните{" "}
+          <code>
+            scanner node init --name "{nodeName}" --scope &lt;сети&gt; --center-key center.pub --pub-out node.pub
+          </code>{" "}
+          и загрузите node.pub сюда. Отпечатки сверьте по телефону или по акту.
+        </small>
+      )}
+      {canEdit &&
+        (open ? (
+          <div className="stack" style={{ gap: 8 }}>
+            <textarea
+              className="textarea mono"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="scanner-node-key:v1:…"
+              spellCheck={false}
+              aria-label={`Открытый ключ узла «${nodeName}»`}
+              style={{ fontSize: 12, minHeight: 64 }}
+            />
+            <div className="inline" style={{ gap: 8, flexWrap: "wrap" }}>
+              <label className="btn btn-sm" style={{ cursor: "pointer" }}>
+                Из файла node.pub
+                <input type="file" accept=".pub,text/plain" hidden onChange={(e) => void readFile(e.target.files?.[0])} />
+              </label>
+              <button type="button" className="btn btn-sm btn-primary" disabled={!text.trim() || busy} onClick={save}>
+                {busy ? "Проверяем…" : "Сохранить"}
+              </button>
+              <button type="button" className="btn btn-sm" onClick={cancel}>
+                Отмена
+              </button>
+            </div>
+            {fingerprint && (
+              <small className="faint">Пока у узла есть невыполненные задания, ключ не заменить: сначала загрузите их результаты или отмените.</small>
+            )}
+          </div>
+        ) : (
+          <div>
+            <button type="button" className="btn btn-sm" onClick={() => setOpen(true)}>
+              <KeyRound size={12} /> {fingerprint ? "Заменить ключ узла" : "Загрузить ключ узла"}
             </button>
           </div>
-        </div>
-      )}
+        ))}
       {error && <ErrorAlert error={error} />}
     </section>
   );

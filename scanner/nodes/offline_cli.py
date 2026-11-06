@@ -39,8 +39,8 @@ def add_offline_commands(sub, nsub) -> None:
     init.add_argument("--scope", required=True, nargs="+",
                       help="сети сегмента, которые узлу разрешено сканировать (CIDR/IP)")
     init.add_argument("--center-key", required=True, type=Path,
-                      help="файл открытого ключа центра (center.pub из «Сканеры» → "
-                           "«Ключ центра»)")
+                      help="файл открытого ключа центра (center.pub из карточки узла "
+                           "в «Сканерах»)")
     init.add_argument("--pub-out", type=Path, default=None,
                       help="куда ещё записать открытый ключ узла (например, на носитель)")
     init.add_argument("--force", action="store_true",
@@ -111,10 +111,10 @@ def cmd_node_init(args: argparse.Namespace, env=None) -> int:
         pub_path = args.pub_out
     print(f"Узел «{node.name}» установлен в {home}")
     print(f"  сети узла: {', '.join(node.scope)}")
-    print(f"  ключ центра: {node.center.fingerprint}  ← сверьте с «Сканеры» → «Ключ центра»")
+    print(f"  ключ центра: {node.center.fingerprint}  ← сверьте с карточкой узла в «Сканерах»")
     print(f"  ключ узла:   {pub.fingerprint}")
     print(f"Перенесите {pub_path} в центр: «Сканеры» → «{node.name}» → "
-          "«Ключ узла». Закрытый ключ (node-keys.json) с узла не выносится.")
+          "«Загрузить ключ узла». Закрытый ключ (node-keys.json) с узла не выносится.")
     return 0
 
 

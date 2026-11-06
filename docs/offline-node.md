@@ -6,8 +6,10 @@
 файлами на носителе, как в MaxPatrol и RedCheck для закрытых контуров.
 
 Если одно исходящее правило «узел → центр, TCP 443» допустимо, проще сетевой
-режим (узел сам забирает задания и отдаёт результат), см. раздел о
-распределённых сканерах в [INSTALL.md](INSTALL.md).
+режим (узел сам забирает задания и отдаёт результат):
+[INSTALL.md, раздел 13в](INSTALL.md#13в-узлы-сканеры-в-изолированных-сегментах).
+Краткая установка автономного узла — там же, раздел 13г; проверка на стенде —
+[TESTING.md, шаг 13г](TESTING.md#шаг-13г-автономный-узел-сканер-задание-и-результат-на-носителе-).
 
 ## Как это устроено
 
@@ -62,7 +64,8 @@ X25519 (шифрование для получателя, AES-256-GCM). Откр
 
 1. «Сканеры» → «Добавить узел», тип **«Автономный»**. Имя (например
    `АСУ-ТП-1`) и сети сегмента, которые узлу разрешено сканировать.
-2. «Сканеры» → «Ключ центра» → **«Скачать center.pub»**. Запишите отпечаток.
+2. В карточке узла — отпечаток **ключа центра** и кнопка **«center.pub»**:
+   скачайте файл и запишите отпечаток.
 
 Ключ центра можно получить и из командной строки на сервере центра:
 
@@ -75,12 +78,13 @@ docker compose exec app scanner --no-migrate offline center-key --out /data/cent
 На машине со связью (обычно это сервер центра):
 
 ```sh
-docker save scanner:latest -o scanner-image.tar           # образ сканера
+docker compose -f docker-compose.node-offline.yml build   # образ узла (как у сетевого)
+docker save scanner-node:latest -o scanner-node.tar      # образ на носитель
 docker compose exec app scanner bundle export \
     --out /data/bundle/scanner-data-$(date +%Y%m%d).tar   # справочники
 ```
 
-На носитель: `scanner-image.tar`, `scanner-data-<дата>.tar`,
+На носитель: `scanner-node.tar`, `scanner-data-<дата>.tar`,
 `docker-compose.node-offline.yml` из репозитория, `center.pub`.
 
 ### 3. На узле: установить
@@ -92,7 +96,7 @@ docker compose exec app scanner bundle export \
 mkdir -p /opt/scanner-node/media && cd /opt/scanner-node
 cp /mnt/usb/docker-compose.node-offline.yml .
 cp /mnt/usb/center.pub /mnt/usb/scanner-data-*.tar media/
-docker load -i /mnt/usb/scanner-image.tar
+docker load -i /mnt/usb/scanner-node.tar
 
 # короткая команда для разовых контейнеров узла
 alias snode='docker compose -f /opt/scanner-node/docker-compose.node-offline.yml run --rm node'
@@ -108,7 +112,7 @@ snode bundle import /media/scanner-data-20261106.tar
 
 `node init` печатает два отпечатка:
 
-* **ключ центра** — сверьте с тем, что показан в центре («Ключ центра»);
+* **ключ центра** — сверьте с тем, что показан в карточке узла в центре;
 * **ключ узла** — его сверят в центре при загрузке ключа узла.
 
 `--scope` — собственный allowlist узла. Узел не будет сканировать ничего вне
@@ -119,7 +123,8 @@ snode bundle import /media/scanner-data-20261106.tar
 
 ### 4. В центре: загрузить ключ узла
 
-«Сканеры» → узел → **«Ключ узла»** → загрузить `node.pub`. Отпечаток в центре
+«Сканеры» → карточка узла → **«Загрузить ключ узла»** → вставить текст или
+выбрать файл `node.pub`. Отпечаток в центре
 должен совпасть с тем, что напечатал `node init`. После этого узел готов.
 
 ## Прогон на автономном узле
@@ -159,7 +164,7 @@ snode bundle import /media/scanner-data-20261106.tar
   `scanner bundle export`, на узле `snode bundle import <файл>`. Комплект
   накатывается поверх, с нуля ничего не грузится. Дата справочников узла
   видна в центре рядом с загруженным результатом.
-* **Новая версия сканера.** `docker load -i scanner-image.tar` с носителя;
+* **Новая версия сканера.** `docker load -i scanner-node.tar` с носителя;
   каталог узла (ключи, журнал, справочники) сохраняется в томе `node_home`.
 * **Часы узла.** Срок действия задания проверяется по часам узла. Держите
   их хотя бы приблизительно верными.

@@ -20,6 +20,10 @@ import type {
   AuditOut,
   ChannelIn,
   ChannelOut,
+  ScanNode,
+  ScanNodeCreated,
+  ScanNodeIn,
+  ScanNodeUpdate,
   ChannelUpdate,
   DeliveryOut,
 
@@ -330,6 +334,12 @@ export const api = {
     json<ScheduleOut>(`/engagements/${engagementId}/schedules`, { method: "POST", ...body(data) }),
   updateSchedule: (id: number, data: ScheduleIn) => json<ScheduleOut>(`/schedules/${id}`, { method: "PUT", ...body(data) }),
   toggleSchedule: (id: number, enabled: boolean) => json<ScheduleOut>(`/schedules/${id}`, { method: "PATCH", ...body({ enabled }) }),
+  nodes: () => json<ScanNode[]>("/nodes"),
+  createNode: (data: ScanNodeIn) => json<ScanNodeCreated>("/nodes", { method: "POST", ...body(data) }),
+  updateNode: (id: number, data: ScanNodeUpdate) => json<ScanNode>(`/nodes/${id}`, { method: "PATCH", ...body(data) }),
+  rotateNodeToken: (id: number) => json<ScanNodeCreated>(`/nodes/${id}/token`, { method: "POST" }),
+  deleteNode: (id: number) => request(`/nodes/${id}`, { method: "DELETE" }).then(() => undefined),
+
   channels: () => json<ChannelOut[]>("/integrations/channels"),
   createChannel: (data: ChannelIn) => json<ChannelOut>("/integrations/channels", { method: "POST", ...body(data) }),
   updateChannel: (id: number, data: ChannelUpdate) => json<ChannelOut>(`/integrations/channels/${id}`, { method: "PATCH", ...body(data) }),

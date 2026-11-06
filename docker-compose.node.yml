@@ -7,10 +7,16 @@
 #   cp .env.node.example .env.node   # адрес центра, токен узла, сети сегмента
 #   docker compose -f docker-compose.node.yml --env-file .env.node up -d
 #   docker compose -f docker-compose.node.yml logs -f node
+#   docker compose -f docker-compose.node.yml --env-file .env.node run --rm node check
 #
 # Без интернета образ переносится файлом:
-#   на машине со сборкой:  docker save scanner-node:latest | gzip > scanner-node.tar.gz
+#   на машине со сборкой:  docker compose -f docker-compose.node.yml build
+#                          docker save scanner-node:latest | gzip > scanner-node.tar.gz
 #   на узле:               docker load < scanner-node.tar.gz
+#                          docker compose -f docker-compose.node.yml --env-file .env.node up -d --no-build
+# своё имя проекта: не пересекается с центром, даже если запущен из того же каталога
+name: scanner-node
+
 x-logging: &default-logging
   driver: json-file
   options:
@@ -22,8 +28,10 @@ services:
     build: .
     image: ${SCANNER_NODE_IMAGE:-scanner-node:latest}
     env_file: .env.node
-    # агент узла вместо API: без миграций и БД (см. scanner/nodes/agent.py)
-    entrypoint: ["scanner", "node", "run"]
+    # агент узла вместо API: без миграций и БД (см. scanner/nodes/agent.py).
+    # Проверка настроек и связи: docker compose -f docker-compose.node.yml run --rm node check
+    entrypoint: ["scanner", "node"]
+    command: ["run"]
     volumes:
       # очередь результатов (обрыв связи не теряет результат), ключи SSH/WinRM,
       # шаблоны Nuclei (приходят из центра)

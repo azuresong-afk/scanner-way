@@ -147,6 +147,8 @@ export function RunDetailPage() {
           <dd>{r.modules.map((m) => MODULE_LABEL[m] ?? m).join(", ")}</dd>
           <dt>Профиль нагрузки</dt>
           <dd>{RATE_PROFILES.find((p) => p.id === r.rate_profile)?.label ?? r.rate_profile}</dd>
+          <dt>Где выполняется</dt>
+          <dd>{r.node_name ? `узел-сканер «${r.node_name}»` : "центральный сервер"}</dd>
           <dt>Создан</dt>
           <dd>{fmtDateFull(r.created_at)}</dd>
           <dt>Начат</dt>
@@ -171,8 +173,13 @@ export function RunDetailPage() {
 
       {!finished && !isOfflineRun(r) && !(r.status === "running" && r.progress) && (
         <div className="card">
-          <Empty title={r.status === "pending" ? "Прогон в очереди" : "Идёт сканирование"} icon={<span className="spinner" style={{ width: 28, height: 28 }} />}>
-            Результаты появятся после завершения. Страница обновляется автоматически.
+          <Empty
+            title={r.status === "pending" ? (r.node_name ? `Ждёт узел «${r.node_name}»` : "Прогон в очереди") : "Идёт сканирование"}
+            icon={<span className="spinner" style={{ width: 28, height: 28 }} />}
+          >
+            {r.status === "pending" && r.node_name
+              ? "Узел заберёт прогон при следующем выходе на связь (обычно в течение нескольких секунд). Состояние узла — в «Сканерах»."
+              : "Результаты появятся после завершения. Страница обновляется автоматически."}
           </Empty>
         </div>
       )}

@@ -2,7 +2,10 @@
 # Связи с центром нет: задание и результат переносятся файлами на носителе.
 # Подробно: docs/offline-node.md.
 #
-# Образ загружается с носителя:   docker load -i scanner-image-<версия>.tar
+# Образ — тот же, что у сетевого узла (docker-compose.node.yml), переносится файлом:
+#   на машине со сборкой:  docker compose -f docker-compose.node-offline.yml build
+#                          docker save scanner-node:latest -o scanner-node.tar
+#   на узле:               docker load -i scanner-node.tar
 # Все команды — разовые контейнеры (сервиса, который работает постоянно, нет):
 #
 #   docker compose -f docker-compose.node-offline.yml run --rm node \
@@ -14,6 +17,9 @@
 #       node run-job /media/job-АСУ-ТП-1-run42-20261106-1200.scnjob --out /media \
 #       --confirm-authorized
 
+# своё имя проекта: тома не пересекаются с центром и сетевым узлом
+name: scanner-node-offline
+
 x-logging: &default-logging
   driver: json-file
   options:
@@ -22,7 +28,8 @@ x-logging: &default-logging
 
 services:
   node:
-    image: ${SCANNER_IMAGE:-scanner:latest}
+    build: .
+    image: ${SCANNER_NODE_IMAGE:-scanner-node:latest}
     # Без API и PostgreSQL: справочники — в SQLite-файле в каталоге узла.
     entrypoint: ["scanner"]
     environment:

@@ -56,6 +56,11 @@ def _apply(row: ScanSchedule, body: ScheduleIn, *, request: Request, user: Princ
                       credential_ids=body.credential_ids, cred_set_ids=body.cred_set_ids,
                       user=user, request=request, audit=audit, runs=runs)
     check_targets(row.engagement_id, body.targets, user=user, audit=audit, runs=runs)
+    try:
+        runs.check_node(body.node_id, credential_ids=body.credential_ids,
+                        cred_set_ids=body.cred_set_ids)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
     tz = body.timezone or request.app.state.default_timezone
     spec = ScheduleSpec(kind=body.kind, timezone=tz,
                         time_of_day=body.time_of_day if body.kind != "once" else None,
@@ -75,6 +80,7 @@ def _apply(row: ScanSchedule, body: ScheduleIn, *, request: Request, user: Princ
     row.rate_profile = body.rate_profile
     row.credential_ids = list(dict.fromkeys(body.credential_ids))
     row.cred_set_ids = list(dict.fromkeys(body.cred_set_ids))
+    row.node_id = body.node_id
     row.kind, row.timezone = spec.kind, spec.timezone
     row.time_of_day, row.weekdays = spec.time_of_day, spec.weekdays
     row.month_day, row.run_at = spec.month_day, spec.run_at
