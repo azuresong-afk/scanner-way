@@ -73,6 +73,11 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
                       user=user, request=request, audit=audit, runs=runs)
     plan, denied = check_targets(engagement_id, body.targets, user=user, audit=audit,
                                  runs=runs)
+    try:
+        runs.check_node(body.node_id, credential_ids=body.credential_ids,
+                        cred_set_ids=body.cred_set_ids)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
 
     session.commit()   # отпустить транзакцию запроса до работы исполнителя
     run_id = runs.submit(engagement_id=engagement_id, modules=modules,
@@ -80,7 +85,8 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
                          actor=user.subject, started_by=user.id,
                          credential_ids=body.credential_ids,
                          cred_set_ids=body.cred_set_ids, name=body.name,
-                         options={"no_ping": body.no_ping, "profile": body.profile})
+                         options={"no_ping": body.no_ping, "profile": body.profile},
+                         node_id=body.node_id)
     session.expire_all()
     run = _get_run(session, run_id)
     return RunCreated(**RunOut.model_validate(run).model_dump(),

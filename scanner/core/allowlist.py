@@ -14,6 +14,11 @@ class AllowlistGate:
     def __init__(self, allowed_cidrs: Iterable[str]):
         self._networks = [ipaddress.ip_network(c, strict=False) for c in allowed_cidrs]
 
+    @property
+    def networks(self) -> list[str]:
+        """Подсети гейта (CIDR) — для задания узлу-сканеру."""
+        return [str(n) for n in self._networks]
+
     def is_allowed(self, host: str) -> bool:
         try:
             addr = ipaddress.ip_address(host)

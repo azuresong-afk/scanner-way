@@ -34,6 +34,7 @@ from scanner.api import (
     routes_feeds,
     routes_findings,
     routes_integrations,
+    routes_nodes,
     routes_portscan,
     routes_reachability,
     routes_runs,
@@ -251,6 +252,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_credcheck.router)
     app.include_router(routes_compliance.router)
     app.include_router(routes_search.router)
+    app.include_router(routes_nodes.router)
     app.include_router(routes_audit.router)
     return app
 

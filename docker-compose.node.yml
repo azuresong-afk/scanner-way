@@ -1,0 +1,45 @@
+# Узел-сканер для изолированного сегмента (распределённое сканирование).
+#
+# Ставится на машину ВНУТРИ сегмента. Сам выходит на центральный сервер по
+# HTTPS (исходящее TCP 443) — входящих портов на узле нет. Ни интерфейса, ни
+# БД на узле нет: справочники БДУ/NVD читаются у центра, результат уходит в центр.
+#
+#   cp .env.node.example .env.node   # адрес центра, токен узла, сети сегмента
+#   docker compose -f docker-compose.node.yml --env-file .env.node up -d
+#   docker compose -f docker-compose.node.yml logs -f node
+#
+# Без интернета образ переносится файлом:
+#   на машине со сборкой:  docker save scanner-node:latest | gzip > scanner-node.tar.gz
+#   на узле:               docker load < scanner-node.tar.gz
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  node:
+    build: .
+    image: ${SCANNER_NODE_IMAGE:-scanner-node:latest}
+    env_file: .env.node
+    # агент узла вместо API: без миграций и БД (см. scanner/nodes/agent.py)
+    entrypoint: ["scanner", "node", "run"]
+    volumes:
+      # очередь результатов (обрыв связи не теряет результат), ключи SSH/WinRM,
+      # шаблоны Nuclei (приходят из центра)
+      - node_data:/var/lib/scanner-node
+      - node_nuclei:/root/nuclei-templates
+      # сертификаты mTLS и CA центра (по желанию): ./node-certs/{ca.crt,node.crt,node.key}
+      - ./node-certs:/certs:ro
+    # nmap: SYN-сканирование и определение ОС
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    # сеть хоста: узел сканирует сегмент со своего адреса, без NAT Docker
+    network_mode: host
+    restart: unless-stopped
+    logging: *default-logging
+
+volumes:
+  node_data:
+  node_nuclei:

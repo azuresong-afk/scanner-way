@@ -322,6 +322,10 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--no-plan", action="store_true",
                      help="без раздела «План устранения» (рекомендации по находкам остаются)")
     rep.set_defaults(handler=cmd_report)
+
+    # --- node: узел-сканер (распределённое сканирование) — scanner/nodes/cli.py ---
+    from scanner.nodes.cli import add_node_commands
+    add_node_commands(sub)
     return p
 
 
@@ -1008,6 +1012,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if getattr(args, "no_db", False):
+            return args.handler(args, None)
         env = _Env(args)
         try:
             return args.handler(args, env)

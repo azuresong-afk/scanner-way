@@ -274,6 +274,8 @@ class RunCreate(BaseModel):
     # Готовый профиль проверки (scanner.core.profiles): задаёт модули и движок,
     # если они не перечислены явно. Сохраняется в опциях прогона.
     profile: str | None = Field(default=None, max_length=64)
+    # Где исполнять: None — центральный сервер, иначе id узла-сканера (scanner.nodes).
+    node_id: int | None = None
 
 
 class CoverageEntryOut(BaseModel):
@@ -345,6 +347,10 @@ class RunOut(_Orm):
     # hosts_done, hosts_total, percent, elapsed_seconds, eta_seconds
     # (примерно осталось, с; null — оценить пока нельзя), stage_seconds, updated_at. NULL — в очереди / старый.
     progress: dict | None = None
+    # Узел-сканер, на котором исполняется прогон (миграция 0028); None — центр.
+    node_id: int | None = None
+    node_name: str | None = None
+    node_mode: str | None = None          # online | offline | None (центр)
 
     @field_validator("options", "warnings", mode="before")
     @classmethod
