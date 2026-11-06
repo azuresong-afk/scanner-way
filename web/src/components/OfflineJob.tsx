@@ -9,11 +9,7 @@ import { useAsync } from "../lib/useAsync";
 import { ErrorAlert, Loading, Modal } from "./ui";
 
 const VALID_DAYS = [7, 14, 30, 60];
-
-/** Прогон на автономном узле: назначен на узел с mode = offline. */
-export function isOfflineRun(run: Pick<RunOut, "node_mode">): boolean {
-  return run.node_mode === "offline";
-}
+const PILL: Record<string, string> = { exported: "pill-info pill-running", imported: "pill-ok", cancelled: "pill-muted", expired: "pill-danger" };
 
 /**
  * Автономный прогон на его странице: «Выгрузить задание» → носитель → узел →
@@ -73,7 +69,7 @@ export function OfflineJobPanel({ run, onChanged }: { run: RunOut; onChanged: ()
       <div className="inline" style={{ gap: 10 }}>
         <HardDriveUpload size={18} aria-hidden="true" />
         <h2 style={{ margin: 0 }}>Автономный узел «{node}»</h2>
-        {j && <span className={`pill offline-${j.status}`}>{j.status_label}</span>}
+        {j && <span className={`pill ${PILL[j.status] ?? "pill-muted"}`}>{j.status_label}</span>}
       </div>
 
       {!j && run.status === "pending" && (
