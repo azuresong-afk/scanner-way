@@ -70,6 +70,9 @@ import type {
   SoftwareFalsePositiveIn,
   SoftwareFalsePositiveOut,
   TokenOut,
+  AuthConfigOut,
+  MfaSetupOut,
+  MfaStatusOut,
   UserCreate,
   UserOut,
   UserUpdate,
@@ -218,6 +221,22 @@ export const api = {
   login: (username: string, password: string) =>
     json<TokenOut>("/auth/token", { method: "POST", ...body({ username, password }) }),
   me: () => json<MeOut>("/me"),
+  authConfig: () => json<AuthConfigOut>("/auth/config"),
+  // второй шаг входа (2FA): mfa_token из /auth/token + код из приложения
+  mfaVerify: (mfa_token: string, code: string) =>
+    json<TokenOut>("/auth/mfa", { method: "POST", ...body({ mfa_token, code }) }),
+  mfaEnrollStart: (mfa_token: string) =>
+    json<MfaSetupOut>("/auth/mfa/enroll", { method: "POST", ...body({ mfa_token }) }),
+  mfaEnrollConfirm: (mfa_token: string, code: string) =>
+    json<TokenOut>("/auth/mfa/enroll/confirm", { method: "POST", ...body({ mfa_token, code }) }),
+  // своя 2FA в профиле
+  myMfa: () => json<MfaStatusOut>("/me/mfa"),
+  myMfaSetup: () => json<MfaSetupOut>("/me/mfa/setup", { method: "POST" }),
+  myMfaConfirm: (code: string) =>
+    json<{ recovery_codes: string[] }>("/me/mfa/confirm", { method: "POST", ...body({ code }) }),
+  myMfaRecoveryCodes: (code: string) =>
+    json<{ recovery_codes: string[] }>("/me/mfa/recovery-codes", { method: "POST", ...body({ code }) }),
+  myMfaDisable: (code: string) => json<MfaStatusOut>("/me/mfa/disable", { method: "POST", ...body({ code }) }),
 
   users: () => json<UserOut[]>("/users"),
   createUser: (data: UserCreate) => json<UserOut>("/users", { method: "POST", ...body(data) }),
@@ -225,6 +244,7 @@ export const api = {
     json<UserOut>(`/users/${id}`, { method: "PATCH", ...body(data) }),
   setRoles: (id: number, roles: string[]) =>
     json<UserOut>(`/users/${id}/roles`, { method: "PUT", ...body({ roles }) }),
+  resetUserMfa: (id: number) => json<UserOut>(`/users/${id}/mfa`, { method: "DELETE" }),
 
   engagements: () => json<EngagementOut[]>("/engagements"),
   engagement: (id: number) => json<EngagementOut>(`/engagements/${id}`),

@@ -1,7 +1,9 @@
 """Пароли (scrypt) и подписанные токены доступа (HMAC-SHA256).
 
 Без внешних зависимостей: только стандартная библиотека. Токен —
-`base64url(payload).base64url(hmac)`, payload = {"uid", "iat", "exp"}. Права в
+`base64url(payload).base64url(hmac)`, payload = {"uid", "iat", "exp"[, "typ"]}.
+`typ` отличает промежуточный токен второго шага входа (2FA, typ="mfa") от токена
+доступа: токен без `typ` — токен доступа (так выпускались и раньше). Права в
 токен не кладутся: они читаются из БД на каждый запрос, поэтому отзыв роли или
 блокировка пользователя действуют сразу.
 """
@@ -17,6 +19,12 @@ import time
 from collections.abc import Callable
 
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**14, 8, 1
+# Типы токенов: доступ к API и промежуточный — между паролем и кодом 2FA.
+ACCESS = "access"
+MFA_PENDING = "mfa"
+# Хэш-заглушка пользователя без локального пароля (вход через каталог): ни один
+# пароль с ним не совпадёт — verify_password вернёт False.
+NO_PASSWORD = "!external"
 MIN_PASSWORD_LEN = 12
 
 
@@ -63,20 +71,25 @@ class TokenSigner:
     def _sig(self, body: str) -> str:
         return _b64(hmac.new(self._key, body.encode(), hashlib.sha256).digest())
 
-    def issue(self, user_id: int) -> str:
+    def issue(self, user_id: int, *, typ: str = ACCESS, ttl: int | None = None) -> str:
         now = int(self._clock())
-        body = _b64(json.dumps({"uid": user_id, "iat": now, "exp": now + self.ttl},
-                               separators=(",", ":")).encode())
+        payload: dict[str, object] = {"uid": user_id, "iat": now,
+                                      "exp": now + (self.ttl if ttl is None else ttl)}
+        if typ != ACCESS:
+            payload["typ"] = typ
+        body = _b64(json.dumps(payload, separators=(",", ":")).encode())
         return f"{body}.{self._sig(body)}"
 
-    def verify(self, token: str) -> int | None:
-        """user_id или None (подпись неверна / токен истёк / мусор)."""
+    def verify(self, token: str, *, typ: str = ACCESS) -> int | None:
+        """user_id или None (подпись неверна / токен истёк / не того типа / мусор)."""
         try:
             body, sig = token.split(".")
             if not hmac.compare_digest(sig, self._sig(body)):
                 return None
             payload = json.loads(_unb64(body))
             if int(payload["exp"]) < self._clock():
+                return None
+            if payload.get("typ", ACCESS) != typ:
                 return None
             return int(payload["uid"])
         except (ValueError, KeyError, TypeError):

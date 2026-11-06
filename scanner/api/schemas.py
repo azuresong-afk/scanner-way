@@ -21,9 +21,58 @@ class LoginIn(BaseModel):
 
 
 class TokenOut(BaseModel):
-    access_token: str
+    """Итог входа. Без 2FA — как раньше: access_token + expires_in.
+
+    С 2FA пароль — только первый шаг: access_token пуст, mfa_required=true, а
+    mfa_token (живёт 5 минут) обменивается на токен доступа по коду из
+    приложения (POST /auth/mfa). mfa_enroll=true — 2FA обязательна, но ещё не
+    настроена: сначала POST /auth/mfa/enroll (QR-код), затем …/enroll/confirm.
+    """
+    access_token: str | None = None
     token_type: str = "bearer"
-    expires_in: int
+    expires_in: int | None = None
+    mfa_required: bool | None = None
+    mfa_enroll: bool | None = None
+    mfa_token: str | None = None
+    # Только при первом подтверждении 2FA: одноразовые коды восстановления.
+    recovery_codes: list[str] | None = None
+
+
+class AuthConfigOut(BaseModel):
+    """Какие способы входа включены (для страницы входа, без авторизации)."""
+    ldap: bool
+    mfa: str                    # off | optional | required
+
+
+class MfaTokenIn(BaseModel):
+    mfa_token: str = Field(min_length=1, max_length=2048)
+
+
+class MfaCodeIn(BaseModel):
+    """Код из приложения (6 цифр) или код восстановления (xxxxx-xxxxx)."""
+    code: str = Field(min_length=1, max_length=32)
+
+
+class MfaVerifyIn(MfaTokenIn, MfaCodeIn):
+    pass
+
+
+class MfaSetupOut(BaseModel):
+    """Секрет для приложения-аутентификатора: QR-кодом (svg) или вручную."""
+    secret: str
+    otpauth_uri: str
+    qr_svg: str | None = None
+
+
+class MfaStatusOut(BaseModel):
+    mode: str                   # off | optional | required
+    enabled: bool
+    required: bool              # для этого пользователя (с учётом исключений)
+    recovery_codes_left: int
+
+
+class RecoveryCodesOut(BaseModel):
+    recovery_codes: list[str]
 
 
 class UserCreate(BaseModel):
@@ -50,6 +99,9 @@ class UserOut(_Orm):
     display_name: str | None
     is_active: bool
     roles: list[str] = Field(default_factory=list)
+    # local — логин и пароль «Сканера»; ldap — учётка домена (роли из групп AD).
+    auth_source: str = "local"
+    mfa_enabled: bool = False
 
 
 class MeOut(UserOut):

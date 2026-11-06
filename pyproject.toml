@@ -25,6 +25,10 @@ dependencies = [
     "pywinrm>=0.5",
     # Профили соответствия ФСТЭК/CIS как данные: scanner/compliance/profiles/*.yaml (R5)
     "pyyaml>=6.0",
+    # Вход через LDAP/Active Directory (опционально, SCANNER_API_LDAP_URL)
+    "ldap3>=2.9",
+    # QR-код для настройки двухфакторного входа (TOTP) в приложении на телефоне
+    "segno>=1.6",
     # SNMP (v2c/v3 USM) для учёток сетевого оборудования: scanner/core/netexec.py
     "pysnmp>=7.1,<8",
     # Аудит СУБД (db_audit): MySQL/MariaDB, MS SQL Server, Oracle (тонкий режим,

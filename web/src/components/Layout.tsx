@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   BarChart3,
   Bell,
@@ -15,6 +15,7 @@ import {
   Radar,
   Server,
   ShieldAlert,
+  ShieldCheck,
   Sun,
   Users,
   Wifi,
@@ -145,7 +146,10 @@ export function Layout() {
               <span title={name}>{name}</span>
               <span>{roles}</span>
             </div>
-            <button type="button" className="btn btn-sm btn-ghost icon-btn" style={{ marginLeft: "auto", width: 30 }} onClick={logout} aria-label="Выйти" title="Выйти">
+            <Link to="/security" className="btn btn-sm btn-ghost icon-btn" style={{ marginLeft: "auto", width: 30 }} aria-label="Безопасность входа" title="Безопасность входа (2FA)">
+              <ShieldCheck size={15} />
+            </Link>
+            <button type="button" className="btn btn-sm btn-ghost icon-btn" style={{ width: 30 }} onClick={logout} aria-label="Выйти" title="Выйти">
               <LogOut size={15} />
             </button>
           </div>
