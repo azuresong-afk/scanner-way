@@ -18,3 +18,7 @@ build/
 # комплекты данных уязвимостей (scanner bundle export) — большие, не в git
 docker/data-bundle/*.tar
 *.tar.part
+
+# узел-сканер: настройки с токеном и сертификаты
+.env.node
+/node-certs/

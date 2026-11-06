@@ -138,6 +138,8 @@ export interface RunCreate {
   no_ping?: boolean;
   /** Готовый профиль проверки (GET /run-profiles). */
   profile?: string;
+  /** Где выполнять: не задано — центральный сервер, иначе узел-сканер. */
+  node_id?: number | null;
 }
 
 /** Готовый профиль проверки («Полная проверка Linux» и др.). */
@@ -239,6 +241,8 @@ export interface ScheduleIn extends RunCreate {
   /** IANA-пояс; по умолчанию — пояс браузера. */
   timezone?: string;
   enabled?: boolean;
+  /** Где выполнять: не задано — центральный сервер, иначе узел-сканер. */
+  node_id?: number | null;
 }
 
 export interface ScheduleOut {
@@ -265,6 +269,8 @@ export interface ScheduleOut {
   last_result: string | null;
   last_run_id: number | null;
   owner_id: number | null;
+  /** Узел-сканер расписания; null — центральный сервер. */
+  node_id?: number | null;
   created_at: string | null;
 }
 
@@ -478,6 +484,10 @@ export interface RunOut {
   warnings?: RunWarning[];
   /** Ход идущего прогона; null — в очереди или прогон до миграции 0023. */
   progress?: RunProgress | null;
+  /** Узел-сканер, на котором выполняется прогон; null — центральный сервер. */
+  node_id?: number | null;
+  node_name?: string | null;
+  node_mode?: NodeMode | null;
 }
 
 /** Ход идущего прогона: этап (модуль), хостов готово из всех, общий процент. */
@@ -1203,4 +1213,123 @@ export interface SearchOut {
   vulns: SearchVuln[];
   actions: SearchAction[];
   commands: SearchCommand[];
+}
+
+/** Автономный узел: задание, перенесённое на носителе (GET /runs/{id}/offline). */
+export type OfflineJobStatus = "exported" | "imported" | "cancelled" | "expired";
+
+export interface OfflineJobOut {
+  job_id: string;
+  run_id: number;
+  node_id: number | null;
+  node_name: string | null;
+  status: OfflineJobStatus;
+  status_label: string;
+  node_fingerprint: string;
+  job_sha256: string;
+  exported_by: string;
+  exported_at: string;
+  expires_at: string;
+  imported_by: string | null;
+  imported_at: string | null;
+  result_sha256: string | null;
+  result_summary: {
+    hosts?: number;
+    findings?: number;
+    severity?: Record<string, number>;
+    errors?: string[];
+    started_at?: string;
+    finished_at?: string;
+    reference_as_of?: string | null;
+  } | null;
+}
+
+/** Открытый ключ центра или узла и его отпечаток. */
+export interface OfflineKeyOut {
+  public_key: string | null;
+  fingerprint: string | null;
+}
+
+/** Итог «Загрузить результат». */
+export interface OfflineImportOut {
+  run_id: number;
+  status: RunStatus;
+  job_id: string;
+  node: string;
+  findings: number | null;
+  hosts: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** Открытый заголовок файла результата (до загрузки). */
+export interface OfflineResultHeader {
+  job_id: string;
+  run_id: number;
+  /** Из БД центра по id задания (в файле этих сведений нет). */
+  run_name?: string | null;
+  engagement?: string | null;
+  known_job?: boolean;
+  job_status?: OfflineJobStatus | null;
+  node_name: string;
+  started_at: string;
+  finished_at: string;
+  hosts: number;
+  findings: number;
+  severity?: Record<string, number>;
+  reference_as_of?: string | null;
+}
+
+// ---- узлы-сканеры (распределённое сканирование) ----
+/** online — сетевой узел (сам выходит на центр), offline — автономный (обмен файлами). */
+export type NodeMode = "online" | "offline";
+/** Состояние узла: на связи, нет связи, ещё не подключался, отключён, автономный. */
+export type NodeStatus = "online" | "offline" | "never" | "disabled" | "autonomous";
+
+export interface ScanNode {
+  id: number;
+  name: string;
+  description: string | null;
+  mode: NodeMode;
+  status: NodeStatus;
+  /** Сети узла, заданные администратором (CIDR, диапазоны). */
+  scope: string[];
+  allow_credentials: boolean;
+  enabled: boolean;
+  /** Первые символы токена — чтобы опознать его, сам токен не хранится. */
+  token_prefix: string | null;
+  hostname: string | null;
+  version: string | null;
+  /** Локальный allowlist, который узел сообщил о себе. */
+  local_allowlist: string[];
+  /** Сети узла в центре вне локального allowlist узла — проверяться не будут. */
+  outside_local_allowlist: string[];
+  tools: Record<string, boolean>;
+  created_at: string | null;
+  registered_at: string | null;
+  last_seen_at: string | null;
+  active_runs: number[];
+  queued_runs: number;
+  has_public_key: boolean;
+}
+
+export interface ScanNodeCreated extends ScanNode {
+  /** Токен узла — показывается один раз. */
+  token: string | null;
+}
+
+export interface ScanNodeIn {
+  name: string;
+  description?: string | null;
+  mode: NodeMode;
+  scope: string[];
+  allow_credentials: boolean;
+}
+
+export interface ScanNodeUpdate {
+  name?: string;
+  description?: string | null;
+  scope?: string[];
+  allow_credentials?: boolean;
+  enabled?: boolean;
 }

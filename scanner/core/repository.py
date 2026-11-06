@@ -432,8 +432,10 @@ def create_scan_run(session: Session, *, engagement_id: int, modules: list[str],
                     cred_set_ids: Iterable[int] = (), name: str | None = None,
                     targets: Iterable[str] = (), schedule_id: int | None = None,
                     retry_of: int | None = None, worker_id: str | None = None,
-                    options: Mapping[str, object] | None = None) -> int:
+                    options: Mapping[str, object] | None = None,
+                    node_id: int | None = None) -> int:
     run = ScanRun(options=dict(options or {}), engagement_id=engagement_id, modules=list(modules),
+                  node_id=node_id,
                   rate_profile=rate_profile, started_by=started_by, status="pending",
                   credential_ids=[int(i) for i in credential_ids],
                   cred_set_ids=[int(i) for i in cred_set_ids], name=name,
@@ -519,6 +521,12 @@ def touch_scan_runs(session: Session, run_ids: Iterable[int], worker_id: str) ->
         .values(heartbeat_at=datetime.now(UTC))
         .execution_options(synchronize_session=False))
     return res.rowcount
+
+
+def offline_node_ids(session: Session) -> set[int]:
+    """Автономные узлы-сканеры: их прогоны сторож не трогает (scanner.nodes)."""
+    from scanner.core.db import ScanNode
+    return set(session.scalars(select(ScanNode.id).where(ScanNode.mode == "offline")))
 
 
 def active_scan_runs(session: Session) -> list[ScanRun]:

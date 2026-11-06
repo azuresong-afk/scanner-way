@@ -1,0 +1,59 @@
+# Автономный узел-сканер для закрытого сегмента (АСУ ТП, закрытый контур).
+# Связи с центром нет: задание и результат переносятся файлами на носителе.
+# Подробно: docs/offline-node.md.
+#
+# Образ — тот же, что у сетевого узла (docker-compose.node.yml), переносится файлом:
+#   на машине со сборкой:  docker compose -f docker-compose.node-offline.yml build
+#                          docker save scanner-node:latest -o scanner-node.tar
+#   на узле:               docker load -i scanner-node.tar
+# Все команды — разовые контейнеры (сервиса, который работает постоянно, нет):
+#
+#   docker compose -f docker-compose.node-offline.yml run --rm node \
+#       node init --name "АСУ-ТП-1" --scope 10.10.0.0/16 --center-key /media/center.pub \
+#       --pub-out /media/node.pub
+#   docker compose -f docker-compose.node-offline.yml run --rm node \
+#       bundle import /media/scanner-data-20261106.tar
+#   docker compose -f docker-compose.node-offline.yml run --rm node \
+#       node run-job /media/job-АСУ-ТП-1-run42-20261106-1200.scnjob --out /media \
+#       --confirm-authorized
+
+# своё имя проекта: тома не пересекаются с центром и сетевым узлом
+name: scanner-node-offline
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  node:
+    build: .
+    image: ${SCANNER_NODE_IMAGE:-scanner-node:latest}
+    # Без API и PostgreSQL: справочники — в SQLite-файле в каталоге узла.
+    entrypoint: ["scanner"]
+    environment:
+      SCANNER_NODE_HOME: /var/lib/scanner-node
+      SCANNER_DATABASE_URL: sqlite:////var/lib/scanner-node/node.db
+      # Узел никуда не ходит сам: бюллетени ОС и шаблоны Nuclei приходят только
+      # в комплекте данных с носителя.
+      ADVISORY_ON_DEMAND: "0"
+      SCANNER_ENV: offline-node
+    volumes:
+      # Ключи узла, его allowlist, журнал заданий и БД справочников.
+      - node_home:/var/lib/scanner-node
+      # Шаблоны Nuclei из комплекта данных.
+      - nuclei_templates:/root/nuclei-templates
+      # Носитель: сюда кладётся задание, сюда же пишется результат.
+      - ${SCANNER_MEDIA_DIR:-./media}:/media
+    # Сканирование сегмента напрямую с адреса узла (ARP, OS fingerprint).
+    network_mode: host
+    # nmap нужны SYN-сканирование и определение ОС.
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    logging: *default-logging
+
+volumes:
+  node_home:
+  nuclei_templates:

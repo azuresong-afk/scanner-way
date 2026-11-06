@@ -326,6 +326,8 @@ class RunCreate(BaseModel):
     # Готовый профиль проверки (scanner.core.profiles): задаёт модули и движок,
     # если они не перечислены явно. Сохраняется в опциях прогона.
     profile: str | None = Field(default=None, max_length=64)
+    # Где исполнять: None — центральный сервер, иначе id узла-сканера (scanner.nodes).
+    node_id: int | None = None
 
 
 class CoverageEntryOut(BaseModel):
@@ -397,6 +399,10 @@ class RunOut(_Orm):
     # hosts_done, hosts_total, percent, elapsed_seconds, eta_seconds
     # (примерно осталось, с; null — оценить пока нельзя), stage_seconds, updated_at. NULL — в очереди / старый.
     progress: dict | None = None
+    # Узел-сканер, на котором исполняется прогон (миграция 0028); None — центр.
+    node_id: int | None = None
+    node_name: str | None = None
+    node_mode: str | None = None          # online | offline | None (центр)
 
     @field_validator("options", "warnings", mode="before")
     @classmethod
@@ -434,6 +440,8 @@ class ScheduleIn(BaseModel):
     run_at: datetime | None = None             # для once
     timezone: str | None = None                # IANA; пусто — пояс сервера
     enabled: bool = True
+    # Где исполнять: None — центральный сервер, иначе узел-сканер.
+    node_id: int | None = None
 
 
 class ScheduleToggle(BaseModel):
@@ -463,6 +471,7 @@ class ScheduleOut(_Orm):
     last_run_id: int | None = None
     owner_id: int | None
     created_at: datetime | None
+    node_id: int | None = None
 
     @field_validator("run_at", "next_run_at", "last_run_at", "created_at")
     @classmethod

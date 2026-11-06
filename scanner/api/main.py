@@ -35,6 +35,8 @@ from scanner.api import (
     routes_findings,
     routes_integrations,
     routes_mfa,
+    routes_nodes,
+    routes_offline,
     routes_portscan,
     routes_reachability,
     routes_runs,
@@ -214,6 +216,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         tick_seconds=settings.feeds_tick_seconds,
         notifier=app.state.notifier.notify_feed_stale)
     app.state.default_timezone = settings.timezone
+    # секрет ключей центра для автономных узлов (только заданный в окружении)
+    from scanner.nodes.offline_center import center_material
+    app.state.offline_material = center_material(settings)
     app.state.resolver_factory = resolver_factory
     app.state.reach_check = reachability or check_host
     app.state.reach_throttle = CheckThrottle(settings.reachability_per_minute, 60.0)
@@ -271,7 +276,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
     app.include_router(routes_credcheck.router)
     app.include_router(routes_compliance.router)
     app.include_router(routes_search.router)
+    app.include_router(routes_nodes.router)
     app.include_router(routes_audit.router)
+    app.include_router(routes_offline.router)
     return app
 
 
