@@ -112,7 +112,8 @@ export function RunDetailPage() {
           </h1>
         </div>
         <div className="actions">
-          {has("run_scan") && !finished && (
+          {/* автономный прогон после выгрузки задания останавливают «Отменить задание» */}
+          {has("run_scan") && !finished && !(isOfflineRun(r) && r.status === "running") && (
             <button type="button" className="btn btn-danger" onClick={stop}>
               <Square size={14} /> Остановить
             </button>

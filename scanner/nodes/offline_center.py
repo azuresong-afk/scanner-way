@@ -221,12 +221,23 @@ def export_job(sessions: sessionmaker[Session], runs, audit, *, run_id: int, act
         raise OfflineError(f"не удалось сформировать задание: {e}") from e
     del wire                                # учётки в открытом виде больше не нужны
     env = of.parse(data, of.FORMAT_JOB)
-    with session_scope(sessions) as s:
-        s.add(OfflineJobRow(id=job_id, run_id=run_id, node_id=node_id,
-                            node_fingerprint=recipient.fingerprint,
-                            status=STATUS_EXPORTED, job_sha256=env.sha256,
-                            job_file=data.decode("utf-8"), exported_by=actor,
-                            exported_at=now, expires_at=expires))
+    try:
+        with session_scope(sessions) as s:
+            s.add(OfflineJobRow(id=job_id, run_id=run_id, node_id=node_id,
+                                node_fingerprint=recipient.fingerprint,
+                                status=STATUS_EXPORTED, job_sha256=env.sha256,
+                                job_file=data.decode("utf-8"), exported_by=actor,
+                                exported_at=now, expires_at=expires))
+    except Exception as e:
+        # прогон уже за узлом, а задания нет — иначе он висел бы в running вечно
+        with session_scope(sessions) as s:
+            repo.set_scan_run_status(s, run_id, "failed",
+                                     error_message="Не удалось сохранить задание для "
+                                                   "автономного узла — выгрузите заново "
+                                                   "(«Повторить»)")
+        audit.record(subject=actor, action="offline_job_export", target=f"scan_run:{run_id}",
+                     result="error", details={"error": f"{type(e).__name__}: {e}"[:500]})
+        raise
     audit.record(subject=actor, action="offline_job_export", target=f"scan_run:{run_id}",
                  result="ok", details={"job_id": job_id, "node_id": node_id,
                                        "node": node_name, "job_sha256": env.sha256,
@@ -381,7 +392,20 @@ def import_result(sessions: sessionmaker[Session], runs, audit, *, data: bytes,
         if claimed.rowcount != 1:
             raise OfflineError("результат уже загружается в другом окне",
                                code="already_imported")
-    final = runs.persist_outcome(run_id, out)
+    try:
+        final = runs.persist_outcome(run_id, out)
+    except Exception as e:
+        # результат не сохранён — задание снова ждёт, файл можно загрузить ещё раз
+        with session_scope(sessions) as s:
+            s.execute(update(OfflineJobRow).where(OfflineJobRow.id == job_id).values(
+                status=STATUS_EXPORTED, imported_at=None, imported_by=None,
+                result_sha256=None, result_summary=None)
+                .execution_options(synchronize_session=False))
+        audit.record(subject=actor, action="offline_result_import",
+                     target=f"scan_run:{run_id}", result="error",
+                     details={"job_id": job_id, "error": f"{type(e).__name__}: {e}"[:500]})
+        raise OfflineError(f"результат не сохранён: {type(e).__name__}; файл можно "
+                           "загрузить повторно", code="persist_failed", status=500) from e
     audit.record(subject=actor, action="offline_result_import", target=f"scan_run:{run_id}",
                  result="ok", details={"job_id": job_id, "node_id": node_id,
                                        "node": node_name, "file_sha256": env.sha256,

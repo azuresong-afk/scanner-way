@@ -267,3 +267,40 @@ def test_job_for_one_node_rejected_by_another(offline, tmp_path):
     other = on.OfflineNode.load(tmp_path / "other")
     with pytest.raises(on.OfflineNodeError, match="для другого узла"):
         _run_on_node(other, job, rec)
+
+
+def test_cli_node_commands(offline, tmp_path, capsys):
+    """scanner node inspect / run-job на настоящем CLI: БД узла — свой SQLite."""
+    from scanner.cli import main
+    api, _rec, _app, eid, node_id, node = offline
+    run_id = _start(api, eid, node_id)
+    job_path = tmp_path / "media" / "job.scnjob"
+    job_path.parent.mkdir()
+    job_path.write_bytes(_export(api, run_id))
+    home = ["--home", str(node.home)]
+    db = ["--db-url", f"sqlite:///{tmp_path / 'node.db'}"]
+
+    assert main(["node", "inspect", str(job_path), *home]) == 0
+    out = capsys.readouterr().out
+    assert "Задание проверено" in out and "10.1.0.5" in out and "10.1.0.0/24" in out
+
+    # без подтверждения и без справочников — отказ
+    assert main([*db, "node", "run-job", str(job_path), *home]) == 2
+    assert main([*db, "node", "run-job", str(job_path), *home, "--confirm-authorized"]) == 2
+    assert "ложно чистым" in capsys.readouterr().err
+    # сети узла в тесте не пересекаются с целью: модули не запускаются, сеть не нужна
+    node_json = node.home / on.NODE_FILE
+    meta = json.loads(node_json.read_text())
+    meta["scope"] = ["10.9.0.0/24"]
+    node_json.write_text(json.dumps(meta))
+    assert main([*db, "node", "run-job", str(job_path), *home, "--confirm-authorized",
+                 "--allow-empty-reference", "--out", str(job_path.parent)]) == 0
+    results = list(job_path.parent.glob("*.scnres"))
+    assert len(results) == 1
+    # второй запуск того же задания — отказ по журналу узла
+    assert main([*db, "node", "run-job", str(job_path), *home, "--confirm-authorized",
+                 "--allow-empty-reference"]) == 2
+    assert main(["node", "show", *home]) == 0
+    assert "выполнено заданий: 1" in capsys.readouterr().out
+    res = _import(api, results[0].read_bytes())
+    assert res["run_id"] == run_id and res["findings"] == 0
