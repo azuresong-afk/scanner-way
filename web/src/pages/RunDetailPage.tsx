@@ -12,10 +12,12 @@ import { Pager } from "../components/Pager";
 import { ReportMenu } from "../components/ReportMenu";
 import { RunProgressPanel } from "../components/RunProgressPanel";
 import { CoverageTable, RunResultNotes } from "../components/RunCoverage";
+import { OfflineJobPanel } from "../components/OfflineJob";
 import { ServicesTable } from "../components/ServicesTable";
 import { Empty, ErrorAlert, Kpi, Loading, RunStatusPill } from "../components/ui";
 import { fmtDateFull, fmtDuration } from "../lib/format";
 import { isFinished, isRetryable, MODULE_LABEL, nothingChecked, RATE_PROFILES, runName } from "../lib/labels";
+import { isOfflineRun } from "../lib/offline";
 import { hostRowsFromCounts } from "../lib/stats";
 import { useAsync, useInterval } from "../lib/useAsync";
 import { useFindingsPage } from "../lib/useFindingsPage";
@@ -50,7 +52,8 @@ export function RunDetailPage() {
   const [stopError, setStopError] = useState<string | null>(null);
   const [, tick] = useState(0);
 
-  useInterval(() => void run.reload(), 3000, !!run.data && !finished);
+  // автономный прогон ждёт носитель часами и днями — опрашивать часто незачем
+  useInterval(() => void run.reload(), run.data && isOfflineRun(run.data) ? 30_000 : 3000, !!run.data && !finished);
   useInterval(() => tick((n) => n + 1), 1000, !!run.data && !finished);
   useEffect(() => setOpen(null), [id]);
 
@@ -109,7 +112,8 @@ export function RunDetailPage() {
           </h1>
         </div>
         <div className="actions">
-          {has("run_scan") && !finished && (
+          {/* автономный прогон после выгрузки задания останавливают «Отменить задание» */}
+          {has("run_scan") && !finished && !(isOfflineRun(r) && r.status === "running") && (
             <button type="button" className="btn btn-danger" onClick={stop}>
               <Square size={14} /> Остановить
             </button>
@@ -143,6 +147,8 @@ export function RunDetailPage() {
           <dd>{r.modules.map((m) => MODULE_LABEL[m] ?? m).join(", ")}</dd>
           <dt>Профиль нагрузки</dt>
           <dd>{RATE_PROFILES.find((p) => p.id === r.rate_profile)?.label ?? r.rate_profile}</dd>
+          <dt>Где выполняется</dt>
+          <dd>{r.node_name ? `узел-сканер «${r.node_name}»` : "центральный сервер"}</dd>
           <dt>Создан</dt>
           <dd>{fmtDateFull(r.created_at)}</dd>
           <dt>Начат</dt>
@@ -154,6 +160,8 @@ export function RunDetailPage() {
         </dl>
       </section>
 
+      {isOfflineRun(r) && <OfflineJobPanel run={r} onChanged={run.reload} />}
+
       {r.status === "running" && r.progress && (
         <div className="card card-pad">
           <RunProgressPanel run={r} />
@@ -163,10 +171,15 @@ export function RunDetailPage() {
         </div>
       )}
 
-      {!finished && !(r.status === "running" && r.progress) && (
+      {!finished && !isOfflineRun(r) && !(r.status === "running" && r.progress) && (
         <div className="card">
-          <Empty title={r.status === "pending" ? "Прогон в очереди" : "Идёт сканирование"} icon={<span className="spinner" style={{ width: 28, height: 28 }} />}>
-            Результаты появятся после завершения. Страница обновляется автоматически.
+          <Empty
+            title={r.status === "pending" ? (r.node_name ? `Ждёт узел «${r.node_name}»` : "Прогон в очереди") : "Идёт сканирование"}
+            icon={<span className="spinner" style={{ width: 28, height: 28 }} />}
+          >
+            {r.status === "pending" && r.node_name
+              ? "Узел заберёт прогон при следующем выходе на связь (обычно в течение нескольких секунд). Состояние узла — в «Сканерах»."
+              : "Результаты появятся после завершения. Страница обновляется автоматически."}
           </Empty>
         </div>
       )}

@@ -20,6 +20,10 @@ import type {
   AuditOut,
   ChannelIn,
   ChannelOut,
+  ScanNode,
+  ScanNodeCreated,
+  ScanNodeIn,
+  ScanNodeUpdate,
   ChannelUpdate,
   DeliveryOut,
 
@@ -76,6 +80,10 @@ import type {
   UserCreate,
   UserOut,
   UserUpdate,
+  OfflineImportOut,
+  OfflineJobOut,
+  OfflineKeyOut,
+  OfflineResultHeader,
 } from "./types";
 
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api";
@@ -197,6 +205,22 @@ export function auditQuery(params: object): string {
 
 const body = (data: unknown): RequestInit => ({ body: JSON.stringify(data) });
 
+/** Файл из ответа: тело и имя из Content-Disposition (filename* — UTF-8). */
+export async function fileOf(res: Response): Promise<{ blob: Blob; name: string }> {
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  const plain = /filename="([^"]+)"/i.exec(cd);
+  let name = "download";
+  if (star) {
+    try {
+      name = decodeURIComponent(star[1]);
+    } catch {
+      name = star[1];
+    }
+  } else if (plain) name = plain[1];
+  return { blob: await res.blob(), name };
+}
+
 export const api = {
   login: (username: string, password: string) =>
     json<TokenOut>("/auth/token", { method: "POST", ...body({ username, password }) }),
@@ -310,6 +334,12 @@ export const api = {
     json<ScheduleOut>(`/engagements/${engagementId}/schedules`, { method: "POST", ...body(data) }),
   updateSchedule: (id: number, data: ScheduleIn) => json<ScheduleOut>(`/schedules/${id}`, { method: "PUT", ...body(data) }),
   toggleSchedule: (id: number, enabled: boolean) => json<ScheduleOut>(`/schedules/${id}`, { method: "PATCH", ...body({ enabled }) }),
+  nodes: () => json<ScanNode[]>("/nodes"),
+  createNode: (data: ScanNodeIn) => json<ScanNodeCreated>("/nodes", { method: "POST", ...body(data) }),
+  updateNode: (id: number, data: ScanNodeUpdate) => json<ScanNode>(`/nodes/${id}`, { method: "PATCH", ...body(data) }),
+  rotateNodeToken: (id: number) => json<ScanNodeCreated>(`/nodes/${id}/token`, { method: "POST" }),
+  deleteNode: (id: number) => request(`/nodes/${id}`, { method: "DELETE" }).then(() => undefined),
+
   channels: () => json<ChannelOut[]>("/integrations/channels"),
   createChannel: (data: ChannelIn) => json<ChannelOut>("/integrations/channels", { method: "POST", ...body(data) }),
   updateChannel: (id: number, data: ChannelUpdate) => json<ChannelOut>(`/integrations/channels/${id}`, { method: "PATCH", ...body(data) }),
@@ -376,6 +406,25 @@ export const api = {
   hostLatest: (engagementId: number, host: string) =>
     json<HostLatestOut>(`/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/latest`),
 
+  /** Автономный узел: задание прогона (404 — задание не выгружалось). */
+  offlineJob: (runId: number) => json<OfflineJobOut>(`/runs/${runId}/offline`),
+  /** «Выгрузить задание»: файл .scnjob (прогон переходит в «Выполняется»). */
+  exportOfflineJob: (runId: number, validDays: number) =>
+    request(`/runs/${runId}/offline/export?valid_days=${validDays}`, { method: "POST" }).then(fileOf),
+  /** Скачать выгруженное задание ещё раз (тот же файл). */
+  downloadOfflineJob: (runId: number) => request(`/runs/${runId}/offline/job`).then(fileOf),
+  cancelOfflineJob: (runId: number) => json<{ run_id: number }>(`/runs/${runId}/offline/cancel`, { method: "POST" }),
+  previewOfflineResult: (file: Blob) =>
+    json<OfflineResultHeader>("/offline/results/preview", { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } }),
+  /** «Загрузить результат» с носителя (.scnres). */
+  importOfflineResult: (file: Blob) =>
+    json<OfflineImportOut>("/offline/results", { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } }),
+  centerKey: () => json<OfflineKeyOut>("/offline/center-key"),
+  centerKeyFile: () => request("/offline/center-key?format=file").then(fileOf),
+  nodeKey: (nodeId: number) => json<OfflineKeyOut>(`/nodes/${nodeId}/public-key`),
+  setNodeKey: (nodeId: number, publicKey: string) =>
+    json<OfflineKeyOut>(`/nodes/${nodeId}/public-key`, { method: "PUT", ...body({ public_key: publicKey }) }),
+  nodeOfflineJobs: (nodeId: number) => json<OfflineJobOut[]>(`/nodes/${nodeId}/offline-jobs`),
   /** Отчёт как Blob: эндпоинт требует Bearer, поэтому обычная ссылка не подходит. */
   report: async (
     runId: number,

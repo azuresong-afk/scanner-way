@@ -30,6 +30,32 @@ server {
         proxy_read_timeout 300s;
     }
 
+    # Протокол узлов-сканеров: результат крупного прогона и шаблоны Nuclei
+    # больше 1 МБ; узел ждёт сохранения результата.
+    location /api/node/v1/ {
+        client_max_body_size 256m;
+        proxy_pass ${API_UPSTREAM}/node/v1/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+    }
+
+    # Файлы результата автономных узлов (носитель -> центр), до 256 МБ.
+    location /api/offline/results {
+        client_max_body_size 256m;
+        proxy_request_buffering off;
+        proxy_pass ${API_UPSTREAM}/offline/results;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+    }
+
     # REST API сканера; префикс /api отрезается.
     location /api/ {
         proxy_pass ${API_UPSTREAM}/;

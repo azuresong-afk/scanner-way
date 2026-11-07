@@ -155,7 +155,7 @@ class Scheduler:
                     actor=subject, started_by=owner.id,
                     credential_ids=list(row.credential_ids or []),
                     cred_set_ids=list(row.cred_set_ids or []), name=row.name,
-                    schedule_id=schedule_id)
+                    schedule_id=schedule_id, node_id=row.node_id)
             except Exception as e:  # noqa: BLE001 — учётку удалили, модуль пропал и т.п.
                 result, error = "error", f"{type(e).__name__}: {e}"[:300]
 

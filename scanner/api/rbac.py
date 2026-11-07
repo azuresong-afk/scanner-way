@@ -38,10 +38,11 @@ class Perm(enum.StrEnum):
     CRED_AUDIT = "cred_audit"
     HOST_CREDENTIALS = "host_credentials"
     TRIAGE_FINDINGS = "triage_findings"
+    MANAGE_NODES = "manage_nodes"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Perm]] = {
-    "admin": frozenset({Perm.MANAGE_USERS, Perm.MANAGE_ENGAGEMENTS,
+    "admin": frozenset({Perm.MANAGE_USERS, Perm.MANAGE_ENGAGEMENTS, Perm.MANAGE_NODES,
                         Perm.MANAGE_ALLOWLIST, Perm.VIEW_ENGAGEMENTS,
                         Perm.VIEW_REPORT, Perm.VIEW_AUDIT}),
     "operator": frozenset({Perm.VIEW_ENGAGEMENTS, Perm.RUN_SCAN, Perm.VIEW_REPORT,

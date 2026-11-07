@@ -333,6 +333,10 @@ def build_parser() -> argparse.ArgumentParser:
     lchk.add_argument("--password-stdin", action="store_true",
                       help="пароль пользователя — из stdin (иначе спросит без эха)")
     lchk.set_defaults(handler=cmd_auth_ldap_check, no_db=True)
+
+    # --- node: узел-сканер (распределённое сканирование) — scanner/nodes/cli.py ---
+    from scanner.nodes.cli import add_node_commands
+    add_node_commands(sub)
     return p
 
 
