@@ -24,6 +24,7 @@ from scanner.integrations.events import (
     FEED_STALE,
     NEW_CRITICAL,
     RUN_FINISHED,
+    SYSTEM_HEALTH,
     Event,
     Item,
 )
@@ -95,6 +96,12 @@ class SyslogCefChannel(Channel):
             return [(cef_line("feed_stale", "Reference feed not updated", 5,
                               {"msg": f"{ev.title}: {ev.message or ''}"[:500],
                                "cs4Label": "feed", "cs4": ev.source}), 4)]
+        if ev.kind == SYSTEM_HEALTH:
+            sev, prio = {"error": (8, 3), "warn": (5, 4)}.get(ev.health_status or "", (1, 6))
+            return [(cef_line("system_health", "Scanner health changed", sev,
+                              {"msg": f"{ev.title}: {ev.message or ''}"[:500],
+                               "cs4Label": "component", "cs4": ev.source,
+                               "cs5Label": "healthStatus", "cs5": ev.health_status}), prio)]
         return [(cef_line("test", "Scanner test notification", 1, {"msg": ev.message}), 6)]
 
     @staticmethod

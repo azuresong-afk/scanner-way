@@ -12,6 +12,7 @@ import { EngagementsPage } from "./pages/EngagementsPage";
 import { FeedsPage } from "./pages/FeedsPage";
 import { FindingsPage } from "./pages/FindingsPage";
 import { HostDetailPage } from "./pages/HostDetailPage";
+import { HealthPage } from "./pages/HealthPage";
 import { HostsPage } from "./pages/HostsPage";
 import { IntegrationsPage } from "./pages/IntegrationsPage";
 import { NodesPage } from "./pages/NodesPage";
@@ -92,6 +93,7 @@ export function App() {
         <Route path="feeds" element={<RequirePerm perm="view_engagements"><FeedsPage /></RequirePerm>} />
         <Route path="nodes" element={<RequirePerm perm="view_engagements"><NodesPage /></RequirePerm>} />
         <Route path="integrations" element={<RequirePerm perm="view_engagements"><IntegrationsPage /></RequirePerm>} />
+        <Route path="health" element={<RequirePerm perm="view_engagements"><HealthPage /></RequirePerm>} />
         <Route path="audit" element={<RequirePerm perm="view_audit"><AuditPage /></RequirePerm>} />
         <Route path="security" element={<SecurityPage />} />
         <Route path="users" element={<RequirePerm perm="manage_users"><UsersPage /></RequirePerm>} />

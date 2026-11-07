@@ -28,11 +28,12 @@ interface TypeDef {
   secret?: { key: string; label: string; required?: boolean };
 }
 
-const ALL_EVENTS: NotifyEvent[] = ["run_finished", "new_critical", "feed_stale"];
+const ALL_EVENTS: NotifyEvent[] = ["run_finished", "new_critical", "feed_stale", "system_health"];
 const EVENT_LABEL: Record<NotifyEvent | "test", string> = {
   run_finished: "Прогон завершён",
   new_critical: "Новые критичные находки",
   feed_stale: "Справочник не обновился",
+  system_health: "Состояние сканера (сбой и восстановление)",
   test: "Проверка канала",
 };
 const PRIORITIES: [string, string][] = [

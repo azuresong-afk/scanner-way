@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
+  Activity,
   BarChart3,
   Bell,
   CalendarClock,
@@ -25,6 +26,7 @@ import { useAuth, type Perm } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { useTheme } from "../theme/ThemeContext";
 import { ROLE_LABEL } from "../lib/labels";
+import { HealthChip } from "./HealthChip";
 import { QuickSearch } from "./QuickSearch";
 import { RunProgressChip } from "./RunProgressChip";
 
@@ -53,6 +55,7 @@ const NAV: NavItem[] = [
   { to: "/feeds", label: "Справочники", icon: <Database size={18} />, perm: "view_engagements", admin: true },
   { to: "/nodes", label: "Сканеры", icon: <Network size={18} />, perm: "view_engagements", admin: true },
   { to: "/integrations", label: "Уведомления", icon: <Bell size={18} />, perm: "view_engagements", admin: true },
+  { to: "/health", label: "Состояние", icon: <Activity size={18} />, perm: "view_engagements", admin: true },
   { to: "/audit", label: "Журнал аудита", icon: <ListChecks size={18} />, perm: "view_audit", admin: true },
   { to: "/users", label: "Пользователи и роли", icon: <Users size={18} />, perm: "manage_users", admin: true },
 ];
@@ -167,6 +170,7 @@ export function Layout() {
           <QuickSearch />
           <RunProgressChip />
           <span className="spacer" />
+          <HealthChip />
           <span className="faint hide-sm" style={{ fontSize: 12 }}>
             Только цели из allowlist проекта
           </span>

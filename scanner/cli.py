@@ -334,6 +334,12 @@ def build_parser() -> argparse.ArgumentParser:
                       help="пароль пользователя — из stdin (иначе спросит без эха)")
     lchk.set_defaults(handler=cmd_auth_ldap_check, no_db=True)
 
+    # --- health: состояние самого сканера ---
+    hp = sub.add_parser("health", help="состояние сканера: БД, прогоны, движки, справочники, "
+                                       "диск, узлы, уведомления (код 1 — есть сбой)")
+    hp.add_argument("--json", action="store_true", help="вывести отчёт в JSON")
+    hp.set_defaults(handler=cmd_health, no_db=True)
+
     # --- node: узел-сканер (распределённое сканирование) — scanner/nodes/cli.py ---
     from scanner.nodes.cli import add_node_commands
     add_node_commands(sub)
@@ -1035,6 +1041,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     except KeyboardInterrupt:
         return 130
+
+
+def cmd_health(args: argparse.Namespace, env: _Env | None) -> int:
+    """Хелсчек вне API (cron, Zabbix agent, ручная проверка). Миграции не трогает.
+
+    Код возврата: 0 — в порядке или есть предупреждения, 1 — есть сбой.
+    Фоновые потоки API отсюда не видны — их статус «не проверено»."""
+    import json
+
+    from scanner.core.db import make_session_factory
+    from scanner.core.syshealth import ERROR, STATUS_TITLES, HealthContext, collect
+    from scanner.feeds.sources import SOURCES
+    engine = _engine(args.db_url)
+    try:
+        rep = collect(HealthContext(sessions=make_session_factory(engine),
+                                    feed_sources=SOURCES))
+    finally:
+        engine.dispose()
+    if args.json:
+        print(json.dumps(rep, ensure_ascii=False, indent=2, default=str))
+    else:
+        marks = {"ok": "OK  ", "warn": "WARN", "error": "FAIL", "unknown": "  ? "}
+        print(f"Состояние сканера: {STATUS_TITLES[rep['status']]}")
+        for c in rep["components"]:
+            print(f"[{marks.get(c['status'], c['status'])}] {c['title']}: {c['summary']}")
+            if c.get("hint") and c["status"] in ("warn", "error"):
+                print(f"       → {c['hint']}")
+    return 1 if rep["status"] == ERROR else 0
 
 
 def cmd_auth_ldap_check(args: argparse.Namespace, env: _Env | None) -> int:
