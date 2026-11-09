@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
-import { KeyRound, Plus, Trash2 } from "lucide-react";
+import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { CredentialAuth, CredentialBecome, CredentialOut, CredentialProtocol, DbProtocol, NetdevPlatform } from "../api/types";
 import { fmtDate } from "../lib/format";
@@ -40,6 +40,8 @@ const SNMP_PRIV = [
   { id: "none", label: "Без шифрования" },
 ];
 
+const KEEP_HINT = "•••••• сохранён — оставьте пустым, чтобы не менять";
+
 /** Подпись способа входа в таблице учёток. */
 function loginLabel(c: CredentialOut): string {
   const o = c.options ?? {};
@@ -57,6 +59,7 @@ function loginLabel(c: CredentialOut): string {
 export function CredentialsCard({ engagementId }: { engagementId: number }) {
   const list = useAsync(() => api.credentials(engagementId), [engagementId]);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<CredentialOut | null>(null);
   const [removing, setRemoving] = useState<CredentialOut | null>(null);
 
   return (
@@ -116,8 +119,11 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
                   <td className="muted">{c.protocol === "ssh" && c.become !== "none" ? "sudo" : "нет"}</td>
                   <td className="mono muted">{c.targets.length ? c.targets.join(", ") : "все цели прогона"}</td>
                   <td className="muted nowrap">{fmtDate(c.created_at)}</td>
-                  <td className="right">
-                    <button type="button" className="btn btn-sm btn-ghost" aria-label={`Удалить ${c.name}`} onClick={() => setRemoving(c)}>
+                  <td className="right nowrap">
+                    <button type="button" className="btn btn-sm btn-ghost" aria-label={`Изменить ${c.name}`} title="Изменить" onClick={() => setEditing(c)}>
+                      <Pencil size={14} />
+                    </button>
+                    <button type="button" className="btn btn-sm btn-ghost" aria-label={`Удалить ${c.name}`} title="Удалить" onClick={() => setRemoving(c)}>
                       <Trash2 size={14} />
                     </button>
                   </td>
@@ -137,6 +143,17 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
           }}
         />
       )}
+      {editing && (
+        <CredentialForm
+          engagementId={engagementId}
+          initial={editing}
+          onClose={() => setEditing(null)}
+          onDone={async () => {
+            setEditing(null);
+            await list.reload();
+          }}
+        />
+      )}
       {removing && (
         <RemoveCredential
           engagementId={engagementId}
@@ -152,24 +169,48 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
   );
 }
 
-function CredentialForm({ engagementId, onClose, onDone }: { engagementId: number; onClose: () => void; onDone: () => void }) {
-  const [name, setName] = useState("");
-  const [protocol, setProtocol] = useState<CredentialProtocol>("ssh");
-  const [username, setUsername] = useState("");
-  const [domain, setDomain] = useState("");
-  const [port, setPort] = useState(DEFAULT_PORT.ssh);
-  const [portTouched, setPortTouched] = useState(false);
-  const [auth, setAuth] = useState<CredentialAuth>("password");
+/** Логин WinRM хранится как ДОМЕН\user — в форме правки домен отдельным полем. */
+function splitDomain(c: CredentialOut | undefined): [string, string] {
+  if (!c) return ["", ""];
+  const i = c.username.indexOf("\\");
+  return c.protocol === "winrm" && i > 0 ? [c.username.slice(i + 1), c.username.slice(0, i)] : [c.username, ""];
+}
+
+/**
+ * Форма учётки: новая или правка существующей (initial). При правке секреты не
+ * показываются и не обязательны — пустое поле оставляет сохранённый пароль, ключ
+ * или парольную фразу. Сменили способ входа — секрет нужно ввести заново.
+ */
+function CredentialForm({
+  engagementId,
+  initial,
+  onClose,
+  onDone,
+}: {
+  engagementId: number;
+  initial?: CredentialOut;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const o = initial?.options ?? {};
+  const [initUser, initDomain] = splitDomain(initial);
+  const [name, setName] = useState(initial?.name ?? "");
+  const [protocol, setProtocol] = useState<CredentialProtocol>(initial?.protocol ?? "ssh");
+  const [username, setUsername] = useState(initUser);
+  const [domain, setDomain] = useState(initDomain);
+  const [port, setPort] = useState(initial ? String(initial.port) : DEFAULT_PORT.ssh);
+  const [portTouched, setPortTouched] = useState(!!initial && initial.port !== Number(DEFAULT_PORT[initial.protocol ?? "ssh"]));
+  const [auth, setAuth] = useState<CredentialAuth>(initial?.auth ?? "password");
   const [password, setPassword] = useState("");
   const [key, setKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
-  const [scope, setScope] = useState("");
-  const [become, setBecome] = useState<CredentialBecome>("sudo");
-  const [dbName, setDbName] = useState("");
-  const [platform, setPlatform] = useState<NetdevPlatform>("auto");
-  const [snmpVersion, setSnmpVersion] = useState<"2c" | "3">("3");
-  const [authProto, setAuthProto] = useState("sha");
-  const [privProto, setPrivProto] = useState("aes");
+  const [scope, setScope] = useState(initial?.targets.join("\n") ?? "");
+  const [become, setBecome] = useState<CredentialBecome>(initial ? (initial.become === "none" ? "none" : "sudo") : "sudo");
+  const [dbName, setDbName] = useState(initial?.db_name ?? "");
+  const [platform, setPlatform] = useState<NetdevPlatform>((o.platform as NetdevPlatform) ?? "auto");
+  const [snmpVersion, setSnmpVersion] = useState<"2c" | "3">(o.snmp_version === "2c" ? "2c" : "3");
+  const [authProto, setAuthProto] = useState(o.auth_proto ?? "sha");
+  const [privProto, setPrivProto] = useState(o.priv_proto ?? "aes");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -182,6 +223,9 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
   const needPriv = isSnmp && !isV2c && privProto !== "none";
   // WinRM (NTLM) и СУБД входят только по паролю, SNMP — community или ключами USM.
   const effectiveAuth: CredentialAuth = isWinrm || isSnmp || isDb ? "password" : auth;
+  // Правка без смены способа входа: сохранённый секрет остаётся, вводить не обязательно.
+  const keepSecret =
+    !!initial && initial.protocol === protocol && initial.auth === effectiveAuth && (!isSnmp || (o.snmp_version ?? "3") === snmpVersion);
 
   const switchProtocol = (p: CredentialProtocol) => {
     setProtocol(p);
@@ -194,8 +238,10 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
   const portOk = Number.isInteger(portNum) && portNum > 0 && portNum < 65536;
   const secretOk =
     effectiveAuth === "password"
-      ? password.length > 0 && (!isSnmp || isV2c || password.length >= 8) && (!needPriv || passphrase.length >= 8)
-      : key.trim().length > 0;
+      ? (keepSecret ? true : password.length > 0) &&
+        (!isSnmp || isV2c || password.length === 0 || password.length >= 8) &&
+        (!needPriv || (keepSecret && passphrase.length === 0) || passphrase.length >= 8)
+      : keepSecret || key.trim().length > 0;
   const userOk = isV2c || username.trim().length > 0;
   const dbOk = protocol !== "oracle" || dbName.trim().length > 0;   // Oracle: имя сервиса обязательно
   const canSubmit = name.trim() && userOk && portOk && secretOk && dbOk && parsed.invalid.length === 0 && !busy;
@@ -212,7 +258,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
     setBusy(true);
     setError(null);
     try {
-      await api.createCredential(engagementId, {
+      const data = {
         name: name.trim(),
         username: isV2c ? "community" : username.trim(),
         port: portNum,
@@ -224,13 +270,16 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
         ...(isSnmp
           ? { snmp_version: snmpVersion, ...(isV2c ? {} : { snmp_auth_proto: authProto, snmp_priv_proto: privProto }) }
           : {}),
+        // Пустые секреты при правке не отправляются — сервер оставит сохранённые.
         ...(effectiveAuth === "password"
-          ? { password, ...(needPriv ? { passphrase } : {}) }
-          : { private_key: key, passphrase: passphrase || undefined }),
+          ? { ...(password ? { password } : {}), ...(needPriv && passphrase ? { passphrase } : {}) }
+          : { ...(key.trim() ? { private_key: key } : {}), ...(passphrase ? { passphrase } : {}) }),
         targets: parsed.targets,
         // sudo — только для SSH-аудита конфигураций серверов; WinRM, сетевые устройства и СУБД права не повышают.
         become: protocol === "ssh" ? become : "none",
-      });
+      } as const;
+      if (initial) await api.updateCredential(engagementId, initial.id, data);
+      else await api.createCredential(engagementId, data);
       onDone();
     } catch (err) {
       setError((err as Error).message);
@@ -244,7 +293,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
 
   return (
     <Modal
-      title="Новая учётная запись актива"
+      title={initial ? `Изменить учётную запись «${initial.name}»` : "Новая учётная запись актива"}
       onClose={onClose}
       footer={
         <>
@@ -258,6 +307,13 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
       }
     >
       <form id="credential-form" className="stack" style={{ gap: 16 }} onSubmit={submit} autoComplete="off">
+        {initial && (
+          <small className="muted">
+            {keepSecret
+              ? "Пароль, ключ и community не показываются. Оставьте поле секрета пустым — сохранится прежний; введите новый, чтобы заменить."
+              : "Способ входа изменён — введите пароль или ключ заново."}
+          </small>
+        )}
         <label className="field">
           <span>Название</span>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Сервисная учётка серверов ДМЗ" maxLength={128} />
@@ -438,13 +494,27 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
           <>
             <label className="field">
               <span>{passwordLabel}</span>
-              <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+              <input
+                className="input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                placeholder={keepSecret ? KEEP_HINT : undefined}
+              />
               {isSnmp && !isV2c && <small>Не короче 8 символов.</small>}
             </label>
             {needPriv && (
               <label className="field">
                 <span>Ключ шифрования (priv)</span>
-                <input className="input" type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} autoComplete="new-password" />
+                <input
+                  className="input"
+                  type="password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  autoComplete="new-password"
+                  placeholder={keepSecret ? KEEP_HINT : undefined}
+                />
                 <small>Не короче 8 символов.</small>
               </label>
             )}
@@ -457,7 +527,7 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
                 className="textarea mono"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
-                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                placeholder={keepSecret ? `${KEEP_HINT}${initial?.key_fingerprint ? ` (${initial.key_fingerprint})` : ""}` : "-----BEGIN OPENSSH PRIVATE KEY-----"}
                 spellCheck={false}
                 style={{ fontSize: 12 }}
               />
@@ -470,7 +540,14 @@ function CredentialForm({ engagementId, onClose, onDone }: { engagementId: numbe
             </label>
             <label className="field">
               <span>Парольная фраза ключа (если есть)</span>
-              <input className="input" type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} autoComplete="new-password" />
+              <input
+                className="input"
+                type="password"
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.target.value)}
+                autoComplete="new-password"
+                placeholder={keepSecret ? KEEP_HINT : undefined}
+              />
             </label>
           </>
         )}

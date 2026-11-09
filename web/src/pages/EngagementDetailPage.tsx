@@ -4,8 +4,6 @@ import { ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 import { ApiError, api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
-import { CredentialsCard } from "../components/CredentialsCard";
-import { CredSetsCard } from "../components/CredSetsCard";
 import { Empty, ErrorAlert, Loading, Modal } from "../components/ui";
 import { fmtDate } from "../lib/format";
 import { compactAddresses, isIpOrCidr, parseTargets, specSize } from "../lib/targets";
@@ -250,10 +248,6 @@ export function EngagementDetailPage() {
           </div>
         )}
       </section>
-
-      {has("host_credentials") && <CredentialsCard engagementId={e.id} />}
-
-      {has("cred_audit") && <CredSetsCard engagementId={e.id} />}
 
       {editing && (
         <EngagementForm

@@ -422,7 +422,7 @@ export function StartRunModal({
                 <ErrorAlert error={credSets.error} onRetry={credSets.reload} />
               ) : (credSets.data ?? []).length === 0 ? (
                 <small style={{ color: "var(--warn)" }}>
-                  У проекта нет наборов проверки учёток — добавьте их на странице проекта в разделе «Наборы проверки учёток». Без набора модуль
+                  У проекта нет наборов проверки учёток — добавьте их во вкладке «Учётные записи» (раздел «Наборы проверки учёток»). Без набора модуль
                   запишет осознанный пропуск и не сделает ни одной попытки.
                 </small>
               ) : (
@@ -457,7 +457,7 @@ export function StartRunModal({
               <ErrorAlert error={creds.error} onRetry={creds.reload} />
             ) : (creds.data ?? []).length === 0 ? (
               <small style={{ color: "var(--warn)" }}>
-                У проекта нет учётных записей — добавьте их на странице проекта в разделе «Учётные записи активов».
+                У проекта нет учётных записей — добавьте их во вкладке «Учётные записи».
               </small>
             ) : (
               <div className="grid-2">

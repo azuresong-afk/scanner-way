@@ -15,7 +15,7 @@ from scanner.api.rbac import Perm
 from scanner.api.routes_engagements import get_engagement
 from scanner.api.schemas import CredentialIn, CredentialOut
 from scanner.core import repository as repo
-from scanner.core.credentials import CredentialError
+from scanner.core.credentials import CredentialError, VaultUnavailable
 from scanner.core.db import HostCredentialRow
 
 router = APIRouter(prefix="/engagements", tags=["credentials"])
@@ -69,6 +69,57 @@ def create_credential(engagement_id: int, body: CredentialIn, request: Request,
                           "protocol": row.protocol, "options": dict(row.options or {}),
                           "db_name": row.db_name,
                           "targets": list(row.targets or []),
+                          "key_fingerprint": row.key_fingerprint})
+    return row
+
+
+@router.put("/{engagement_id}/credentials/{credential_id}", response_model=CredentialOut)
+def update_credential(engagement_id: int, credential_id: int, body: CredentialIn,
+                      request: Request, user: CredUser, session: SessionDep,
+                      audit: AuditDep) -> HostCredentialRow:
+    """Правка учётки. Пароль, ключ и парольную фразу можно не передавать —
+    останутся прежние (пока не меняется способ входа)."""
+    row = session.get(HostCredentialRow, credential_id)
+    if row is None or row.engagement_id != engagement_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "credential not found")
+    vault = request.app.state.runs.vault
+    if vault is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "credentials_key_missing",
+            "message": "не задан ключ шифрования учётных записей: "
+                       "SCANNER_CREDENTIALS_KEY (или SCANNER_API_SECRET) в .env"})
+    before = {"name": row.name, "user": row.username, "port": row.port,
+              "auth": row.auth, "become": row.become, "protocol": row.protocol,
+              "options": dict(row.options or {}), "db_name": row.db_name,
+              "targets": list(row.targets or [])}
+    try:
+        result = repo.update_host_credential(
+            session, vault, row, name=body.name, auth=body.auth,
+            username=body.login(), port=body.port, targets=body.targets,
+            password=body.password if body.auth == "password" else None,
+            private_key=body.private_key if body.auth == "key" else None,
+            passphrase=(body.passphrase
+                        if body.auth == "key" or body.protocol == "snmp" else None),
+            become=body.become, protocol=body.protocol,
+            options=body.options(), db_name=body.db_name)
+    except (CredentialError, VaultUnavailable) as e:
+        session.rollback()
+        audit.record(subject=user.subject, action="credential_update",
+                     target=f"engagement:{engagement_id}", result="rejected",
+                     details={"credential_id": credential_id, "name": body.name,
+                              "reason": str(e)[:300]})
+        raise HTTPException(422, str(e)) from e
+    session.commit()
+    session.refresh(row)
+    after = {"name": row.name, "user": row.username, "port": row.port,
+             "auth": row.auth, "become": row.become, "protocol": row.protocol,
+             "options": dict(row.options or {}), "db_name": row.db_name,
+             "targets": list(row.targets or [])}
+    audit.record(subject=user.subject, action="credential_update",
+                 target=f"engagement:{engagement_id}", result="ok",
+                 details={"credential_id": row.id, "name": row.name,
+                          "changed": sorted(k for k in after if after[k] != before[k]),
+                          "secret_changed": result["secret_changed"],
                           "key_fingerprint": row.key_fingerprint})
     return row
 
