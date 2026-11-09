@@ -385,6 +385,9 @@ export const api = {
     json<TrendRunOut[]>(`/engagements/${engagementId}/trend${listQuery(params)}`),
   /** План исправлений: находки, собранные в действия с командами по ОС хостов. */
   fixes: (runId: number, params: FixQuery = {}) => json<FixPlanOut>(`/runs/${runId}/fixes${listQuery(params)}`),
+  /** План исправлений актива по последним известным данным хоста (без выбранного прогона). */
+  hostFixes: (engagementId: number, host: string, params: FixQuery = {}) =>
+    json<FixPlanOut>(`/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/fixes${listQuery(params)}`),
   finding: (id: number) => json<FindingOut>(`/findings/${id}`),
   /** Отметить находку хоста как ложное срабатывание (действует и в следующих прогонах). */
   markFalsePositive: (findingId: number, reason: string | null) =>

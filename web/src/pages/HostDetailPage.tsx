@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Pencil, Wifi } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -9,6 +9,7 @@ import { AssetModal, CriticalityBadge } from "../components/AssetEditing";
 import { SeverityBars } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { FindingsTable } from "../components/FindingsTable";
+import { FixPlan } from "../components/FixPlan";
 import { RunPicker } from "../components/RunPicker";
 import { ServicesTable } from "../components/ServicesTable";
 import { SoftwareTable } from "../components/SoftwareTable";
@@ -19,7 +20,7 @@ import { byHost, emptyCounts, isFalsePositive, isIssue, replaceFinding } from ".
 import { useAsync } from "../lib/useAsync";
 import { useRunSelection } from "../lib/useRunSelection";
 
-type VulnView = "software" | "list";
+type VulnView = "fix" | "software" | "list";
 
 const SOURCE_LABEL: Record<string, string> = { manual: "", discovery: "прогоном", netscan: "сканированием портов" };
 
@@ -33,6 +34,7 @@ interface HostData {
   moduleRuns: Record<string, number> | null;
 }
 const VIEWS: { id: VulnView; label: string }[] = [
+  { id: "fix", label: "Что исправить" },
   { id: "software", label: "По ПО" },
   { id: "list", label: "Списком" },
 ];
@@ -40,9 +42,10 @@ const VIEW_KEY = "scanner.host.vulnView";
 
 function loadView(): VulnView {
   try {
-    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "software";
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === "list" || v === "software" ? v : "fix";
   } catch {
-    return "software";
+    return "fix";
   }
 }
 
@@ -63,6 +66,7 @@ export function HostDetailPage() {
   const host = decodeURIComponent(useParams().host ?? "");
   const { runs, run, latest, setRun, loading, error } = useRunSelection({ latest: true });
   const { current } = useEngagement();
+  const navigate = useNavigate();
   const eid = current?.id;
   const data = useAsync(
     async (): Promise<HostData> => {
@@ -157,7 +161,7 @@ export function HostDetailPage() {
           </section>
           <section className="card" style={{ overflow: "hidden" }}>
             <div className="card-head">
-              <h2>Уязвимости хоста</h2>
+              <h2>{view === "fix" ? "Что исправить на хосте" : "Уязвимости хоста"}</h2>
               <div className="seg seg-sm" role="radiogroup" aria-label="Вид списка уязвимостей">
                 {VIEWS.map((v) => (
                   <button
@@ -175,7 +179,15 @@ export function HostDetailPage() {
                 ))}
               </div>
             </div>
-            {view === "software" ? (
+            {view === "fix" ? (
+              <FixPlan
+                key={run?.id ?? "latest"}
+                runId={run?.id ?? null}
+                engagementId={eid}
+                host={host}
+                onHost={(h) => navigate(`/hosts/${encodeURIComponent(h)}${run ? `?run=${run.id}` : ""}`)}
+              />
+            ) : view === "software" ? (
               <SoftwareTable
                 findings={softwareFindings}
                 services={row.services}
