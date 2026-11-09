@@ -50,6 +50,11 @@ HEARTBEAT_SECONDS = 10.0
 AUDIT_FLUSH_RECORDS = 200
 TEMPLATES_EVERY = 24 * 3600.0
 TOOLS = ("nmap", "nuclei", "oscap", "lynis", "snmpget")
+# Хелсчек узла: агент отмечает в файле последнюю удачную связь с центром,
+# `scanner node health` (HEALTHCHECK контейнера) проверяет, что она свежая.
+HEALTH_FILE = "/var/lib/scanner-node/health.json"
+HEALTH_MAX_AGE = 600.0           # дольше без связи — контейнер «unhealthy»
+HEALTH_WRITE_EVERY = 30.0
 
 
 class NodeConfigError(ValueError):
@@ -185,6 +190,7 @@ class NodeConfig:
     sync_templates: bool = True
     allow_http: bool = False
     name: str | None = None
+    health_file: Path | None = None
     extra: dict = field(default_factory=dict)
 
 
@@ -220,7 +226,58 @@ def config_from_env(env: Mapping[str, str] | None = None) -> NodeConfig:
                       spool=Path(spool) if spool else None,
                       sync_templates=(e.get("SCANNER_NODE_TEMPLATES_FROM_CENTER", "1")
                                       not in ("0", "false", "no", "off")),
-                      allow_http=e.get("SCANNER_NODE_ALLOW_HTTP", "0") in ("1", "true", "yes"))
+                      allow_http=e.get("SCANNER_NODE_ALLOW_HTTP", "0") in ("1", "true", "yes"),
+                      health_file=_health_path(e))
+
+
+def _health_path(e: Mapping[str, str]) -> Path | None:
+    v = e.get("SCANNER_NODE_HEALTH_FILE", HEALTH_FILE)
+    return Path(v) if v else None
+
+
+def write_health(path: Path | None, *, ok: bool, error: str | None = None,
+                 now: float | None = None) -> None:
+    """Отметка состояния агента (атомарно; ошибка записи не мешает работе узла)."""
+    if path is None:
+        return
+    now = time.time() if now is None else now
+    try:
+        prev = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        prev = {}
+    data = {"updated_at": now,
+            "last_contact_at": now if ok else prev.get("last_contact_at"),
+            "last_error": None if ok else (error or "нет связи с центром")[:300],
+            "pid": os.getpid()}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except OSError as err:
+        log.debug("health file %s not written: %s", path, err)
+
+
+def check_health(path: Path | None, *, max_age: float = HEALTH_MAX_AGE,
+                 now: float | None = None) -> tuple[bool, str]:
+    """(в порядке ли агент, пояснение) — по файлу отметок write_health."""
+    if path is None:
+        return True, "файл состояния отключён (SCANNER_NODE_HEALTH_FILE пуст)"
+    now = time.time() if now is None else now
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False, "агент ещё ни разу не связался с центром"
+    except (OSError, ValueError) as e:
+        return False, f"файл состояния не читается: {e}"
+    last = data.get("last_contact_at")
+    if not last:
+        return False, f"связи с центром не было: {data.get('last_error') or '—'}"
+    age = now - float(last)
+    if age > max_age:
+        return False, (f"нет связи с центром {int(age // 60)} мин: "
+                       f"{data.get('last_error') or 'агент не отвечает'}")
+    return True, f"связь с центром {int(age)} с назад"
 
 
 def node_info(cfg: NodeConfig) -> dict:
@@ -241,6 +298,17 @@ class NodeAgent:
         self._registry = registry
         self._sleep = sleep
         self.node: dict = {}
+        self._health_ok: bool | None = None
+        self._health_at = 0.0
+
+    def mark_health(self, ok: bool, error: str | None = None) -> None:
+        """Отметить связь с центром в файле состояния (не чаще HEALTH_WRITE_EVERY,
+        кроме смены состояния)."""
+        now = time.monotonic()
+        if ok == self._health_ok and now - self._health_at < HEALTH_WRITE_EVERY:
+            return
+        self._health_ok, self._health_at = ok, now
+        write_health(self.cfg.health_file, ok=ok, error=error)
 
     @property
     def registry(self) -> Mapping[str, ModuleFactory]:
@@ -380,6 +448,7 @@ class NodeAgent:
             while not done.wait(self.cfg.heartbeat_seconds):
                 try:
                     res = self.client.heartbeat(run_id, latest["progress"]) or {}
+                    self.mark_health(True)
                     if res.get("stop"):
                         stop.set()
                 except NodeApiError as e:
@@ -443,11 +512,14 @@ class NodeAgent:
                 if self.cfg.sync_templates and time.monotonic() >= next_templates:
                     self.sync_templates()
                     next_templates = time.monotonic() + TEMPLATES_EVERY
-                if not self.run_once():
+                worked = self.run_once()
+                self.mark_health(True)
+                if not worked:
                     stop.wait(self.cfg.poll_seconds)
                 delay = self.cfg.poll_seconds
             except NodeApiError as e:
                 connected = False
+                self.mark_health(False, str(e))
                 if e.status == 401:
                     log.error("центр отклонил токен узла (неверный, перевыпущен или "
                               "узел отключён) — проверьте SCANNER_NODE_TOKEN")

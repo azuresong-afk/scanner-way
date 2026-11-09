@@ -936,7 +936,7 @@ export interface AssetFilters {
 }
 
 export type ChannelType = "smtp" | "telegram" | "syslog_cef" | "jira";
-export type NotifyEvent = "run_finished" | "new_critical" | "feed_stale";
+export type NotifyEvent = "run_finished" | "new_critical" | "feed_stale" | "system_health";
 
 export interface ChannelFilters {
   min_severity: Severity | null;
@@ -1332,4 +1332,31 @@ export interface ScanNodeUpdate {
   scope?: string[];
   allow_credentials?: boolean;
   enabled?: boolean;
+}
+
+// ---- Состояние сканера (хелсчек): GET /system/health ----
+export type HealthStatus = "ok" | "warn" | "error" | "unknown";
+
+export interface HealthItem {
+  id: string | number;
+  title: string;
+  status: HealthStatus;
+  [key: string]: unknown;
+}
+
+export interface HealthComponent {
+  id: string;
+  title: string;
+  status: HealthStatus;
+  summary: string;
+  hint: string | null;
+  items: HealthItem[];
+  details: Record<string, unknown>;
+}
+
+export interface SystemHealth {
+  status: HealthStatus;
+  status_title: string;
+  checked_at: string;
+  components: HealthComponent[];
 }

@@ -46,6 +46,15 @@ services:
     # сеть хоста: узел сканирует сегмент со своего адреса, без NAT Docker
     network_mode: host
     restart: unless-stopped
+    # Хелсчек агента: последняя удачная связь с центром не старше 10 минут
+    # (агент отмечает её в /var/lib/scanner-node/health.json). Состояние —
+    # docker compose -f docker-compose.node.yml ps; в центре — «Сканеры» и «Состояние».
+    healthcheck:
+      test: ["CMD", "scanner", "node", "health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 2m
     logging: *default-logging
 
 volumes:

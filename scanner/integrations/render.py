@@ -8,6 +8,7 @@ from scanner.integrations.events import (
     RUN_FINISHED,
     SEVERITIES,
     STATUS_TITLES,
+    SYSTEM_HEALTH,
     Event,
     Item,
 )
@@ -18,6 +19,9 @@ PRIORITY_RU = {"critical": "критический", "high": "высокий", "
                "low": "низкий"}
 SEVERITY_ONE = {"critical": "критическая", "high": "высокая", "medium": "средняя",
                 "low": "низкая", "info": "информационная"}
+
+
+HEALTH_RU = {"ok": "снова в порядке", "warn": "требует внимания", "error": "не работает"}
 
 
 def _clean(text: str, limit: int = 200) -> str:
@@ -45,6 +49,9 @@ def subject_of(ev: Event) -> str:
         return f"{what}: {STATUS_TITLES.get(ev.run_status or '', 'завершён')}{eng}"
     if ev.kind == NEW_CRITICAL:
         return f"Новых критичных находок: {len(ev.items) + ev.items_omitted}{eng}"
+    if ev.kind == SYSTEM_HEALTH:
+        word = HEALTH_RU.get(ev.health_status or "", ev.health_status or "")
+        return _clean(f"{ev.title}: {word}", 150)
     return _clean(ev.title, 150)
 
 
@@ -55,6 +62,13 @@ def render_text(ev: Event) -> tuple[str, str]:
         lines.append(f"Справочник: {ev.title}")
         if ev.message:
             lines.append(_clean(ev.message, 500))
+    elif ev.kind == SYSTEM_HEALTH:
+        lines.append(f"Компонент: {ev.title} — "
+                     f"{HEALTH_RU.get(ev.health_status or '', ev.health_status)}")
+        if ev.message:
+            lines.append(_clean(ev.message, 500))
+        if ev.hint and ev.health_status != "ok":
+            lines.append(f"Что сделать: {_clean(ev.hint, 500)}")
     elif ev.kind in (RUN_FINISHED, NEW_CRITICAL):
         if ev.engagement_name:
             lines.append(f"Договор: {ev.engagement_name}")
@@ -86,5 +100,6 @@ def render_text(ev: Event) -> tuple[str, str]:
     elif ev.message:
         lines.append(ev.message)
     if ev.link:
-        lines += ["", f"Отчёт: {ev.link}"]
+        label = "Отчёт" if ev.kind in (RUN_FINISHED, NEW_CRITICAL) else "Подробнее"
+        lines += ["", f"{label}: {ev.link}"]
     return "[Scanner] " + subject_of(ev), "\n".join(lines)

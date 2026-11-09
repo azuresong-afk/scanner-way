@@ -31,6 +31,7 @@ from scanner.integrations.channels import get_channel
 from scanner.integrations.events import (
     FEED_STALE,
     NEW_CRITICAL,
+    SYSTEM_HEALTH,
     TEST,
     Event,
     Filters,
@@ -43,6 +44,7 @@ MAX_ATTEMPTS = 5
 BACKOFF_SECONDS = (60, 300, 900, 3600)       # пауза после 1-й, 2-й, … неудачи
 LEASE = timedelta(minutes=10)
 FEED_DEDUP_WINDOW = timedelta(hours=24)       # одно «справочник не обновился» в сутки
+HEALTH_DEDUP_WINDOW = timedelta(hours=6)      # дребезг состояния компонента
 ERROR_LIMIT = 300
 SUBJECT = "scanner:notifier"
 
@@ -125,6 +127,17 @@ class Dispatcher:
             self.emit(Event(kind=FEED_STALE, title=title, message=message, source=source))
         except Exception:
             log.exception("feed_stale notification failed")
+
+    def notify_system_health(self, component: str, title: str, status: str, message: str,
+                             hint: str | None = None) -> None:
+        """Компонент сканера сменил состояние (монитор scanner.core.syshealth)."""
+        try:
+            self.emit(Event(kind=SYSTEM_HEALTH, title=title, message=message,
+                            source=component, health_status=status, hint=hint,
+                            link=(self.public_url.rstrip("/") + "/health")
+                            if self.public_url else None))
+        except Exception:
+            log.exception("system_health notification failed")
 
     def emit(self, event: Event) -> list[int]:
         """Раскладывает событие по каналам. Возвращает id созданных доставок."""
@@ -271,4 +284,7 @@ class Dispatcher:
 def _with_window(d: Delivery, ev: Event) -> Delivery:
     if ev.kind == FEED_STALE and d.dedup_key is None:
         return Delivery(d.event, dedup_key=f"feed:{ev.source}", dedup_window=FEED_DEDUP_WINDOW)
+    if ev.kind == SYSTEM_HEALTH and d.dedup_key is None:
+        return Delivery(d.event, dedup_key=f"health:{ev.source}:{ev.health_status}",
+                        dedup_window=HEALTH_DEDUP_WINDOW)
     return d

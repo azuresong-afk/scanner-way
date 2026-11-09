@@ -33,6 +33,7 @@ from scanner.api import (
     routes_engagements,
     routes_feeds,
     routes_findings,
+    routes_health,
     routes_integrations,
     routes_mfa,
     routes_nodes,
@@ -117,6 +118,15 @@ def _on_run_finished(session_factory, notifier):
     return hook
 
 
+def _threads(app: FastAPI, *, with_health: bool = False) -> dict[str, bool]:
+    """Живы ли фоновые потоки API (для /health/ready и страницы «Состояние»)."""
+    parts = [("runs", app.state.runs), ("scheduler", app.state.scheduler),
+             ("feeds", app.state.feed_scheduler), ("notifications", app.state.notifier)]
+    if with_health:
+        parts.append(("health", app.state.health))
+    return {name: _alive(obj) for name, obj in parts}
+
+
 def _alive(obj) -> bool:
     """Фоновый поток компонента жив (или выключен настройкой tick=0)."""
     if getattr(obj, "tick_seconds", getattr(obj, "heartbeat_seconds", 1)) <= 0:
@@ -168,7 +178,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         app.state.scheduler.start()
         app.state.feed_scheduler.start()
         app.state.notifier.start()
+        app.state.health.start()
         yield
+        app.state.health.stop()
         app.state.scheduler.stop()
         app.state.feed_scheduler.stop()
         app.state.notifier.stop()
@@ -216,6 +228,19 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         tick_seconds=settings.feeds_tick_seconds,
         notifier=app.state.notifier.notify_feed_stale)
     app.state.default_timezone = settings.timezone
+    # Монитор состояния самого сканера: страница «Состояние», /health/status и
+    # уведомления system_health о сменах состояния компонентов.
+    from scanner.core.syshealth import HealthContext, HealthMonitor, default_disk_paths
+    disk_paths = [p.strip() for p in settings.health_disk_paths.split(",") if p.strip()]
+    app.state.health = HealthMonitor(
+        HealthContext(sessions=session_factory,
+                      feed_sources=app.state.feed_scheduler.sources,
+                      threads=lambda: _threads(app, with_health=True),
+                      disk_paths=disk_paths or default_disk_paths(),
+                      check_migrations=settings.ready_check_migrations,
+                      run_stale_seconds=settings.run_stale_seconds),
+        tick_seconds=settings.health_tick_seconds,
+        notify=app.state.notifier.notify_system_health)
     # секрет ключей центра для автономных узлов (только заданный в окружении)
     from scanner.nodes.offline_center import center_material
     app.state.offline_material = center_material(settings)
@@ -253,13 +278,20 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None,
         (прогоны, расписания, справочники, уведомления) работают. 503 — нет."""
         db = check_database(session_factory.kw["bind"],
                             check_migrations=settings.ready_check_migrations)
-        threads = {name: _alive(obj) for name, obj in (
-            ("runs", app.state.runs), ("scheduler", app.state.scheduler),
-            ("feeds", app.state.feed_scheduler), ("notifications", app.state.notifier))}
+        threads = _threads(app)
         ok = is_ready(db, threads)
         return JSONResponse({"status": "ok" if ok else "unavailable", **db,
                              "threads": threads}, status_code=200 if ok else 503)
 
+    @app.get("/health/status", tags=["health"])
+    def health_status() -> JSONResponse:
+        """Состояние компонентов сканера для внешнего мониторинга (Zabbix и т. п.):
+        только статусы ok/warn/error/unknown, без подробностей. 503 — есть error."""
+        from scanner.core.syshealth import ERROR, brief
+        rep = brief(app.state.health.report())
+        return JSONResponse(rep, status_code=503 if rep["status"] == ERROR else 200)
+
+    app.include_router(routes_health.router)
     app.include_router(routes_auth.router)
     app.include_router(routes_mfa.router)
     app.include_router(routes_engagements.router)

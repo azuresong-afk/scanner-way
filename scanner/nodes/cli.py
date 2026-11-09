@@ -21,6 +21,11 @@ def add_node_commands(sub: Any) -> argparse.ArgumentParser:
     nrun.set_defaults(handler=cmd_node_run, no_db=True)
     ncheck = nsub.add_parser("check", help="проверить настройки узла и связь с центром")
     ncheck.set_defaults(handler=cmd_node_check, no_db=True)
+    nhealth = nsub.add_parser("health", help="хелсчек агента (HEALTHCHECK контейнера): "
+                                             "код 1 — давно нет связи с центром")
+    nhealth.add_argument("--max-age", type=float, default=None,
+                         help="сколько секунд без связи считать нормой (по умолчанию 600)")
+    nhealth.set_defaults(handler=cmd_node_health, no_db=True)
     node.set_defaults(node_subparsers=nsub)
     # автономный режим: node init / show / inspect / run-job, offline center-key
     from scanner.nodes.offline_cli import add_offline_commands
@@ -63,6 +68,17 @@ def cmd_node_check(args: argparse.Namespace, env: Any) -> int:
         print("ВНИМАНИЕ: эти сети узла в центре вне локального allowlist и проверяться "
               f"не будут: {', '.join(outside)}")
     return 0
+
+
+def cmd_node_health(args: argparse.Namespace, env: Any) -> int:
+    """Без сети и без токена: только файл отметок агента (SCANNER_NODE_HEALTH_FILE)."""
+    import os
+
+    from scanner.nodes.agent import HEALTH_MAX_AGE, _health_path, check_health
+    ok, msg = check_health(_health_path(os.environ),
+                           max_age=args.max_age or HEALTH_MAX_AGE)
+    print(("OK: " if ok else "FAIL: ") + msg)
+    return 0 if ok else 1
 
 
 def cmd_node_run(args: argparse.Namespace, env: Any) -> int:

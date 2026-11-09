@@ -154,6 +154,8 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 |---|---|---|
 | **Служебные** | | |
 | `GET /health`, `GET /health/ready` | — | живость и готовность |
+| `GET /health/status` | — | статусы компонентов сканера без подробностей (503 — есть сбой) |
+| `GET /system/health?refresh=` | вход | состояние сканера по компонентам: статус, сводка, подсказка, подробности |
 | `GET /auth/config` | — | включены ли вход через AD (`ldap`) и режим 2FA (`mfa`: `off`/`optional`/`required`) |
 | `POST /auth/token` | — | вход: токен доступа или, если нужна 2FA, `mfa_required` + `mfa_token` (5 минут; `mfa_enroll` — 2FA ещё не настроена) |
 | `POST /auth/mfa` | `mfa_token` | второй шаг: код из приложения или код восстановления → токен доступа |
@@ -509,6 +511,8 @@ sync-msrc`): продукты SQL Server в него раньше не попа�
 | `SCANNER_API_SCHEDULER_TICK_SECONDS` | 30 | проверка расписаний; 0 — выключить |
 | `SCANNER_API_TIMEZONE` | `Europe/Moscow` | пояс расписаний по умолчанию |
 | `SCANNER_API_FEEDS_TICK_SECONDS` | 60 | проверка расписаний справочников; 0 — выключить |
+| `SCANNER_API_HEALTH_TICK_SECONDS` | 300 | монитор состояния сканера и уведомления о сменах состояния; 0 — выключен |
+| `SCANNER_API_HEALTH_DISK_PATHS` | `/data` | каталоги для проверки свободного места |
 | `SCANNER_API_NOTIFY_TICK_SECONDS` | 30 | очередь повторов уведомлений; 0 — без повторов |
 | `SCANNER_API_PORTSCAN_PER_MINUTE`, `…_MAX_ACTIVE`, `…_MAX_TARGETS`, `…_WORKERS` | 6, 2, 1024, 2 | лимиты сетевого поиска |
 | `SCANNER_API_REACHABILITY_PER_MINUTE` | 10 | лимит быстрой проверки доступности |

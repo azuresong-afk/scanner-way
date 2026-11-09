@@ -806,3 +806,28 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
   font-family: var(--mono); font-size: 12.5px; background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 8px; padding: 10px 12px; margin: 4px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere;
 }
+
+/* Состояние сканера: плашка в шапке (только при проблемах) и страница «Состояние». */
+.health-chip {
+  display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; min-width: 0; max-width: 420px;
+}
+.health-chip:hover { text-decoration: none; filter: brightness(1.05); }
+.health-chip.warn { background: var(--warn-soft); color: var(--warn); }
+.health-chip.error { background: var(--danger-soft); color: var(--danger); }
+.health-chip-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: currentColor; }
+.health-chip.error .health-chip-dot { animation: run-chip-pulse 1.6s ease-in-out infinite; }
+.health-chip-what { color: var(--text-2); font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: var(--s3); align-items: start; margin-top: var(--s3); }
+.health-card { padding: var(--s3); display: flex; flex-direction: column; gap: 8px; border-left: 3px solid var(--border); }
+.health-card[data-status="ok"] { border-left-color: var(--ok); }
+.health-card[data-status="warn"] { border-left-color: var(--warn); }
+.health-card[data-status="error"] { border-left-color: var(--danger); }
+.health-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.health-card-head h3 { margin: 0; font-size: 15px; }
+.health-summary { margin: 0; color: var(--text); }
+.health-hint { margin: 0; color: var(--text-2); font-size: 13px; }
+.health-card .btn-ghost { align-self: flex-start; padding-left: 0; }
+.health-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.health-items li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.spin { animation: spin 0.8s linear infinite; }

@@ -15,11 +15,15 @@ from scanner.core.models import Severity
 RUN_FINISHED = "run_finished"
 NEW_CRITICAL = "new_critical"
 FEED_STALE = "feed_stale"
+SYSTEM_HEALTH = "system_health"
 TEST = "test"
-EVENTS = (RUN_FINISHED, NEW_CRITICAL, FEED_STALE)
+EVENTS = (RUN_FINISHED, NEW_CRITICAL, FEED_STALE, SYSTEM_HEALTH)
+# События о самом сканере: маршрутизация по договорам/активам к ним не применяется.
+SERVICE_EVENTS = (FEED_STALE, SYSTEM_HEALTH)
 EVENT_TITLES = {RUN_FINISHED: "Прогон завершён",
                 NEW_CRITICAL: "Новые критичные находки",
                 FEED_STALE: "Справочник не обновился",
+                SYSTEM_HEALTH: "Состояние сканера",
                 TEST: "Тестовое уведомление"}
 
 SEVERITIES = tuple(str(s) for s in Severity)                  # info … critical
@@ -75,8 +79,10 @@ class Event:
     run_name: str | None = None
     run_status: str | None = None
     link: str | None = None
-    message: str | None = None                 # feed_stale: что случилось
-    source: str | None = None                  # feed_stale: идентификатор источника
+    message: str | None = None                 # feed_stale/system_health: что случилось
+    source: str | None = None                  # feed_stale: источник; system_health: компонент
+    health_status: str | None = None           # system_health: ok | warn | error
+    hint: str | None = None                    # system_health: что сделать
     hosts: list[HostInfo] = field(default_factory=list)
     items: list[Item] = field(default_factory=list)
     fixed_total: int | None = None
@@ -179,7 +185,7 @@ def route(event: Event, subscribed: list[str], filters: Filters) -> Event | None
     """Событие для конкретного канала с учётом подписки и фильтров; None — не слать."""
     if event.kind != TEST and event.kind not in subscribed:
         return None
-    if event.kind == FEED_STALE or event.kind == TEST:
+    if event.kind in SERVICE_EVENTS or event.kind == TEST:
         return event
     if filters.engagements and event.engagement_id not in filters.engagements:
         return None

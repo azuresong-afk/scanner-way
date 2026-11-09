@@ -21,6 +21,7 @@ import type {
   ChannelIn,
   ChannelOut,
   ScanNode,
+  SystemHealth,
   ScanNodeCreated,
   ScanNodeIn,
   ScanNodeUpdate,
@@ -443,6 +444,9 @@ export const api = {
     const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}${cmp}${grp}${plan}${cmpl}`);
     return res.blob();
   },
+
+  /** Состояние самого сканера; refresh — проверить заново, минуя кэш сервера. */
+  systemHealth: (refresh = false) => json<SystemHealth>(`/system/health${refresh ? "?refresh=true" : ""}`),
 
   audit: (params: { limit?: number; before_id?: number } & AuditFilters = {}) =>
     json<AuditOut[]>(`/audit${auditQuery(params)}`),
