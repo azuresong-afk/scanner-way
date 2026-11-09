@@ -97,7 +97,10 @@ cp .env.example .env
 | `NUCLEI_TEMPLATES_DIR` | `$HOME/nuclei-templates` | каталог шаблонов Nuclei (для подсчёта шаблонов после обновления) |
 | `ADVISORY_RELEASES` | `debian:bullseye,debian:bookworm,ubuntu:focal,ubuntu:jammy,ubuntu:noble,rhel:8,rhel:9,alt:p10` | выпуски ОС, для которых загружаются бюллетени дистрибутивов (учёт бэкпортов, см. раздел 7). Оставьте только те, что есть у заказчика: файлы большие |
 | `ADVISORY_DIR` | `/data/advisories` | каталог файлов бюллетеней (`./data/advisories` на хосте); файл здесь главнее адреса — так работает закрытый контур |
-| `ADVISORY_URL_<СЕМЕЙСТВО>` | пусто | свой адрес выгрузки семейства (`DEBIAN`, `UBUNTU`, `RHEL`, `ALT`, `ASTRA`, `REDOS`, `ALPINE`), `{release}` подставляется, несколько адресов — через пробел. Пусто — адрес вендора (у Astra Linux — каталог al-oval, файл выпуска находится по оглавлению) |
+| `ADVISORY_URL_<СЕМЕЙСТВО>` | пусто | свой адрес выгрузки семейства (`DEBIAN`, `UBUNTU`, `RHEL`, `ALT`, `ASTRA`, `REDOS`, `ALPINE`), `{release}` подставляется, несколько адресов — через пробел (данные из всех), запасные варианты — через ` \| ` (берётся первый, что скачался). Пусто — адрес вендора (у Astra Linux — каталог al-oval, файл выпуска находится по оглавлению; у РЕД ОС — файл выпуска, запасной — общий `redos.xml`) |
+| `SCANNER_CA_DIR` | `/data/certs` | доп. корневые сертификаты (`.crt`/`.pem`/`.cer`, PEM или DER) для скачивания справочников (`./data/certs` на хосте). Нужен, если сайт выдаёт сертификат российского УЦ (Russian Trusted Root CA Минцифры), — иначе загрузка падает с ошибкой сертификата |
+| `SCANNER_HTTP_USER_AGENT` | `Mozilla/5.0 … scanner-way-feeds/1.0` | User-Agent при скачивании справочников; менять, только если сайт вендора отклоняет запросы (HTTP 403) |
+| `HTTPS_PROXY` / `NO_PROXY` | пусто | прокси для скачивания справочников, если стенд выходит в интернет только через него |
 | `ADVISORY_ON_DEMAND` | `auto` | подгрузка бюллетеней выпусков ОС, встреченных на хостах, прямо в прогоне. `auto` — файл из `ADVISORY_DIR` всегда, из интернета — только если в «Справочниках» включено автообновление «Бюллетени дистрибутивов»; `1` — всегда; `0` — выключено |
 | `SCANNER_API_FEEDS_TICK_SECONDS` | `60` | как часто планировщик справочников проверяет расписание; `0` — выключить автообновление |
 | `DEFAULT_RATE_PROFILE` | `gentle` | профиль нагрузки по умолчанию |
@@ -427,7 +430,7 @@ docker compose exec app scanner feeds sync-nvd --file /data/nvdcve-2.0-2024.json
 | `rhel` | OVAL v2 Red Hat; им же сверяются CentOS, Rocky, AlmaLinux, Oracle Linux, МСВСфера | `8`, `9` |
 | `alt` | OVAL errata ALT (zip) | `p10`, `p11` |
 | `astra` | OVAL вендора из каталога [al-oval](https://dl.astralinux.ru/ui/native/al-oval/): сканер читает оглавление Artifactory и берёт файл(ы) выпуска (`1.7` в имени/пути) | `1.7`, `1.8` |
-| `redos` | OVAL вендора [redos.xml](https://redos.red-soft.ru/support/secure/redos.xml) — один файл на все выпуски, выпуск записи — по платформе определения или метке сборки (`.el7` — 7.3, `.red80` — 8) | `7.3`, `8` |
+| `redos` | OVAL вендора, файл выпуска: [7.3/redos.xml](https://redos.red-soft.ru/support/secure/7.3/redos.xml), `8.0/redos.xml` (выпуск `8` пишется в адресе как `8.0`). Если файла выпуска нет — общий [redos.xml](https://redos.red-soft.ru/support/secure/redos.xml), выпуск записи там определяется по платформе определения или метке сборки (`.el7` — 7.3, `.red80` — 8) | `7.3`, `8` |
 | `alpine` | secdb Alpine (`main.json` + `community.json` на выпуск), сравнение по правилам apk | `3.19`, `3.20` |
 
 ```bash
@@ -438,12 +441,23 @@ docker compose exec app scanner feeds sync-advisories
 docker compose exec app scanner feeds sync-advisories --release debian:bookworm
 docker compose exec app scanner feeds sync-advisories --release astra:1.7 \
     --file /data/advisories/astra-1.7.xml
+
+# доступны ли источники с этого сервера (без загрузки, по выпуску каждого семейства)
+docker compose exec app scanner feeds check-advisories
+docker compose exec app scanner feeds check-advisories --release redos:8
 ```
+
+`check-advisories` для каждого выпуска пишет `OK` и адрес, откуда возьмутся
+данные, или причину: HTTP 403/404, HTML-страница вместо файла (блокировка,
+капча, сменился адрес), ошибка сертификата, прокси, DNS. Если сертификат сайта
+не проходит проверку (сайты с сертификатом российского УЦ), скачайте корневой
+сертификат Russian Trusted Root CA с Госуслуг и положите его в `./data/certs/`
+— перезапуск не нужен.
 
 В закрытом контуре скачайте файлы на машине с интернетом и положите в
 `./data/advisories` под именами `debian.json` (или `.json.gz`),
 `ubuntu-jammy.xml.bz2`, `rhel-9.xml.bz2`, `alt-p10.zip`, `astra-1.7.xml`,
-`redos.xml` (один на все выпуски), `alpine-3.19.json` — сжатие определяется по содержимому. Тот же источник есть в
+`redos-7.3.xml` / `redos-8.xml` (файл выпуска; или общий `redos.xml`), `alpine-3.19.json` — сжатие определяется по содержимому. Тот же источник есть в
 «Справочниках» («Бюллетени дистрибутивов»), его можно поставить на расписание.
 
 **Выпуски берутся с хостов.** Модуль «Уязвимости (учётка)» читает точный
@@ -454,12 +468,15 @@ docker compose exec app scanner feeds sync-advisories --release astra:1.7 \
 сканер в интернет не ходит). Подгруженный выпуск дальше обновляется по
 расписанию вместе с выпусками из `ADVISORY_RELEASES`. Astra Linux и РЕД ОС
 тоже скачиваются с открытых адресов вендоров; в закрытом контуре положите их
-OVAL (`astra-1.7.xml`, `redos.xml`) в `./data/advisories` — следующий прогон
+OVAL (`astra-1.7.xml`, `redos-7.3.xml`) в `./data/advisories` — следующий прогон
 его подхватит.
 
-Если адрес Astra изменится или в каталоге al-oval окажется несколько наборов
-файлов на выпуск, задайте прямой адрес файла:
-`ADVISORY_URL_ASTRA=https://dl.astralinux.ru/artifactory/al-oval/<путь>/{release}…xml`.
+Файлы Astra лежат в каталоге al-oval по папкам платформы
+(`1.8_x86-64/oval-definitions-alse-1.8.xml`). Сканер сначала читает полный
+список каталога, а если этот API закрыт — обходит папки с номером выпуска в
+имени. Если адрес изменится или в каталоге окажется несколько наборов файлов
+на выпуск, задайте прямой адрес файла:
+`ADVISORY_URL_ASTRA=https://dl.astralinux.ru/artifactory/al-oval/{release}_x86-64/oval-definitions-alse-{release}.xml`.
 В сообщении «Справочников» при неудаче видно, какой каталог прочитан.
 
 **Проверка пакетов едет с аудитом конфигураций.** Если в прогоне выбран

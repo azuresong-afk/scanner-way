@@ -3,6 +3,7 @@
     scanner feeds sync-bdu --file vullist.xlsx
     scanner feeds sync-nvd [--file nvdcve-2.0-2024.json.gz ...] [--since ... --until ...]
     scanner feeds sync-advisories [--release debian:bookworm ...] [--file oval.xml.bz2]
+    scanner feeds check-advisories [--release redos:8 ...]   # доступны ли источники
     scanner run --engagement 1 --targets 10.0.0.0/28 10.0.0.50 --modules discovery vuln \\
                 --confirm-authorized
     scanner report --run 7 --format pdf [--out report.pdf] [--brief]
@@ -135,6 +136,16 @@ def build_parser() -> argparse.ArgumentParser:
                      help="локальный файл (OVAL .xml[.bz2|.gz|.zip] или JSON трекера "
                           "Debian) для одного семейства из --release")
     adv.set_defaults(handler=cmd_sync_advisories)
+
+    chk = fsub.add_parser("check-advisories",
+                          help="проверить, что источники бюллетеней дистрибутивов "
+                               "доступны с этого сервера (без загрузки в справочник)")
+    chk.add_argument("--release", dest="releases", action="append", default=[],
+                     metavar="СЕМЕЙСТВО:ВЫПУСК",
+                     help="выпуск, напр. redos:8; можно несколько раз. По умолчанию — "
+                          "ADVISORY_RELEASES и по выпуску каждого семейства "
+                          "(Astra 1.7/1.8, РЕД ОС 7.3/8, Alpine)")
+    chk.set_defaults(handler=cmd_check_advisories, no_db=True)
 
     auto = fsub.add_parser("auto-enabled", help="включено ли автообновление источника "
                                                 "по расписанию (код 0 — да, 1 — нет)")
@@ -524,6 +535,34 @@ def cmd_sync_advisories(args: argparse.Namespace, env: _Env) -> int:
                               "errors": [f"{r.family}:{r.release}: {r.error}"[:200]
                                          for r in results if r.error] or None})
     return 0 if len(ok) == len(results) else 1
+
+
+CHECK_DEFAULT_RELEASES = ("debian:bookworm", "ubuntu:jammy", "rhel:9", "alt:p10",
+                          "astra:1.7", "astra:1.8", "redos:7.3", "redos:8", "alpine:3.20")
+
+
+def cmd_check_advisories(args: argparse.Namespace, env: _Env | None = None) -> int:
+    from scanner.core.config import settings
+    from scanner.feeds.advisories.sync import (
+        AdvisoryError,
+        check_sources,
+        parse_targets,
+    )
+
+    try:
+        text = ",".join(args.releases) or ",".join(
+            [settings.advisory_releases, *CHECK_DEFAULT_RELEASES])
+        targets = parse_targets(text)
+    except AdvisoryError as e:
+        raise CliError(str(e)) from e
+    directory = Path(settings.advisory_dir) if settings.advisory_dir else None
+    checks = check_sources(targets, directory=directory, urls=settings.advisory_urls())
+    for c in checks:
+        mark = "OK " if c.ok else "ОШИБКА"
+        where = f" — {c.url}" if c.ok and c.url else ""
+        print(f"{mark} {c.family}:{c.release}: {c.detail}{where}",
+              file=sys.stdout if c.ok else sys.stderr)
+    return 0 if all(c.ok for c in checks) else 1
 
 
 def cmd_auto_enabled(args: argparse.Namespace, env: _Env) -> int:
