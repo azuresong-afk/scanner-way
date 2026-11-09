@@ -339,11 +339,20 @@ def list_fixes(run_id: int, request: Request,
     срабатывания не входят. Порядок — по приоритету (R6), затем по уровню.
     os — подпись ОС («Debian 12»); «-» — действия без привязки к ОС."""
     from scanner.api.routes_runs import FINISHED, _get_run
-    from scanner.reporting.fixplan import KINDS
 
     run = _get_run(session, run_id)
     tasks, fps = fix_plan(request, session, run_id, run.engagement_id,
                           cacheable=run.status in FINISHED)
+    return _fix_plan_out(tasks, fps, severity=severity, kind=kind, os=os, host=host,
+                         q=q, limit=limit, offset=offset)
+
+
+def _fix_plan_out(tasks: list, fps: int, *, severity: list[str] | None, kind: list[str] | None,
+                  os: list[str] | None, host: str | None, q: str | None,
+                  limit: int, offset: int) -> dict:
+    """Ответ FixPlanOut: счётчики по всему плану, фильтры, страница действий."""
+    from scanner.reporting.fixplan import KINDS
+
     hosts = {h.host for t in tasks for h in t.hosts}
     out = {"tasks": len(tasks), "hosts": len(hosts),
            "findings": sum(t.findings for t in tasks), "false_positives": fps,
@@ -372,6 +381,60 @@ def list_fixes(run_id: int, request: Request,
     out["total"] = len(sel)
     out["items"] = [t.to_dict() for t in sel[offset:offset + limit]]
     return out
+
+
+@router.get("/engagements/{engagement_id}/hosts/{host}/fixes", response_model=FixPlanOut)
+def host_fixes(engagement_id: int, host: str, request: Request,
+               _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+               session: SessionDep,
+               severity: Annotated[list[str] | None, Query()] = None,
+               kind: Annotated[list[str] | None, Query()] = None,
+               q: Annotated[str | None, Query(max_length=200)] = None,
+               limit: Annotated[int, Query(ge=1, le=500)] = 50,
+               offset: Annotated[int, Query(ge=0)] = 0) -> dict:
+    """План исправлений одного актива по последним известным данным: находки
+    хоста по каждому виду проверки — из последнего прогона, где она хост
+    проверила (как GET /engagements/{id}/hosts/{host}/latest). Карточка актива
+    в «Активах» без выбранного прогона. Ложные срабатывания не входят."""
+    from scanner.core import host_latest
+    from scanner.reporting.fixplan import build_fix_plan
+
+    get_engagement(session, engagement_id)
+    try:
+        key = str(ipaddress.ip_address(host.strip()))
+    except ValueError as e:
+        raise HTTPException(422, f"invalid host: {host}") from e
+    lt, rows = host_latest.latest_findings(session, engagement_id, key)
+    marks = repo.false_positive_marks(session, engagement_id)
+    items, fps = [], 0
+    for r in rows:
+        if r.dedup_key in marks:
+            fps += 1
+            continue
+        items.append((r.id, repo.row_to_finding(r)))
+    managers: dict[str, str] = {}
+    services: dict = {}
+    priorities: dict[str, RiskAssessment] = {}
+    # от старых прогонов к новым: данные последнего прогона важнее
+    for rid in sorted(lt.run_ids):
+        managers.update({h: m for h, m in _host_managers(session, rid).items()
+                         if _same_host(h, key)})
+        services.update({k: v for k, v in services_by_port(session, rid).items()
+                         if _same_host(k[0], key)})
+        priorities.update(run_priorities(session, rid, engagement_id, marks))
+    resolver = request.app.state.resolver_factory([f for _, f in items])
+    resolver.add_host_os(repo.host_os_names(session, engagement_id), override=False)
+    tasks = build_fix_plan(items, resolver=resolver, managers=managers,
+                           services=services, priorities=priorities)
+    return _fix_plan_out(tasks, fps, severity=severity, kind=kind, os=None, host=None,
+                         q=q, limit=limit, offset=offset)
+
+
+def _same_host(a: object, b: str) -> bool:
+    try:
+        return str(ipaddress.ip_address(str(a).split("/")[0])) == b
+    except ValueError:
+        return False
 
 
 # В журнал аудита массового действия — не больше стольких находок поимённо.

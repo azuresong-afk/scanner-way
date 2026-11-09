@@ -111,3 +111,90 @@ it("хост, который ещё не проверялся", async () => {
   );
   expect(await screen.findByText("Хост ещё не проверялся")).toBeInTheDocument();
 });
+
+it("«Что исправить» на карточке актива: по последним данным хоста, а с прогоном — по прогону", async () => {
+  setToken("t");
+  perms = ["view_report"];
+  localStorage.removeItem("scanner.host.vulnView");
+  const plan = (title: string) => ({
+    total: 1,
+    tasks: 1,
+    hosts: 1,
+    findings: 1,
+    false_positives: 0,
+    kinds: { package: 1 },
+    os: { "Debian 12": 1 },
+    severities: { critical: 1 },
+    items: [
+      {
+        key: "k1",
+        kind: "package",
+        kind_label: "Обновление пакета",
+        title,
+        os: "Debian 12",
+        os_family: "debian",
+        manager: "dpkg",
+        packages: ["openssl"],
+        fixed_version: "3.0.15",
+        software: null,
+        steps: ["Обновите openssl."],
+        commands: ["sudo apt-get update", "sudo apt-get install --only-upgrade -y openssl"],
+        verify: [],
+        reboot: false,
+        details: null,
+        details_source: null,
+        severity: "critical",
+        priority: null,
+        cves: ["CVE-PKG-1"],
+        bdu_ids: [],
+        advisories: [],
+        references: [],
+        hosts: [{ host: "10.0.0.1", installed: "3.0.1", note: null, ports: [], findings: [{ id: 11, label: "CVE-PKG-1", severity: "critical" }] }],
+        host_count: 1,
+        finding_count: 1,
+      },
+    ],
+  });
+  const { calls } = mockApi({
+    "GET /engagements/5/runs": [run(1, ["discovery", "auth_inventory"])],
+    "GET /engagements/5/hosts": [{ host: "10.0.0.1", os_guess: null, run_ids: [1], services_run_id: 1, services: [], packages_run_id: null, package_count: 0 }],
+    "GET /engagements/5/hosts/10.0.0.1/latest": {
+      host: "10.0.0.1",
+      run_ids: [1],
+      checked_run_id: 1,
+      module_runs: { auth_inventory: 1 },
+      findings: [finding({ id: 11, host: "10.0.0.1", module: "auth_inventory", severity: "critical", vuln_id: "CVE-PKG-1", title: "openssl" })],
+    },
+    "GET /engagements/5/hosts/10.0.0.1/fixes": plan("Обновить openssl до 3.0.15"),
+    "GET /runs/1/fixes": plan("Обновить openssl (прогон 1)"),
+    "GET /runs/1/findings": [finding({ id: 11, host: "10.0.0.1", module: "auth_inventory", severity: "critical", vuln_id: "CVE-PKG-1", title: "openssl" })],
+    "GET /runs/1/services": [],
+    "GET /runs/1/packages": [],
+    "GET /engagements/5/assets": [],
+  });
+  render(
+    <MemoryRouter initialEntries={["/hosts/10.0.0.1"]}>
+      <Routes>
+        <Route path="/hosts/:host" element={<HostDetailPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  expect(await screen.findByRole("heading", { name: "Что исправить на хосте" })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "Что исправить" })).toHaveAttribute("aria-checked", "true");
+  expect(await screen.findByText("Обновить openssl до 3.0.15")).toBeInTheDocument();
+  expect(screen.getByText(/sudo apt-get install --only-upgrade -y openssl/)).toBeInTheDocument();
+  expect(screen.getByText(/Последние данные хоста/)).toBeInTheDocument();
+  // фильтра по ОС на карточке одного хоста нет
+  expect(screen.queryByRole("group", { name: "ОС хостов" })).toBeNull();
+
+  // выбран прогон — план этого прогона только по этому хосту
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: "Прогон" }), "1");
+  expect(await screen.findByText("Обновить openssl (прогон 1)")).toBeInTheDocument();
+  const runCall = calls.find((c) => c.path === "/runs/1/fixes");
+  expect(runCall).toBeDefined();
+
+  // выбор вида запоминается
+  await userEvent.click(screen.getByRole("radio", { name: "Списком" }));
+  expect(localStorage.getItem("scanner.host.vulnView")).toBe("list");
+  expect(screen.getByRole("heading", { name: "Уязвимости хоста" })).toBeInTheDocument();
+});

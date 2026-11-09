@@ -246,3 +246,41 @@ def test_api_fix_plan_filters_and_false_positives(sqlite_factory):
         assert after["false_positives"] == 1
         pkg = next(t for t in after["items"] if t["kind"] == "package")
         assert [x["host"] for x in pkg["hosts"]] == ["10.0.0.1"]
+
+
+def test_api_host_fix_plan_from_latest_runs(sqlite_factory):
+    """Карточка актива: план по последним данным хоста — пакеты из прогона по
+    учётной записи, настройки из более нового прогона аудита."""
+    from scanner.core import repository as repo
+    from scanner.core.db import session_scope
+    from tests.test_pagination import _admin_can_view, _client, _login
+
+    cfg = Finding(module="config_audit", host="10.0.0.1", finding_type=FindingType.CONFIG,
+                  vuln_id="SSH-PERMIT-ROOT", severity=Severity.MEDIUM,
+                  title="Разрешён вход root по SSH", remediation="PermitRootLogin no")
+    with session_scope(sqlite_factory) as s:
+        eid = repo.create_engagement(s, name="Ромашка")
+        r1 = repo.create_scan_run(s, engagement_id=eid, modules=["auth_inventory"],
+                                  targets=["10.0.0.0/24"], name="пакеты")
+        repo.set_scan_run_status(s, r1, "done")
+        repo.save_findings(s, engagement_id=eid, scan_run_id=r1,
+                           findings=[_pkg("10.0.0.1", "CVE-2023-5678"),
+                                     _pkg("10.0.0.2", "CVE-2023-5678")])
+        r2 = repo.create_scan_run(s, engagement_id=eid, modules=["config_audit"],
+                                  targets=["10.0.0.1"], name="настройки")
+        repo.set_scan_run_status(s, r2, "done")
+        repo.save_findings(s, engagement_id=eid, scan_run_id=r2, findings=[cfg])
+    with _client(sqlite_factory) as c:
+        h = _admin_can_view(c, _login(c))
+        r = c.get(f"/engagements/{eid}/hosts/10.0.0.1/fixes", headers=h)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["kinds"] == {"package": 1, "config": 1} and body["hosts"] == 1
+        pkg = next(t for t in body["items"] if t["kind"] == "package")
+        assert [x["host"] for x in pkg["hosts"]] == ["10.0.0.1"]
+        assert pkg["commands"][0] == "sudo apt-get update"
+        assert c.get(f"/engagements/{eid}/hosts/10.0.0.1/fixes", headers=h,
+                     params={"kind": "config"}).json()["total"] == 1
+        assert c.get(f"/engagements/{eid}/hosts/10.0.0.9/fixes",
+                     headers=h).json()["total"] == 0
+        assert c.get(f"/engagements/{eid}/hosts/nope/fixes", headers=h).status_code == 422

@@ -83,12 +83,12 @@ function Commands({ title, lines }: { title: string; lines: string[] }) {
   );
 }
 
-function HostRow({ h, runId, onFinding }: { h: FixHostOut; runId: number; onFinding: (id: number) => void }) {
+function HostRow({ h, runId, onFinding }: { h: FixHostOut; runId: number | null; onFinding: (id: number) => void }) {
   const chips = h.findings.slice(0, MAX_CHIPS);
   return (
     <tr>
       <td className="mono" style={{ whiteSpace: "nowrap" }}>
-        <Link to={`/hosts/${encodeURIComponent(h.host)}?run=${runId}`}>{h.host}</Link>
+        <Link to={`/hosts/${encodeURIComponent(h.host)}${runId === null ? "" : `?run=${runId}`}`}>{h.host}</Link>
         {h.ports.length > 0 && <span className="faint">:{h.ports.join(", ")}</span>}
       </td>
       <td className="mono" style={{ whiteSpace: "nowrap" }}>{h.installed ?? <span className="faint">—</span>}</td>
@@ -113,7 +113,7 @@ function HostRow({ h, runId, onFinding }: { h: FixHostOut; runId: number; onFind
   );
 }
 
-function FixCard({ t, runId, open, focus, onFinding }: { t: FixTaskOut; runId: number; open: boolean; focus?: boolean; onFinding: (id: number) => void }) {
+function FixCard({ t, runId, open, focus, onFinding }: { t: FixTaskOut; runId: number | null; open: boolean; focus?: boolean; onFinding: (id: number) => void }) {
   const vulns = t.cves.length + t.bdu_ids.length;
   const ref = useRef<HTMLDetailsElement>(null);
   // действие, выбранное в быстром поиске (?task=…), раскрыто и прокручено в видимую область
@@ -215,8 +215,21 @@ function FixCard({ t, runId, open, focus, onFinding }: { t: FixTaskOut; runId: n
  * План исправлений прогона для администраторов: находки, собранные в действия
  * («обновить пакет до версии V на Debian 12»), с командами для ОС хостов,
  * проверкой результата и списком хостов. Фильтры — в адресной строке.
+ * С host — план одного актива (карточка хоста в «Активах»): только действия,
+ * которые касаются этого хоста, без отдельных карточек и фильтра по ОС.
  */
-export function FixPlan({ runId, onHost }: { runId: number; onHost: (host: string) => void }) {
+export function FixPlan({
+  runId,
+  onHost,
+  host,
+  engagementId,
+}: {
+  /** Прогон; null — последние известные данные актива (нужны host и engagementId). */
+  runId: number | null;
+  onHost: (host: string) => void;
+  host?: string;
+  engagementId?: number;
+}) {
   const [params, setParams] = useSearchParams();
   const severities = params.getAll("sev").filter((s): s is Severity => (SEVERITIES as string[]).includes(s));
   const kinds = params.getAll("kind");
@@ -249,11 +262,17 @@ export function FixPlan({ runId, onHost }: { runId: number; onHost: (host: strin
   }, [urlQ]);
 
   const kindParam = KIND_FILTERS.filter((k) => kinds.includes(k.id)).flatMap((k) => k.of);
-  const key = JSON.stringify([severities, kindParam, oses, urlQ, offset, size]);
+  const key = JSON.stringify([severities, kindParam, oses, urlQ, offset, size, host, engagementId]);
   const plan = useAsync(
-    () => api.fixes(runId, { severity: severities, kind: kindParam, os: oses, q: urlQ || undefined, limit: size, offset }),
+    () => {
+      const common = { severity: severities, kind: kindParam, q: urlQ || undefined, limit: size, offset };
+      if (runId === null) return api.hostFixes(engagementId!, host!, common);
+      return api.fixes(runId, { ...common, os: host ? [] : oses, host });
+    },
     [runId, key],
+    runId !== null || (!!host && engagementId !== undefined),
   );
+  const source = runId === null ? "Последние данные хоста" : `Прогон №${runId}`;
   const [open, setOpen] = useState<FindingOut | null>(null);
   const [opening, setOpening] = useState<Error | null>(null);
   const openFinding = async (id: number) => {
@@ -268,18 +287,23 @@ export function FixPlan({ runId, onHost }: { runId: number; onHost: (host: strin
   const d = plan.data;
   const active = severities.length + kinds.length + oses.length + (urlQ ? 1 : 0);
   const kindCount = (k: (typeof KIND_FILTERS)[number]) => k.of.reduce((n, x) => n + (d?.kinds[x] ?? 0), 0);
-  const osList = Object.entries(d?.os ?? {}).sort((a, b) => b[1] - a[1]);
+  const osList = host ? [] : Object.entries(d?.os ?? {}).sort((a, b) => b[1] - a[1]);
 
-  return (
+  const filters = (
     <>
-      <section className="card card-pad stack" style={{ gap: 14 }}>
         {d && (
           <p className="fix-lead">
             <Wrench size={16} aria-hidden="true" />
             <span>
               <b>{d.tasks.toLocaleString("ru-RU")}</b> {plural(d.tasks, "действие", "действия", "действий")} закрывают{" "}
-              <b>{d.findings.toLocaleString("ru-RU")}</b> {plural(d.findings, "находку", "находки", "находок")} на{" "}
-              <b>{d.hosts}</b> {plural(d.hosts, "хосте", "хостах", "хостах")}
+              <b>{d.findings.toLocaleString("ru-RU")}</b> {plural(d.findings, "находку", "находки", "находок")}
+              {host ? (
+                " на этом хосте"
+              ) : (
+                <>
+                  {" "}на <b>{d.hosts}</b> {plural(d.hosts, "хосте", "хостах", "хостах")}
+                </>
+              )}
               {d.false_positives > 0 && <span className="faint"> · без {d.false_positives} ложных срабатываний</span>}
             </span>
           </p>
@@ -344,24 +368,19 @@ export function FixPlan({ runId, onHost }: { runId: number; onHost: (host: strin
             ))}
           </div>
         )}
-      </section>
-
-      {plan.error && <ErrorAlert error={plan.error} onRetry={plan.reload} />}
-      {opening && <ErrorAlert error={opening} />}
-      <section className="card" style={{ overflow: "hidden" }}>
-        <div className="card-head">
-          <h2>Что исправить: {(d?.total ?? 0).toLocaleString("ru-RU")}</h2>
-          <span className="faint" style={{ fontSize: 12 }}>
-            Прогон №{runId} · сначала — самые важные по приоритету
-          </span>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => void plan.reload()} aria-label="Обновить план">
-            <RotateCw size={14} aria-hidden="true" />
-          </button>
-        </div>
+    </>
+  );
+  const reload = (
+    <button type="button" className="btn btn-sm btn-ghost" onClick={() => void plan.reload()} aria-label="Обновить план">
+      <RotateCw size={14} aria-hidden="true" />
+    </button>
+  );
+  const list = (
+    <>
         {plan.loading && !d ? (
           <Loading />
         ) : !d || d.items.length === 0 ? (
-          <Empty title={active ? "Ничего не найдено по фильтрам" : "Исправлять нечего: открытых находок нет"} />
+          <Empty title={active ? "Ничего не найдено по фильтрам" : host ? "На этом хосте исправлять нечего" : "Исправлять нечего: открытых находок нет"} />
         ) : (
           <div className="fix-list">
             {d.items.map((t, i) => (
@@ -379,7 +398,46 @@ export function FixPlan({ runId, onHost }: { runId: number; onHost: (host: strin
             onLimit={(n) => update({ size: n === 25 ? null : String(n) })}
           />
         )}
-      </section>
+    </>
+  );
+  const errors = (
+    <>
+      {plan.error && <ErrorAlert error={plan.error} onRetry={plan.reload} />}
+      {opening && <ErrorAlert error={opening} />}
+    </>
+  );
+
+  return (
+    <>
+      {host ? (
+        <>
+          <div className="card-pad stack fix-embedded" style={{ gap: 14 }}>
+            {filters}
+            {errors}
+            <span className="faint" style={{ fontSize: 12 }}>
+              {source} · сначала — самые важные по приоритету {reload}
+            </span>
+          </div>
+          {list}
+        </>
+      ) : (
+        <>
+          <section className="card card-pad stack" style={{ gap: 14 }}>
+            {filters}
+          </section>
+          {errors}
+          <section className="card" style={{ overflow: "hidden" }}>
+            <div className="card-head">
+              <h2>Что исправить: {(d?.total ?? 0).toLocaleString("ru-RU")}</h2>
+              <span className="faint" style={{ fontSize: 12 }}>
+                {source} · сначала — самые важные по приоритету
+              </span>
+              {reload}
+            </div>
+            {list}
+          </section>
+        </>
+      )}
       {open && (
         <FindingDrawer
           finding={open}
