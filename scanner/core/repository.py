@@ -240,6 +240,26 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
     Учётка СУБД (postgresql/mysql/mssql/oracle) — только по паролю, без повышения
     прав; db_name — база для входа или имя сервиса Oracle.
     """
+    fields = _credential_fields(
+        session, engagement_id=engagement_id, name=name, auth=auth, username=username,
+        port=port, targets=targets, password=password, private_key=private_key,
+        passphrase=passphrase, become=become, protocol=protocol, options=options,
+        db_name=db_name)
+    secrets = fields.pop("secrets")
+    row = HostCredentialRow(engagement_id=engagement_id, created_by=created_by,
+                            secret_enc=vault.encrypt(secrets), **fields)
+    session.add(row)
+    session.flush()
+    return row.id
+
+
+def _credential_fields(session: Session, *, engagement_id: int, name: str, auth: str,
+                       username: str, port: int | None, targets: Iterable[str],
+                       password: str | None, private_key: str | None,
+                       passphrase: str | None, become: str, protocol: str,
+                       options: dict | None, db_name: str | None) -> dict:
+    """Проверенные поля учётки и её секреты (ключ "secrets") — общие для
+    создания и правки. CredentialError — недопустимые данные."""
     protocol = validate_protocol(protocol)
     options = validate_options(protocol, options)
     if auth not in AUTH_KINDS:
@@ -296,15 +316,57 @@ def create_host_credential(session: Session, vault: CredentialVault, *,
         private_key = private_key.strip() + "\n"
         fingerprint = key_fingerprint(private_key, passphrase)
         secrets = {"private_key": private_key, "passphrase": passphrase}
-    row = HostCredentialRow(engagement_id=engagement_id, name=name.strip(), auth=auth,
-                            username=username, port=port, targets=scope,
-                            secret_enc=vault.encrypt(secrets),
-                            key_fingerprint=fingerprint, created_by=created_by,
-                            become=become, protocol=protocol, options=options,
-                            db_name=db_name)
-    session.add(row)
+    return {"name": name.strip(), "auth": auth, "username": username, "port": port,
+            "targets": scope, "key_fingerprint": fingerprint, "become": become,
+            "protocol": protocol, "options": options, "db_name": db_name,
+            "secrets": secrets}
+
+
+def update_host_credential(session: Session, vault: CredentialVault,
+                           row: HostCredentialRow, *, name: str, auth: str,
+                           username: str, port: int | None = None,
+                           targets: Iterable[str] = (),
+                           password: str | None = None, private_key: str | None = None,
+                           passphrase: str | None = None,
+                           become: str = BECOME_SUDO,
+                           protocol: str = PROTOCOL_SSH,
+                           options: dict | None = None,
+                           db_name: str | None = None) -> dict[str, bool]:
+    """Изменить учётку. Проверки — те же, что при создании.
+
+    Секреты необязательны: пока способ входа (protocol и auth) прежний, не
+    переданный пароль, ключ или парольная фраза берутся из сохранённых. Смена
+    способа входа требует ввести секрет заново. Возвращает {"secret_changed": …}
+    — для аудита, без самих секретов.
+    """
+    same_kind = auth == row.auth and protocol == row.protocol
+    old = vault.decrypt(row.secret_enc) if same_kind else {}
+    changed = False
+    if auth == AUTH_PASSWORD:
+        changed = bool(password) or (bool(passphrase) and protocol == PROTOCOL_SNMP)
+        password = password or old.get("password")
+        if protocol == PROTOCOL_SNMP:
+            passphrase = passphrase or old.get("passphrase")
+    else:
+        if private_key and private_key.strip():
+            changed = True          # новый ключ — парольная фраза только из запроса
+        else:
+            private_key = old.get("private_key")
+            if passphrase:
+                changed = True
+            else:
+                passphrase = old.get("passphrase")
+    fields = _credential_fields(
+        session, engagement_id=row.engagement_id, name=name, auth=auth,
+        username=username, port=port, targets=targets, password=password,
+        private_key=private_key, passphrase=passphrase, become=become,
+        protocol=protocol, options=options, db_name=db_name)
+    secrets = fields.pop("secrets")
+    for k, v in fields.items():
+        setattr(row, k, v)
+    row.secret_enc = vault.encrypt(secrets)
     session.flush()
-    return row.id
+    return {"secret_changed": changed or not same_kind}
 
 
 def list_host_credentials(session: Session, engagement_id: int) -> list[HostCredentialRow]:

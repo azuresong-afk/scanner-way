@@ -20,6 +20,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { PortScanPage } from "./pages/PortScanPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { CompliancePage } from "./pages/CompliancePage";
+import { CredentialsPage } from "./pages/CredentialsPage";
 import { RunDetailPage } from "./pages/RunDetailPage";
 import { RunsPage } from "./pages/RunsPage";
 import { SchedulesPage } from "./pages/SchedulesPage";
@@ -34,13 +35,14 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function RequirePerm({ perm, children }: { perm: Perm; children: ReactNode }) {
+function RequirePerm({ perm, children }: { perm: Perm | Perm[]; children: ReactNode }) {
   const { has } = useAuth();
-  if (!has(perm)) {
+  const perms = Array.isArray(perm) ? perm : [perm];
+  if (!perms.some(has)) {
     return (
       <div className="card">
         <Empty title="Нет доступа" icon={<Lock size={28} />}>
-          Для этого раздела нужно право «{perm}». Обратитесь к администратору.
+          Для этого раздела нужно право «{perms.join("» или «")}». Обратитесь к администратору.
         </Empty>
       </div>
     );
@@ -84,6 +86,7 @@ export function App() {
         <Route path="runs" element={<RequirePerm perm="view_report"><RunsPage /></RequirePerm>} />
         <Route path="runs/:id" element={<RequirePerm perm="view_report"><RunDetailPage /></RequirePerm>} />
         <Route path="schedules" element={<RequirePerm perm="view_report"><SchedulesPage /></RequirePerm>} />
+        <Route path="credentials" element={<RequirePerm perm={["host_credentials", "cred_audit"]}><CredentialsPage /></RequirePerm>} />
         <Route path="findings" element={<RequirePerm perm="view_report"><FindingsPage /></RequirePerm>} />
         <Route path="hosts" element={<RequirePerm perm="view_report"><HostsPage /></RequirePerm>} />
         <Route path="hosts/:host" element={<RequirePerm perm="view_report"><HostDetailPage /></RequirePerm>} />

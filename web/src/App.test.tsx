@@ -62,6 +62,33 @@ it("меню зависит от прав: оператор не видит ад
   expect(within(nav).queryByText("Журнал аудита")).not.toBeInTheDocument();
 });
 
+it("учётные записи — отдельная вкладка меню для права host_credentials", async () => {
+  setToken("t");
+  mockApi({
+    "GET /me": me(["operator"], [...OPERATOR, "host_credentials"]),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [],
+    "GET /engagements/1/credentials": [],
+  });
+  renderApp("/credentials");
+  const nav = await screen.findByRole("navigation", { name: "Основное меню" });
+  const link = await within(nav).findByRole("link", { name: "Учётные записи" });
+  expect(link).toHaveAttribute("href", "/credentials");
+  expect(await screen.findByRole("heading", { name: "Учётные записи" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Учётные записи активов" })).toBeInTheDocument();
+  // без права cred_audit наборов проверки учёток нет
+  expect(screen.queryByRole("heading", { name: "Наборы проверки учёток" })).not.toBeInTheDocument();
+});
+
+it("без прав на учётки вкладки «Учётные записи» нет", async () => {
+  setToken("t");
+  mockApi({ "GET /me": me(["operator"], OPERATOR), "GET /engagements": [ENG], "GET /engagements/1/runs": [] });
+  renderApp("/");
+  const nav = await screen.findByRole("navigation", { name: "Основное меню" });
+  await within(nav).findByText("Сканирование");
+  expect(within(nav).queryByText("Учётные записи")).not.toBeInTheDocument();
+});
+
 it("меню идёт сверху вниз по ходу работы, служебные разделы — в «Администрировании»", async () => {
   setToken("t");
   mockApi({ "GET /me": me(["admin", "operator"], [...new Set([...ADMIN, ...OPERATOR])]), "GET /engagements": [ENG], "GET /engagements/1/runs": [] });

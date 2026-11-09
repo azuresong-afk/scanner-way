@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Database,
   FileText,
+  KeyRound,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -34,18 +35,20 @@ interface NavItem {
   to: string;
   label: string;
   icon: ReactNode;
-  perm: Perm;
+  /** Пункт виден, если есть хотя бы одно из прав. */
+  perm: Perm | Perm[];
   admin?: boolean;
 }
 
 // Порядок пунктов — «сверху вниз» по ходу работы (выбор Антона): проект → активы →
-// находки → сетевой поиск → сканирование → расписание → нормативы → отчёты.
+// учётные записи → находки → сетевой поиск → сканирование → расписание → нормативы → отчёты.
 // Служебные разделы — отдельной группой «Администрирование» ниже.
 // URL прежние (/engagements, /reachability, /runs …), чтобы не ломать закладки и ссылки.
 const NAV: NavItem[] = [
   { to: "/", label: "Сводка", icon: <LayoutDashboard size={18} />, perm: "view_report" },
   { to: "/engagements", label: "Проекты", icon: <FileText size={18} />, perm: "view_engagements" },
   { to: "/hosts", label: "Активы", icon: <Server size={18} />, perm: "view_report" },
+  { to: "/credentials", label: "Учётные записи", icon: <KeyRound size={18} />, perm: ["host_credentials", "cred_audit"] },
   { to: "/findings", label: "Находки", icon: <ShieldAlert size={18} />, perm: "view_report" },
   { to: "/reachability", label: "Сетевой поиск", icon: <Wifi size={18} />, perm: "view_report" },
   { to: "/runs", label: "Сканирование", icon: <Radar size={18} />, perm: "view_report" },
@@ -115,7 +118,7 @@ function Brand() {
 
 export function Layout() {
   const { me, has, logout } = useAuth();
-  const items = NAV.filter((i) => has(i.perm));
+  const items = NAV.filter((i) => (Array.isArray(i.perm) ? i.perm : [i.perm]).some(has));
   const [open, setOpen] = useState(false);
   const location = useLocation();
   useEffect(() => setOpen(false), [location.pathname]);

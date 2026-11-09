@@ -127,6 +127,94 @@ def test_create_list_delete_never_exposes_secrets(api, sqlite_factory):
     assert all(HOST_PASSWORD not in r.secret_enc for r in rows)
 
 
+def _secrets(api, sqlite_factory, cid):
+    vault = api.c.app.state.runs.vault
+    with sqlite_factory() as s:
+        return vault.decrypt(s.get(HostCredentialRow, cid).secret_enc)
+
+
+def test_update_keeps_secret_when_not_retyped(api, sqlite_factory):
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    cid = _cred(api, eid, holder, targets=["10.0.0.5"]).json()["id"]
+    url = f"/engagements/{eid}/credentials/{cid}"
+    # правка без пароля: поля меняются, пароль прежний
+    r = api.c.put(url, headers=holder, json={
+        "name": "аудит ДМЗ", "username": "audit2", "auth": "password", "port": 2222,
+        "targets": ["10.0.0.0/28"], "become": "none"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["name"] == "аудит ДМЗ" and body["username"] == "audit2"
+    assert body["port"] == 2222 and body["targets"] == ["10.0.0.0/28"]
+    assert body["become"] == "none" and HOST_PASSWORD not in r.text
+    assert _secrets(api, sqlite_factory, cid) == {"password": HOST_PASSWORD}
+    # новый пароль заменяет прежний
+    r = api.c.put(url, headers=holder, json={
+        "name": "аудит ДМЗ", "username": "audit2", "auth": "password",
+        "password": "New-Pa55"})
+    assert r.status_code == 200, r.text
+    assert _secrets(api, sqlite_factory, cid) == {"password": "New-Pa55"}
+    # смена способа входа на ключ требует ключ
+    r = api.c.put(url, headers=holder, json={
+        "name": "x", "username": "audit2", "auth": "key"})
+    assert r.status_code == 422
+    key = make_key()
+    r = api.c.put(url, headers=holder, json={
+        "name": "x", "username": "audit2", "auth": "key", "private_key": key})
+    assert r.status_code == 200, r.text
+    fp = r.json()["key_fingerprint"]
+    assert fp.startswith("SHA256:")
+    # ключ тоже сохраняется при правке без него
+    r = api.c.put(url, headers=holder, json={"name": "y", "username": "u", "auth": "key"})
+    assert r.status_code == 200 and r.json()["key_fingerprint"] == fp
+    assert _secrets(api, sqlite_factory, cid)["private_key"].strip() == key.strip()
+    # область вне allowlist — отказ, данные не меняются
+    r = api.c.put(url, headers=holder, json={
+        "name": "z", "username": "u", "auth": "key", "targets": ["192.168.0.0/24"]})
+    assert r.status_code == 422
+    listed = api.c.get(f"/engagements/{eid}/credentials", headers=holder).json()
+    assert listed[0]["name"] == "y"
+    with sqlite_factory() as s:
+        audit = [(r, d) for a, r, d in s.execute(
+            select(AuditLogRow.action, AuditLogRow.result, AuditLogRow.details))
+            if a == "credential_update"]
+    assert [r for r, _ in audit].count("ok") == 4
+    assert audit[0][1]["secret_changed"] is False
+    assert "port" in audit[0][1]["changed"] and "name" in audit[0][1]["changed"]
+    assert audit[1][1]["secret_changed"] is True
+    assert HOST_PASSWORD not in repr(audit) and "New-Pa55" not in repr(audit)
+    assert "PRIVATE KEY" not in repr(audit)
+
+
+def test_update_needs_permission_and_engagement(api):
+    eid = api.engagement("10.0.0.0/24")
+    other = api.engagement("10.1.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    op = api.user("op", "operator")
+    cid = _cred(api, eid, holder).json()["id"]
+    body = {"name": "n", "username": "u", "auth": "password"}
+    assert api.c.put(f"/engagements/{eid}/credentials/{cid}", headers=op,
+                     json=body).status_code == 403
+    assert api.c.put(f"/engagements/{other}/credentials/{cid}", headers=holder,
+                     json=body).status_code == 404
+
+
+def test_update_snmp_keeps_priv_key(api, sqlite_factory):
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    r = _cred(api, eid, holder, name="snmp", username="nms", protocol="snmp",
+              password="auth-key-1", passphrase="priv-key-1", snmp_version="3")
+    assert r.status_code == 201, r.text
+    cid = r.json()["id"]
+    r = api.c.put(f"/engagements/{eid}/credentials/{cid}", headers=holder, json={
+        "name": "snmp-2", "username": "nms", "auth": "password", "protocol": "snmp",
+        "snmp_version": "3", "snmp_auth_proto": "sha256"})
+    assert r.status_code == 200, r.text
+    assert r.json()["options"]["auth_proto"] == "sha256"
+    assert _secrets(api, sqlite_factory, cid) == {"password": "auth-key-1",
+                                                  "passphrase": "priv-key-1"}
+
+
 def test_create_winrm_credential(api):
     eid = api.engagement("10.0.0.0/24")
     holder = api.user("keeper", "operator", "host_credentials")

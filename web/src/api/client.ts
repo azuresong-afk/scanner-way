@@ -270,6 +270,8 @@ export const api = {
   credentials: (engagementId: number) => json<CredentialOut[]>(`/engagements/${engagementId}/credentials`),
   createCredential: (engagementId: number, data: CredentialIn) =>
     json<CredentialOut>(`/engagements/${engagementId}/credentials`, { method: "POST", ...body(data) }),
+  updateCredential: (engagementId: number, credentialId: number, data: CredentialIn) =>
+    json<CredentialOut>(`/engagements/${engagementId}/credentials/${credentialId}`, { method: "PUT", ...body(data) }),
   deleteCredential: (engagementId: number, credentialId: number) =>
     request(`/engagements/${engagementId}/credentials/${credentialId}`, { method: "DELETE" }).then(() => undefined),
 

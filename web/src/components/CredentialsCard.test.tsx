@@ -135,3 +135,42 @@ it("SNMPv3: ключи auth и priv, порт 161; v2c — только communit
     username: "nms", password: "authkey123", passphrase: "privkey123", port: 161,
   });
 });
+
+it("правит учётку без повторного ввода пароля", async () => {
+  const WIN = { ...ROW, id: 8, name: "Windows ДМЗ", username: "CORP\\svc", port: 5986, protocol: "winrm", targets: ["10.0.0.0/24"] };
+  const api = mockApi({
+    "GET /engagements/7/credentials": [WIN],
+    "PUT /engagements/7/credentials/8": { ...WIN, name: "Windows ДМЗ-2" },
+  });
+  render(<CredentialsCard engagementId={7} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Изменить Windows ДМЗ" }));
+  const dlg = await screen.findByRole("dialog");
+  // поля заполнены, домен отделён от логина, пароль пуст и не обязателен
+  expect(within(dlg).getByRole("radio", { name: /WinRM/ })).toBeChecked();
+  expect((within(dlg).getByLabelText("Логин Windows") as HTMLInputElement).value).toBe("svc");
+  expect((within(dlg).getByLabelText(/Домен Windows/) as HTMLInputElement).value).toBe("CORP");
+  expect((within(dlg).getByLabelText(/Область действия/) as HTMLTextAreaElement).value).toBe("10.0.0.0/24");
+  const pass = within(dlg).getByLabelText("Пароль Windows", { selector: "input[type=password]" }) as HTMLInputElement;
+  expect(pass.value).toBe("");
+  expect(pass.placeholder).toMatch(/сохранён/);
+  const name = within(dlg).getByLabelText("Название");
+  await userEvent.clear(name);
+  await userEvent.type(name, "Windows ДМЗ-2");
+  await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(api.calls.some((c) => c.init?.method === "PUT")).toBe(true));
+  const sent = JSON.parse(String(api.calls.find((c) => c.init?.method === "PUT")!.init!.body));
+  expect(sent).toMatchObject({ name: "Windows ДМЗ-2", username: "svc", domain: "CORP", protocol: "winrm", port: 5986, targets: ["10.0.0.0/24"] });
+  expect(sent).not.toHaveProperty("password");
+});
+
+it("при смене способа входа на ключ требует ключ заново", async () => {
+  mockApi({ "GET /engagements/7/credentials": [ROW] });
+  render(<CredentialsCard engagementId={7} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Изменить root ДМЗ" }));
+  const dlg = await screen.findByRole("dialog");
+  const save = screen.getByRole("button", { name: "Сохранить" });
+  expect(save).toBeEnabled();               // пароль сохранён — можно сохранять без него
+  await userEvent.click(within(dlg).getByRole("radio", { name: /Ключ SSH/ }));
+  expect(within(dlg).getByText(/введите пароль или ключ заново/)).toBeInTheDocument();
+  expect(save).toBeDisabled();
+});
