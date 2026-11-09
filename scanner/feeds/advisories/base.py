@@ -47,6 +47,11 @@ class FamilySpec:
     # адреса файлов выпуска. Используется, когда default_url — оглавление
     # (Astra Linux публикует OVAL каталогом в Artifactory).
     discover: Callable[[str, Callable[[str], bytes]], list[str]] | None = None
+    # Выпуск -> как он пишется в адресе (``{release}``): РЕД ОС ``8`` -> ``8.0``.
+    url_release: Callable[[str], str] = lambda r: r
+    # Разбор файла ОДНОГО выпуска, если источник семейства бывает и общим на
+    # все выпуски (РЕД ОС): все записи такого файла относятся к его выпуску.
+    release_parser: Parser | None = None
 
 
 _ID_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")

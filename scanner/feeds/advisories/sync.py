@@ -5,7 +5,9 @@
    а для общего на все выпуски источника (трекер Debian) — ``<семейство>.<расш>``;
 2. адрес ADVISORY_URL_<СЕМЕЙСТВО> или адрес вендора по умолчанию
    (``{release}`` подставляется; несколько адресов через пробел — данные
-   выпуска собираются из всех, например main + community у Alpine).
+   выпуска собираются из всех, например main + community у Alpine;
+   варианты через `` | `` — запасные: берётся первый, что скачался, например
+   файл выпуска РЕД ОС, а если его нет — общий redos.xml).
 Сжатие (bz2, gzip, zip) определяется по содержимому, не по имени.
 """
 from __future__ import annotations
@@ -76,16 +78,32 @@ def local_file(directory: Path | None, family: str, release: str) -> tuple[Path,
     return None
 
 
-def _download(url: str, dest: Path) -> None:
-    import httpx
+def _download(url: str, dest: Path, *, allow_html: bool = False) -> None:
+    from scanner.feeds.net import DownloadError, download
     try:
-        with httpx.stream("GET", url, timeout=300, follow_redirects=True) as resp:
-            resp.raise_for_status()
-            with dest.open("wb") as fh:
-                for chunk in resp.iter_bytes(1 << 20):
-                    fh.write(chunk)
-    except httpx.HTTPError as e:
-        raise AdvisoryError(f"не удалось скачать {url}: {type(e).__name__}: {e}") from e
+        download(url, dest, timeout=300, allow_html=allow_html)
+    except DownloadError as e:
+        raise AdvisoryError(f"не удалось скачать {e}") from e
+
+
+def _download_index(url: str, dest: Path) -> None:
+    """Оглавление каталога вендора может быть HTML-листингом."""
+    _download(url, dest, allow_html=True)
+
+
+def expand(template: str, spec: FamilySpec, release: str) -> list[tuple[tuple[str, ...], bool]]:
+    """Шаблон адреса -> варианты по порядку: (адреса, файл только этого выпуска?).
+
+    ``a b`` — данные из обоих адресов; ``a | b`` — b, только если a не скачался."""
+    out: list[tuple[tuple[str, ...], bool]] = []
+    for alt in template.split("|"):
+        if not alt.strip():
+            continue
+        urls = tuple(u.replace("{release}", spec.url_release(release)) for u in alt.split())
+        per_release = "{release}" in alt
+        if (urls, per_release) not in out:
+            out.append((urls, per_release))
+    return out
 
 
 @contextmanager
@@ -121,6 +139,11 @@ class Job:
     path: Path | None = None
     urls: tuple[str, ...] = ()
     index: str | None = None           # оглавление вендора (spec.discover)
+    # Запасные варианты адресов (шаблон «a | b»), если не скачались urls.
+    fallbacks: tuple[tuple[tuple[str, ...], bool], ...] = ()
+    # Источник — файл одного выпуска (не общий на все): записи файла
+    # относятся к нему целиком.
+    per_release: bool = False
 
     @property
     def url(self) -> str | None:
@@ -140,9 +163,10 @@ def plan(targets: list[tuple[str, str]], *, directory: Path | None,
         spec = FAMILIES[family]
         local = local_file(directory, family, release)
         if local is not None:
-            path, _shared = local
+            path, shared = local
             key = (family, str(path))
-            jobs.setdefault(key, Job(spec, [], path=path)).releases.append(release)
+            jobs.setdefault(key, Job(spec, [], path=path, per_release=not shared)
+                            ).releases.append(release)
             continue
         template = (urls.get(family) or spec.default_url).strip()
         if not template:
@@ -156,9 +180,15 @@ def plan(targets: list[tuple[str, str]], *, directory: Path | None,
             jobs[(family, f"{template}#{release}")] = Job(
                 spec, [release], index=template.replace("{release}", release))
             continue
-        job_urls = tuple(u.replace("{release}", release) for u in template.split())
-        jobs.setdefault((family, " ".join(job_urls)), Job(spec, [], urls=job_urls)
-                        ).releases.append(release)
+        variants = expand(template, spec, release)
+        if not variants:
+            missing.append(ReleaseResult(family, release,
+                                         error=f"пустой адрес источника {spec.label}"))
+            continue
+        (job_urls, per_release), *rest = variants
+        key = (family, " | ".join(" ".join(u) for u, _ in variants))
+        jobs.setdefault(key, Job(spec, [], urls=job_urls, fallbacks=tuple(rest),
+                                 per_release=per_release)).releases.append(release)
     return list(jobs.values()), missing
 
 
@@ -170,6 +200,28 @@ def _read_url(fetch: Callable[[str, Path], None], tmpdir: str) -> Callable[[str]
     return read
 
 
+def _fetch_variants(job: Job, first: list[str], fetch: Callable[[str, Path], None],
+                    tmp: Path) -> list[Path]:
+    """Скачивает первый вариант адресов, что удался; ошибки всех — в одном сообщении."""
+    variants = [(tuple(first), job.per_release), *job.fallbacks]
+    errors: list[str] = []
+    for n, (urls, per_release) in enumerate(variants):
+        paths: list[Path] = []
+        try:
+            for i, url in enumerate(urls):
+                p = tmp / f"payload{n}-{i}"
+                fetch(url, p)
+                paths.append(p)
+        except Exception as e:  # noqa: BLE001 — пробуем следующий вариант
+            errors.append(str(e) if isinstance(e, AdvisoryError) else f"{url}: {e}")
+            continue
+        job.urls, job.per_release = urls, per_release
+        return paths
+    if len(errors) == 1:
+        raise AdvisoryError(errors[0])
+    raise AdvisoryError("ни один адрес не скачался: " + "; ".join(errors))
+
+
 def run_job(job: Job, store: AdvisoryStore,
             fetch: Callable[[str, Path], None] | None = None
             ) -> tuple[list[ReleaseResult], str]:
@@ -178,6 +230,7 @@ def run_job(job: Job, store: AdvisoryStore,
     Выпуск, для которого в непустом файле не нашлось ни одной записи, не
     перезаписывается пустотой (вероятно, вендор поменял формат или разметку
     выпусков) — он возвращается с ошибкой, прежние данные остаются."""
+    index_fetch = fetch or _download_index
     fetch = fetch or _download
     tmpdir: str | None = None
     try:
@@ -186,27 +239,40 @@ def run_job(job: Job, store: AdvisoryStore,
             tmpdir = tempfile.mkdtemp(prefix="advisory-")
             job_urls = list(job.urls)
             if job.index and job.spec.discover is not None:
-                job_urls = job.spec.discover(job.releases[0], _read_url(fetch, tmpdir))
+                try:
+                    job_urls = job.spec.discover(job.releases[0],
+                                                 _read_url(index_fetch, tmpdir))
+                except AdvisoryError:
+                    raise
+                except Exception as e:
+                    raise AdvisoryError(f"оглавление {job.index} не читается: {e}") from e
                 if not job_urls:
                     raise AdvisoryError(
                         f"в каталоге {job.index} нет файла OVAL для {job.spec.label} "
                         f"{job.releases[0]}: задайте ADVISORY_URL_{job.spec.family.upper()} "
                         "или положите файл в каталог бюллетеней")
                 job.urls = tuple(job_urls)
-            for i, url in enumerate(job_urls):
-                p = Path(tmpdir) / f"payload{i}"
-                fetch(url, p)
-                paths.append(p)
+            paths = _fetch_variants(job, job_urls, fetch, Path(tmpdir))
         digest = hashlib.sha256("".join(sha256(p) for p in paths).encode()).hexdigest() \
             if len(paths) > 1 else sha256(paths[0])
+        parser = job.spec.parser
+        if job.per_release and job.spec.release_parser is not None:
+            parser = job.spec.release_parser
         buckets: dict[str, list[Advisory]] = defaultdict(list)
         for path in paths:
             with open_payload(path) as streams:
                 for stream in streams:
-                    for rec in job.spec.parser(stream, job.spec.family, job.releases):
+                    for rec in parser(stream, job.spec.family, job.releases):
                         buckets[rec.release].append(rec)
         results = []
         total = sum(len(v) for v in buckets.values())
+        if not total:
+            # пустая выборка из скачанного файла — почти всегда не тот файл
+            # (страница вместо данных, сменился формат); прежние данные не трогаем
+            raise AdvisoryError(
+                f"в файле {job.label} не найдено ни одной записи бюллетеней "
+                f"{job.spec.label} — прежние данные оставлены (проверьте, что по адресу "
+                "лежит OVAL/JSON вендора)")
         for release in job.releases:
             if total and not buckets.get(release):
                 results.append(ReleaseResult(
@@ -241,3 +307,81 @@ def sync_releases(store: AdvisoryStore, targets: list[tuple[str, str]], *,
                                          error=msg[:300]) for r in job.releases)
     fp = hashlib.sha256("\n".join(sorted(digests)).encode()).hexdigest() if digests else ""
     return results, fp
+
+
+@dataclass(slots=True)
+class SourceCheck:
+    family: str
+    release: str
+    ok: bool
+    detail: str
+    url: str = ""
+
+
+def check_sources(targets: list[tuple[str, str]], *, directory: Path | None,
+                  urls: dict[str, str],
+                  probe: Callable[[str], tuple[int, str, bytes]] | None = None,
+                  read: Callable[[str], bytes] | None = None) -> list[SourceCheck]:
+    """Доступны ли источники выпусков, без загрузки в справочник: адрес отвечает
+    и отдаёт данные (XML/JSON/архив), а не HTML. Для каталога вендора (Astra)
+    проверяется, что в оглавлении находится файл выпуска."""
+    from scanner.feeds import net
+    probe = probe or net.probe
+
+    def _read(url: str) -> bytes:
+        with tempfile.TemporaryDirectory(prefix="advisory-check-") as d:
+            p = Path(d) / "index"
+            _download_index(url, p)
+            return p.read_bytes()
+
+    read = read or _read
+    jobs, missing = plan(targets, directory=directory, urls=urls)
+    out = [SourceCheck(m.family, m.release, False, m.error or "") for m in missing]
+    for job in jobs:
+        for release in job.releases:
+            if job.path is not None:
+                out.append(SourceCheck(job.spec.family, release, True,
+                                       f"локальный файл {job.path}", str(job.path)))
+                continue
+            variants = [(job.urls, job.per_release), *job.fallbacks]
+            if job.index and job.spec.discover is not None:
+                try:
+                    found = job.spec.discover(release, read)
+                except Exception as e:  # noqa: BLE001
+                    out.append(SourceCheck(job.spec.family, release, False,
+                                           f"оглавление {job.index}: {e}", job.index))
+                    continue
+                if not found:
+                    out.append(SourceCheck(job.spec.family, release, False,
+                                           f"в оглавлении {job.index} нет файла выпуска",
+                                           job.index))
+                    continue
+                variants = [(tuple(found), True)]
+            errors: list[str] = []
+            for urls_, _per in variants:
+                bad = None
+                for url in urls_:
+                    try:
+                        code, ctype, head = probe(url)
+                    except Exception as e:  # noqa: BLE001
+                        bad = str(e)
+                        break
+                    kind = net.kind_of(head)
+                    if code >= 400:
+                        bad = f"{url}: HTTP {code}"
+                        break
+                    if kind in ("html", "?"):
+                        bad = (f"{url}: HTTP {code}, но вместо данных "
+                               f"{'HTML-страница' if kind == 'html' else 'неизвестный формат'}"
+                               f" ({ctype or 'без Content-Type'})")
+                        break
+                if bad is None:
+                    out.append(SourceCheck(
+                        job.spec.family, release, True,
+                        "доступен" + (" (запасной адрес)" if errors else ""),
+                        " ".join(urls_)))
+                    break
+                errors.append(bad)
+            else:
+                out.append(SourceCheck(job.spec.family, release, False, "; ".join(errors)))
+    return out

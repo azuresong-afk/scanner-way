@@ -85,15 +85,11 @@ def _sha256(path: Path) -> str:
 
 
 def _download(url: str, dest: Path, what: str = "выгрузку БДУ") -> None:
-    import httpx
+    from scanner.feeds.net import DownloadError, download
     try:
-        with httpx.stream("GET", url, timeout=120, follow_redirects=True) as resp:
-            resp.raise_for_status()
-            with dest.open("wb") as fh:
-                for chunk in resp.iter_bytes(1 << 20):
-                    fh.write(chunk)
-    except httpx.HTTPError as e:
-        raise FeedError(f"не удалось скачать {what}: {type(e).__name__}: {e}") from e
+        download(url, dest, timeout=120)
+    except DownloadError as e:
+        raise FeedError(f"не удалось скачать {what}: {e}") from e
 
 
 def load_bdu(ctx: FeedContext) -> FeedResult:

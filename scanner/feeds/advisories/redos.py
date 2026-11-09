@@ -1,9 +1,14 @@
 """РЕД ОС: бюллетени безопасности вендора в формате OVAL (rpminfo).
 
-Вендор публикует один файл на все выпуски:
-https://redos.red-soft.ru/support/secure/redos.xml (адрес по умолчанию; свой —
-ADVISORY_URL_REDOS, закрытый контур — файл ``redos.xml`` или ``redos-7.3.xml``
-в ADVISORY_DIR). Выпуск каждой записи определяется по платформе определения
+Вендор публикует файл на выпуск — https://redos.red-soft.ru/support/secure/7.3/redos.xml,
+…/8.0/redos.xml (выпуск хоста ``8`` в адресе пишется ``8.0``), — и раньше
+публиковал один общий https://redos.red-soft.ru/support/secure/redos.xml. По
+умолчанию берётся файл выпуска, а если он не скачался — общий (свой адрес —
+ADVISORY_URL_REDOS, варианты через `` | ``; закрытый контур — файл
+``redos-7.3.xml`` или общий ``redos.xml`` в ADVISORY_DIR).
+
+Файл выпуска относится к нему целиком. В общем файле выпуск каждой записи
+определяется по платформе определения
 (``<platform>RED OS 7.3</platform>``, комментарий критерия «РЕД ОС 8 …»), а
 если её нет — по метке сборки в версии исправления (``.el7`` — 7.3,
 ``.red80`` — 8). Не определился — запись относится ко всем выпускам задания:
@@ -17,8 +22,9 @@ from collections.abc import Iterable, Iterator
 from typing import IO
 
 from scanner.feeds.advisories.base import Advisory, FamilySpec
-from scanner.feeds.advisories.oval import parse_oval_releases
+from scanner.feeds.advisories.oval import parse_oval, parse_oval_releases
 
+BASE = "https://redos.red-soft.ru/support/secure/"
 _PLATFORM_RE = re.compile(r"(?:red\s*os|ред\s*ос|redos)\D{0,20}?(\d+(?:\.\d+)?)", re.IGNORECASE)
 _DIST_RE = re.compile(r"\.(el7|red(\d)(\d))", re.IGNORECASE)
 
@@ -29,6 +35,11 @@ def release_of(version_id: str | None, codename: str | None) -> str | None:
         return None
     v = m.group(0)
     return v.removesuffix(".0")
+
+
+def url_release(release: str) -> str:
+    """Выпуск в адресе вендора: ``8`` -> ``8.0``, ``7.3`` -> ``7.3``."""
+    return release if "." in release else f"{release}.0"
 
 
 def _norm(v: str) -> str:
@@ -57,6 +68,7 @@ def parse_redos(stream: IO[bytes], family: str, releases: Iterable[str]) -> Iter
 
 SPEC = FamilySpec(
     family="redos", label="РЕД ОС", manager="rpm", parser=parse_redos,
-    default_url="https://redos.red-soft.ru/support/secure/redos.xml",
+    default_url=f"{BASE}{{release}}/redos.xml | {BASE}redos.xml",
     host_families=("redos",), release_of=release_of,
-    note="OVAL бюллетеней РЕД ОС (redos.xml — все выпуски)")
+    url_release=url_release, release_parser=parse_oval,
+    note="OVAL бюллетеней РЕД ОС (файл выпуска, запасной — общий redos.xml)")
