@@ -115,7 +115,7 @@ it("выбор группы активов добавляет group_id в зап
 
 it("разделы: план и профили соответствия — опции отчёта", async () => {
   setToken("t");
-  const seen: { plan: string | null; compliance: string | null }[] = [];
+  const seen: { plan: string | null; details: string | null; compliance: string | null }[] = [];
   mockApi({
     "GET /engagements/5/asset-groups": [],
     "GET /engagements/5/compliance-profiles": [
