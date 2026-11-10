@@ -35,11 +35,11 @@ scanner --actor cli:ivanov run --engagement 1 --targets 192.0.2.0/28 \
 ### 1.2. Отчёт
 
 ```bash
-scanner report --run 12 --format pdf --out /app/report-12.pdf [--brief] [--no-plan] [--compare-to 9]
+scanner report --run 12 --format pdf --out /app/report-12.pdf [--brief] [--no-plan] [--no-details] [--compare-to 9]
 ```
 
 `--format html|pdf|docx|json`; `--brief` — краткая версия; `--no-plan` — без
-плана устранения; `--compare-to ID` — сравнение с более ранним прогоном.
+плана устранения; `--no-details` — без раздела «Детальные результаты для инженеров»; `--compare-to ID` — сравнение с более ранним прогоном.
 
 ### 1.3. Учётные записи и наборы проверки
 
@@ -275,7 +275,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 `include_info`, `false_positives=include|exclude|only`.
 
 **Отчёт** `GET /runs/{r}/report`: `format=html|pdf|docx|json`,
-`variant=full|brief`, `compare_to=<id>`, `group_id=<id>`, `plan=false`,
+`variant=full|brief`, `compare_to=<id>`, `group_id=<id>`, `plan=false`, `details=false`,
 `compliance=fstec-117,cis-benchmark` (или `none`).
 
 ## 3. Статусы

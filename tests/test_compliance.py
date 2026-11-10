@@ -322,7 +322,8 @@ def test_api_end_to_end(client, sqlite_factory):
     # раздел — опция отчёта: compliance=none убирает его, список — выбирает профили
     rep = client.get(f"/runs/{rid}/report", params={"format": "json", "compliance": "none"})
     assert rep.status_code == 200 and "compliance" not in rep.json()
-    assert rep.json()["meta"]["sections"] == {"plan": True, "compliance": False}
+    assert rep.json()["meta"]["sections"] == {"plan": True, "compliance": False,
+                                                 "details": True}
     html = client.get(f"/runs/{rid}/report", params={"format": "html", "compliance": ""}).text
     assert "Соответствие требованиям" not in html
     rep = client.get(f"/runs/{rid}/report",

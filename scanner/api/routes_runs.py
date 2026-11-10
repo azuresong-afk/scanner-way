@@ -485,6 +485,7 @@ def get_report(run_id: int, request: Request,
                compare_to: int | None = None,
                group_id: int | None = None,
                plan: bool = True,
+               details: bool = True,
                compliance: Annotated[str | None, Query(
                    max_length=300, pattern=r"^[a-z0-9,-]*$")] = None) -> Response:
     """Отчёт по прогону. По умолчанию — только по этому прогону, без сравнения;
@@ -493,6 +494,7 @@ def get_report(run_id: int, request: Request,
     variant=brief — краткая версия: без плана устранения,
     по находкам вместо рекомендаций только ссылки на устранение.
     plan=false — без раздела «План устранения» (рекомендации по находкам остаются).
+    details=false — без раздела «Детальные результаты для инженеров».
     compliance — профили соответствия в отчёте через запятую (fstec-117,cis-benchmark);
     пусто или none — без раздела «Соответствие требованиям»; не задан — профили
     договора с признаком «в отчёт»."""
@@ -542,7 +544,8 @@ def get_report(run_id: int, request: Request,
         false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts,
         risk=build_risk_context(session, current, eng.id),
         compliance=_compliance_sections(session, run_id, eng.id, hosts, profiles),
-        with_plan=plan, coverage=repo.run_coverage(session, run),
+        with_plan=plan, with_details=details,
+        coverage=repo.run_coverage(session, run),
         previous_coverage=(repo.run_coverage(session, prev_id)
                            if prev_id is not None else None),
         run_status=run.status, warnings=list(run.warnings or []))
@@ -552,6 +555,7 @@ def get_report(run_id: int, request: Request,
                  result="ok", details={"format": fmt.value, "variant": var.value,
                                        "previous_run_id": prev_id, "findings": len(current),
                                        "group_id": group_id, "plan": report.show_plan,
+                                       "details": report.show_details,
                                        "compliance": [c["profile"]["id"]
                                                       for c in report.compliance]})
     suffix = (f"-group-{group_id}" if group_id is not None else "") + (

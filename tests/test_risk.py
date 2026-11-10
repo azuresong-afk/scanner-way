@@ -178,7 +178,7 @@ def test_report_without_risk_is_unchanged():
     data = json.loads(ReportRenderer().render(rep, "json"))
     assert "priority" not in data
     assert section_numbers(False) == {"summary": 1, "plan": 2, "trend": 3,
-                                      "hosts": 4, "details": 5}
+                                      "hosts": 4, "details": 5, "fp": 6}
     assert section_numbers(True, True)["priority"] == 2
 
 
