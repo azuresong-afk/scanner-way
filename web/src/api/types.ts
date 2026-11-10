@@ -12,6 +12,8 @@ export type ReportVariant = "full" | "brief";
  * профили соответствия в отчёте ([] — без раздела; не задано — по настройкам договора). */
 export interface ReportSections {
   plan?: boolean;
+  /** false — без раздела «Детальные результаты для инженеров». */
+  details?: boolean;
   compliance?: string[];
 }
 

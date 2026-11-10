@@ -467,6 +467,7 @@
 <p>Находок нет.</p>
 {% endif %}
 
+{% if r.show_details %}
 <h2><span class="n">{{ "%02d"|format(num.details) }}</span>Детальные результаты для инженеров</h2>
 <p class="lead">Описание каждой находки с подтверждением и {{ "ссылками на устранение" if r.brief else "рекомендацией по устранению" }}, по модулям сканирования.</p>
 {% for m in r.modules %}
@@ -513,9 +514,10 @@
   {% endfor %}
 {% endfor %}
 {% endfor %}
+{% endif %}
 
 {% if r.false_positives %}
-<h2><span class="n">{{ "%02d"|format(num.details + 1) }}</span>Ложные срабатывания</h2>
+<h2><span class="n">{{ "%02d"|format(num.fp) }}</span>Ложные срабатывания</h2>
 <p class="lead">Находки, которые специалист отметил как ложные срабатывания. В подсчёты, план устранения и сравнение прогонов они не входят.</p>
 <table>
   <colgroup><col style="width: 16%"><col style="width: 30%"><col style="width: 16%"><col style="width: 24%"><col style="width: 14%"></colgroup>

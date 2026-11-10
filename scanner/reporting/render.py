@@ -156,19 +156,26 @@ def host_blocks(report: Report) -> list[HostBlock]:
 
 
 def section_numbers(brief: bool, priority: bool = False,
-                    compliance: bool = False, plan: bool = True) -> dict[str, int]:
+                    compliance: bool = False, plan: bool = True,
+                    details: bool = True) -> dict[str, int]:
     """Номера разделов: в краткой версии (или с отключённой опцией plan) раздела
     «План устранения» нет; раздел
     «Исправить в первую очередь» есть, только если считалась приоритизация;
-    «Соответствие требованиям» — если в отчёт включены профили (R5)."""
+    «Соответствие требованиям» — если в отчёт включены профили (R5);
+    «Детальные результаты для инженеров» — если не отключены опцией details.
+    Ключ fp — номер раздела «Ложные срабатывания» (следует последним)."""
     keys = ["summary", "plan", "trend", "hosts", "details"]
     if brief or not plan:
         keys.remove("plan")
+    if not details:
+        keys.remove("details")
     if priority:
         keys.insert(1, "priority")
     if compliance:
         keys.insert(keys.index("trend"), "compliance")
-    return {k: i for i, k in enumerate(keys, 1)}
+    out = {k: i for i, k in enumerate(keys, 1)}
+    out["fp"] = len(keys) + 1
+    return out
 
 
 def _run_label(run_id: object, fallback: str) -> str:
@@ -242,7 +249,7 @@ class ReportRenderer:
         return _env().get_template("report.html.j2").render(
             r=report, charts=charts, hosts=host_blocks(report),
             num=section_numbers(report.brief, report.has_priority, bool(report.compliance),
-                              report.with_plan))
+                              report.with_plan, report.show_details))
 
     def render_pdf(self, report: Report, history: Sequence[RunPoint] | None = None) -> bytes:
         try:
@@ -419,7 +426,7 @@ class ReportRenderer:
         s = report.summary
         t = report.combined.trend
         num = section_numbers(report.brief, report.has_priority, bool(report.compliance),
-                              report.with_plan)
+                              report.with_plan, report.show_details)
 
         # Обложка
         spacer(60)
@@ -662,71 +669,72 @@ class ReportRenderer:
                 rows.append(row)
             table(header, rows, widths=widths)
 
-        # Детально
-        heading(num["details"], "Детальные результаты для инженеров")
-        for i, m in enumerate(report.modules, 1):
-            doc.add_heading(_x(f"{num['details']}.{i}. {m.label}"), level=2)
-            if not m.findings:
-                small(doc.add_paragraph(), "Открытых находок нет.", MUTED, 9)
-            for _, _, group in m.by_severity:
-                for v in group:
-                    f = v.finding
-                    p = doc.add_paragraph()
-                    p.paragraph_format.space_before = Pt(10)
-                    p.paragraph_format.keep_with_next = True
-                    sr = p.add_run(f"● {SEVERITY_LABELS[f.severity]}   ")
-                    sr.bold = True
-                    sr.font.size = Pt(8.5)
-                    sr.font.color.rgb = RGBColor(*SEVERITY_RGB[f.severity])
-                    tr = p.add_run(_x(f.title))
-                    tr.bold = True
-                    tr.font.color.rgb = _rgb(INK)
-                    if v.status_label:
-                        small(p, f"  · {v.status_label}", MUTED, 8.5, italic=True)
-                    details = [f"Хост: {v.target}"]
-                    if f.vuln_id:
-                        details.append(f"ID: {f.vuln_id}")
-                    if f.cvss is not None:
-                        details.append(f"CVSS: {f.cvss:.1f}")
-                    if f.cve_ids:
-                        details.append("CVE: " + ", ".join(f.cve_ids))
-                    if f.bdu_ids:
-                        details.append("БДУ: " + ", ".join(f.bdu_ids))
-                    dp = doc.add_paragraph()
-                    dp.paragraph_format.keep_with_next = True
-                    small(dp, " · ".join(details), MUTED, 8.5)
-                    if f.evidence:
-                        ev = doc.add_paragraph()
-                        shade(ev._p, PANEL)
-                        r = ev.add_run(_x(f.evidence))
-                        r.font.name = "Consolas"
-                        r.font.size = Pt(8)
-                    rem = v.remediation
-                    rp = doc.add_paragraph()
-                    shade(rp._p, GOOD_BG)
-                    if report.brief:
-                        links = _links(rem.references)
-                        small(rp, "Ссылки на устранение", GOOD, 8, bold=True)
-                        if not links:
-                            small(rp, "\nСсылок на устранение нет.", MUTED, 8)
-                        for link in links:
-                            small(rp, f"\n{link.label}: ", INK_2, 8, bold=True)
-                            hyperlink(rp, link.url)
-                        continue
-                    small(rp, "Рекомендация по устранению\n", GOOD, 8, bold=True)
-                    rp.add_run(_x(rem.text))
-                    note = f"Источник: {rem.source_label}."
-                    if rem.fix_method:
-                        note += f" Способ устранения: {rem.fix_method}."
-                    small(rp, "\n" + note, MUTED, 8)
-                    if rem.references:
-                        small(rp, "\nСсылки на устранение:", GOOD, 8, bold=True)
-                        for link in _links(rem.references):
-                            small(rp, f"\n{link.label}: ", INK_2, 8, bold=True)
-                            hyperlink(rp, link.url)
+        # Детально (опция отчёта: раздел можно исключить)
+        if report.show_details:
+            heading(num["details"], "Детальные результаты для инженеров")
+            for i, m in enumerate(report.modules, 1):
+                doc.add_heading(_x(f"{num['details']}.{i}. {m.label}"), level=2)
+                if not m.findings:
+                    small(doc.add_paragraph(), "Открытых находок нет.", MUTED, 9)
+                for _, _, group in m.by_severity:
+                    for v in group:
+                        f = v.finding
+                        p = doc.add_paragraph()
+                        p.paragraph_format.space_before = Pt(10)
+                        p.paragraph_format.keep_with_next = True
+                        sr = p.add_run(f"● {SEVERITY_LABELS[f.severity]}   ")
+                        sr.bold = True
+                        sr.font.size = Pt(8.5)
+                        sr.font.color.rgb = RGBColor(*SEVERITY_RGB[f.severity])
+                        tr = p.add_run(_x(f.title))
+                        tr.bold = True
+                        tr.font.color.rgb = _rgb(INK)
+                        if v.status_label:
+                            small(p, f"  · {v.status_label}", MUTED, 8.5, italic=True)
+                        details = [f"Хост: {v.target}"]
+                        if f.vuln_id:
+                            details.append(f"ID: {f.vuln_id}")
+                        if f.cvss is not None:
+                            details.append(f"CVSS: {f.cvss:.1f}")
+                        if f.cve_ids:
+                            details.append("CVE: " + ", ".join(f.cve_ids))
+                        if f.bdu_ids:
+                            details.append("БДУ: " + ", ".join(f.bdu_ids))
+                        dp = doc.add_paragraph()
+                        dp.paragraph_format.keep_with_next = True
+                        small(dp, " · ".join(details), MUTED, 8.5)
+                        if f.evidence:
+                            ev = doc.add_paragraph()
+                            shade(ev._p, PANEL)
+                            r = ev.add_run(_x(f.evidence))
+                            r.font.name = "Consolas"
+                            r.font.size = Pt(8)
+                        rem = v.remediation
+                        rp = doc.add_paragraph()
+                        shade(rp._p, GOOD_BG)
+                        if report.brief:
+                            links = _links(rem.references)
+                            small(rp, "Ссылки на устранение", GOOD, 8, bold=True)
+                            if not links:
+                                small(rp, "\nСсылок на устранение нет.", MUTED, 8)
+                            for link in links:
+                                small(rp, f"\n{link.label}: ", INK_2, 8, bold=True)
+                                hyperlink(rp, link.url)
+                            continue
+                        small(rp, "Рекомендация по устранению\n", GOOD, 8, bold=True)
+                        rp.add_run(_x(rem.text))
+                        note = f"Источник: {rem.source_label}."
+                        if rem.fix_method:
+                            note += f" Способ устранения: {rem.fix_method}."
+                        small(rp, "\n" + note, MUTED, 8)
+                        if rem.references:
+                            small(rp, "\nСсылки на устранение:", GOOD, 8, bold=True)
+                            for link in _links(rem.references):
+                                small(rp, f"\n{link.label}: ", INK_2, 8, bold=True)
+                                hyperlink(rp, link.url)
 
         if report.false_positives:
-            heading(num["details"] + 1, "Ложные срабатывания")
+            heading(num["fp"], "Ложные срабатывания")
             small(doc.add_paragraph(), "Находки, которые специалист отметил как ложные "
                   "срабатывания. В подсчёты, план устранения и сравнение прогонов они "
                   "не входят.", MUTED, 9)

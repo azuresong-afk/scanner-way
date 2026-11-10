@@ -444,9 +444,10 @@ export const api = {
     const grp = groupId === null ? "" : `&group_id=${groupId}`;
     // Разделы-опции: без плана — plan=false; профили соответствия — списком (none — без раздела).
     const plan = sections.plan === false ? "&plan=false" : "";
+    const det = sections.details === false ? "&details=false" : "";
     const cmpl =
       sections.compliance === undefined ? "" : `&compliance=${encodeURIComponent(sections.compliance.join(",") || "none")}`;
-    const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}${cmp}${grp}${plan}${cmpl}`);
+    const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}${cmp}${grp}${plan}${det}${cmpl}`);
     return res.blob();
   },
 

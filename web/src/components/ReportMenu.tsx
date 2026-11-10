@@ -28,8 +28,8 @@ const VARIANTS: { id: ReportVariant; label: string; hint: string }[] = [
  * договора (`runs`), появляется «Сравнить с»: можно выбрать более ранний успешно
  * завершённый прогон, и в отчёт добавятся новые/закрытые/регрессии и тренд.
  *
- * «Разделы» — необязательные части отчёта: «План устранения» (в кратком его нет всегда)
- * и «Соответствие» по каждому профилю договора (ФСТЭК №117 нужен не всем — только ГИС).
+ * «Разделы» — необязательные части отчёта: «План устранения» (в кратком его нет всегда),
+ * «Рекомендации инженерам» (раздел «Детальные результаты для инженеров») и «Соответствие» по каждому профилю договора (ФСТЭК №117 нужен не всем — только ГИС).
  * По умолчанию профили отмечены по признаку «в отчёт» со страницы «Соответствие».
  */
 export function ReportMenu({
@@ -56,6 +56,7 @@ export function ReportMenu({
   const [groupId, setGroupId] = useState<number | null>(null);
   const [groups, setGroups] = useState<AssetGroupOut[]>([]);
   const [withPlan, setWithPlan] = useState(true);
+  const [withDetails, setWithDetails] = useState(true);
   // Профили соответствия договора: id, подпись и отмечен ли для этого отчёта.
   const [profiles, setProfiles] = useState<{ id: string; label: string; on: boolean }[]>([]);
   useEffect(() => {
@@ -72,8 +73,8 @@ export function ReportMenu({
       () => setProfiles([]),
     );
   }, [engagementId]);
-  // «Выбрать все»: план (если он доступен — не в кратком) и все профили соответствия.
-  const sectionFlags = [...(variant === "brief" ? [] : [withPlan]), ...profiles.map((p) => p.on)];
+  // «Выбрать все»: план (если он доступен — не в кратком), рекомендации инженерам и все профили.
+  const sectionFlags = [...(variant === "brief" ? [] : [withPlan]), withDetails, ...profiles.map((p) => p.on)];
   const allOn = sectionFlags.length > 0 && sectionFlags.every(Boolean);
   const someOn = sectionFlags.some(Boolean) && !allOn;
   const allRef = useRef<HTMLInputElement>(null);
@@ -82,10 +83,12 @@ export function ReportMenu({
   }, [someOn]);
   const setAll = (on: boolean) => {
     setWithPlan(on);
+    setWithDetails(on);
     setProfiles((ps) => ps.map((p) => ({ ...p, on })));
   };
   const sections: ReportSections = {
     ...(withPlan ? {} : { plan: false }),
+    ...(withDetails ? {} : { details: false }),
     ...(profiles.length > 0 ? { compliance: profiles.filter((p) => p.on).map((p) => p.id) } : {}),
   };
   useEffect(() => {
@@ -228,6 +231,15 @@ export function ReportMenu({
               onChange={(e) => setWithPlan(e.target.checked)}
             />
             План устранения
+          </label>
+          <label className="inline nowrap" title="Раздел «Детальные результаты для инженеров»: описание каждой находки с подтверждением и рекомендацией">
+            <input
+              type="checkbox"
+              checked={withDetails}
+              disabled={disabled || !!busy}
+              onChange={(e) => setWithDetails(e.target.checked)}
+            />
+            Рекомендации инженерам
           </label>
           {profiles.map((p) => (
             <label key={p.id} className="inline nowrap">

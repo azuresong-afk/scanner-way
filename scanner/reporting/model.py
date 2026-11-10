@@ -430,6 +430,8 @@ class Report:
     brief: bool = False   # краткая версия: без плана и текстов рекомендаций
     # раздел «План устранения» включён (опция отчёта; в краткой версии его нет всегда)
     with_plan: bool = True
+    # раздел «Детальные результаты для инженеров» включён (опция отчёта)
+    with_details: bool = True
     false_positives: list[FalsePositiveView] = field(default_factory=list)
     priority: list[PriorityItem] = field(default_factory=list)   # топ по рангу (R6)
     priority_hosts: list[HostPriority] = field(default_factory=list)
@@ -458,6 +460,10 @@ class Report:
         return self.with_plan and not self.brief
 
     @property
+    def show_details(self) -> bool:
+        return self.with_details
+
+    @property
     def has_trend(self) -> bool:
         return self.combined.trend is not None
 
@@ -476,7 +482,8 @@ class Report:
                 "group": c.group,
                 "generated_at": c.generated_at.isoformat(),
                 "variant": self.variant,
-                "sections": {"plan": self.show_plan, "compliance": bool(self.compliance)},
+                "sections": {"plan": self.show_plan, "compliance": bool(self.compliance),
+                             "details": self.show_details},
             },
             "summary": self.summary.to_dict(),
             "remediation_plan": [p.to_dict() for p in self.plan],
@@ -678,6 +685,7 @@ def build_report(
     risk: RiskContext | None = None,
     compliance: list[dict] | None = None,
     with_plan: bool = True,
+    with_details: bool = True,
     coverage: Coverage | None = None,
     previous_coverage: Coverage | None = None,
     run_status: str | None = None,
@@ -697,6 +705,8 @@ def build_report(
     hosts — адреса хостов (например, активов группы): в отчёт попадают только
     находки этих хостов; None — без фильтра (поведение по умолчанию).
     with_plan=False — без раздела «План устранения» (опция отчёта).
+    with_details=False — без раздела «Детальные результаты для инженеров» (опция
+    отчёта; в JSON находки с рекомендациями остаются, меняется только meta.sections).
     coverage/previous_coverage — покрытие прогона и базы сравнения: раздел
     «Полнота проверки», честное сравнение (не проверенное — не «устранено»).
     run_status/warnings — статус прогона и ограничения достоверности.
@@ -772,5 +782,6 @@ def build_report(
         coverage=cov_dict,
         warnings=list(warnings or []),
         comparability=comparability,
+        with_details=with_details,
     )
     return report if with_plan else without_plan(report)

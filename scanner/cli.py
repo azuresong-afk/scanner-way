@@ -332,6 +332,8 @@ def build_parser() -> argparse.ArgumentParser:
                           "только ссылки на устранение")
     rep.add_argument("--no-plan", action="store_true",
                      help="без раздела «План устранения» (рекомендации по находкам остаются)")
+    rep.add_argument("--no-details", action="store_true",
+                     help="без раздела «Детальные результаты для инженеров»")
     rep.set_defaults(handler=cmd_report)
 
     # --- auth ---
@@ -857,6 +859,7 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
     report = build_report(current, previous=previous, historically_fixed=hist,
                           resolver=resolver, context=context,
                           false_positives=marks, risk=risk, with_plan=not args.no_plan,
+                          with_details=not args.no_details,
                           coverage=coverage, previous_coverage=prev_cov,
                           run_status=run_status, warnings=run_warnings)
     variant = "brief" if args.brief else "full"

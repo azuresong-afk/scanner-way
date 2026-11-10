@@ -115,7 +115,7 @@ it("выбор группы активов добавляет group_id в зап
 
 it("разделы: план и профили соответствия — опции отчёта", async () => {
   setToken("t");
-  const seen: { plan: string | null; compliance: string | null }[] = [];
+  const seen: { plan: string | null; details: string | null; compliance: string | null }[] = [];
   mockApi({
     "GET /engagements/5/asset-groups": [],
     "GET /engagements/5/compliance-profiles": [
@@ -124,7 +124,11 @@ it("разделы: план и профили соответствия — оп
     ],
     "GET /compliance/profiles": [{ id: "fstec-117", short: "ФСТЭК №117" }],
     "GET /runs/7/report": (_init: RequestInit | undefined, url: URL) => {
-      seen.push({ plan: url.searchParams.get("plan"), compliance: url.searchParams.get("compliance") });
+      seen.push({
+        plan: url.searchParams.get("plan"),
+        details: url.searchParams.get("details"),
+        compliance: url.searchParams.get("compliance"),
+      });
       return new Response("x");
     },
   });
@@ -135,17 +139,19 @@ it("разделы: план и профили соответствия — оп
   expect(fstec).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Соответствие: cis-controls-v8" })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: "План устранения" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Рекомендации инженерам" })).toBeChecked();
   await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
 
-  // клиент не ГИС: убираем №117 и план
+  // клиент не ГИС: убираем №117, план и рекомендации инженерам
   await userEvent.click(fstec);
   await userEvent.click(screen.getByRole("checkbox", { name: "План устранения" }));
+  await userEvent.click(screen.getByRole("checkbox", { name: "Рекомендации инженерам" }));
   await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
   expect(seen.slice(0, 2)).toEqual([
-    { plan: null, compliance: "fstec-117" },
-    { plan: "false", compliance: "none" },
+    { plan: null, details: null, compliance: "fstec-117" },
+    { plan: "false", details: "false", compliance: "none" },
   ]);
 
   // «Выбрать все» включает план и все профили одним кликом
@@ -154,11 +160,12 @@ it("разделы: план и профили соответствия — оп
   expect((all as HTMLInputElement).indeterminate).toBe(false); // всё снято
   await userEvent.click(all);
   expect(screen.getByRole("checkbox", { name: "План устранения" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Рекомендации инженерам" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Соответствие: ФСТЭК №117" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Соответствие: cis-controls-v8" })).toBeChecked();
   await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(3));
-  expect(seen[2]).toEqual({ plan: null, compliance: "fstec-117,cis-controls-v8" });
+  expect(seen[2]).toEqual({ plan: null, details: null, compliance: "fstec-117,cis-controls-v8" });
   await userEvent.click(screen.getByRole("checkbox", { name: "Соответствие: cis-controls-v8" }));
   expect((all as HTMLInputElement).indeterminate).toBe(true);
   await userEvent.click(all);

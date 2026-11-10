@@ -263,3 +263,28 @@ def test_plan_section_is_optional():
     assert "plan" not in section_numbers(False, plan=False)
     full = build_report(fx.current_run(), resolver=fx.resolver()).to_dict()
     assert full["meta"]["sections"]["plan"] is True and "remediation_plan" in full
+
+
+def test_details_section_is_optional():
+    """«Детальные результаты для инженеров» — опция отчёта; JSON-контракт не меняется."""
+    from scanner.reporting.render import section_numbers
+    report = build_report(fx.current_run(), previous=fx.previous_run(),
+                          resolver=fx.resolver(), with_details=False)
+    assert not report.show_details and report.show_plan
+    data = report.to_dict()
+    assert data["meta"]["sections"]["details"] is False
+    assert data["combined"]["findings"][0]["remediation"]["text"]   # находки на месте
+    for variant in ("full", "brief"):
+        html = ReportRenderer().render(report, "html", variant=variant).decode()
+        assert "Детальные результаты для инженеров" not in html
+        assert "Рекомендация по устранению" not in html
+        assert "Результаты по хостам" in html
+        docx = ReportRenderer().render(report, "docx", variant=variant)
+        xml = zipfile.ZipFile(io.BytesIO(docx)).read("word/document.xml").decode()
+        assert "Детальные результаты для инженеров" not in xml
+    nums = section_numbers(False, details=False)
+    assert "details" not in nums and nums["fp"] == nums["hosts"] + 1
+    full = build_report(fx.current_run(), resolver=fx.resolver())
+    assert full.to_dict()["meta"]["sections"]["details"] is True
+    html = ReportRenderer().render(full, "html").decode()
+    assert "Детальные результаты для инженеров" in html
