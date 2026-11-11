@@ -68,7 +68,7 @@ from scanner.core.sshexec import (
 )
 from scanner.feeds import kernel as kn
 from scanner.feeds import packages as pk
-from scanner.feeds.advisories import host_release
+from scanner.feeds.advisories import bduscope, host_release
 from scanner.feeds.advisories.assess import Decision, Verdict, combine, decide
 from scanner.feeds.advisories.base import Advisory, FamilySpec
 from scanner.feeds.advisories.store import AdvisoryStore, CachingAdvisoryStore
@@ -243,6 +243,11 @@ class BackportReport:
     confirmed: int = 0                    # вендор подтвердил: уязвим
     no_record: int = 0                    # у вендора нет записи — оставлено с оговоркой
     added: int = 0                        # добавлено по бюллетеню
+    # Сопоставление по версии апстрима, которое бюллетени выпуска не подтверждают:
+    # запись БДУ называет только другой выпуск ОС хоста (РЕД ОС 7.3 на РЕД ОС 8)
+    # или вендор ведёт бюллетени пакета, а этой CVE в них нет.
+    other_release: list[str] = field(default_factory=list)
+    vendor_silent: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         if not self.has_data:
@@ -251,7 +256,8 @@ class BackportReport:
         return (f"бюллетени дистрибутива ({self.source}): закрыто бэкпортом / не "
                 f"затронуто — {len(self.closed)}, подтверждено вендором — "
                 f"{self.confirmed}, добавлено по бюллетеню — {self.added}, нет записи "
-                f"вендора — {self.no_record}")
+                f"вендора — {self.no_record}, не относится к выпуску — "
+                f"{len(self.other_release) + len(self.vendor_silent)}")
 
 
 def _version_for(p: InstalledPackage, by_source: bool) -> str:
@@ -306,6 +312,10 @@ class _HostAdvisories:
         by_src = [e for e in self._rows.get(p.source or "", []) if e.cve == cve]
         return decide(by_src, cve, package=p.name, installed=_version_for(p, True),
                       manager=manager)
+
+    def tracks(self, pkgs: Sequence[InstalledPackage]) -> bool:
+        """Вендор выпускал бюллетени по этим пакетам (по имени или исходному)."""
+        return any(self._rows.get(n) for p in pkgs for n in (p.name, p.source) if n)
 
     def rows(self, names: set[str]) -> list[Advisory]:
         return [e for n in sorted(names) for e in self._rows.get(n, [])]
@@ -598,6 +608,11 @@ class AuthInventoryModule(ScanModule):
                               if f.evidence and BACKPORT_CAVEAT in f.evidence
                               else "\n".join(x for x in (f.evidence, text) if x))
                 continue
+            if (reason := self._not_for_release(inv, adv, f, cves, pkgs, matcher)):
+                (rep.other_release if reason == "other_release"
+                 else rep.vendor_silent).append(key)
+                del out[key]
+                continue
             rep.no_record += 1
             why = ("в записи нет CVE — сверить с бюллетенем нельзя" if not cves else
                    f"в бюллетенях {rep.source} нет записи о "
@@ -647,6 +662,45 @@ class AuthInventoryModule(ScanModule):
                 added[cve] = f
         rep.added = len(added)
         out.update(added)
+
+    @staticmethod
+    def _not_for_release(inv: HostInventory, adv: _HostAdvisories, f: Finding,
+                         cves: list[str], pkgs: list[InstalledPackage],
+                         matcher: _Matcher | None) -> str | None:
+        """Находка по версии апстрима без записи вендора: не относится ли она к
+        другому выпуску ОС. Бюллетени выпуска загружены (adv.has_data).
+
+        * запись БДУ прямо называет выпуск хоста («8.0 (РЕД ОС)») — находка
+          остаётся: вендор зарегистрировал уязвимость, возможно ещё без исправления;
+        * все записи БДУ находки называют семейство ОС хоста, но только другие
+          выпуски (РЕД ОС 7.3 на РЕД ОС 8) — ``other_release``;
+        * вендор ведёт бюллетени этого пакета для выпуска хоста, а CVE в них нет —
+          ``vendor_silent``: диапазоны «Версия ПО» в БДУ бывают испорчены
+          («от 7.0.0», «до 14.8.2» для ImageMagick), а бюллетень выпуска — нет.
+        """
+        if adv.spec is None:
+            return None
+        store = getattr(matcher, "store", None) if matcher is not None else None
+        recs = []
+        if store is not None and hasattr(store, "get_bdu"):
+            for bid in f.bdu_ids:
+                try:
+                    rec = store.get_bdu(bid)
+                except Exception:  # noqa: BLE001 — без записи решаем как раньше
+                    rec = None
+                if rec is not None:
+                    recs.append(rec)
+        same_family = inv.os_family == adv.spec.family
+        if same_family and any(bduscope.names_release(r, adv.spec.family, inv.os_version)
+                               for r in recs):
+            return None
+        if same_family and recs and all(
+                bduscope.other_release_only(r, adv.spec.family, inv.os_version)
+                for r in recs):
+            return "other_release"
+        if cves and pkgs and adv.tracks(pkgs):
+            return "vendor_silent"
+        return None
 
     def _kernel_findings(self, ctx: ScanContext, inv: HostInventory,
                          adv: _HostAdvisories | None, matcher: _Matcher | None,

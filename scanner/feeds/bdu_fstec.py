@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from scanner.feeds.cpe import compare_versions
 from scanner.feeds.severity import bdu_best_score
 
 if TYPE_CHECKING:
@@ -248,7 +249,54 @@ def parse_bdu_versions(versions: str | None) -> list[BduVersionSpec]:
                 end_inclusive=bool(m.group("incl"))))
         else:
             specs.append(BduVersionSpec(software, exact=expr))
-    return _join_split_ranges(specs)
+    return _cap_open_ranges(_drop_truncated_bounds(_join_split_ranges(specs)))
+
+
+_LEAD_INT = re.compile(r"\d+")
+
+
+def _drop_truncated_bounds(specs: list[BduVersionSpec]) -> list[BduVersionSpec]:
+    """«от 7.0.8 до 68 (ImageMagick)» — в выгрузке от границы «7.0.8-68» остался
+    хвост после дефиса. Как диапазон это «все версии с 7.0.8 до 68-й», и любая
+    современная версия ложно попадает в уязвимые. Граница-голое число, которое
+    в пять и более раз больше первой части начала диапазона с точками, — обломок:
+    версия такой позиции считается неизвестной (по ней не сопоставляем).
+    «от 4.2.2 до 10 (Android)» (следующие мажорные версии) и годы («до 2023»)
+    остаются диапазонами.
+    """
+    out: list[BduVersionSpec] = []
+    for s in specs:
+        end, start = s.end or "", s.start or ""
+        lead = _LEAD_INT.match(start)
+        if end.isdigit() and "." in start and lead is not None \
+                and 5 * max(1, int(lead.group(0))) <= int(end) < 1990:
+            out.append(BduVersionSpec(s.software, unknown=True))
+        else:
+            out.append(s)
+    return out
+
+
+def _cap_open_ranges(specs: list[BduVersionSpec]) -> list[BduVersionSpec]:
+    """«от 6.9.13-28 (ImageMagick), от 7.0.0-0 до 7.1.2-2 (ImageMagick)»: открытый
+    диапазон ветки 6.x рядом с закрытым диапазоном более новой ветки. Понимать
+    «от 6.9.13-28» буквально — «все версии дальше, включая 7.x» — значит
+    противоречить соседней позиции, которая для 7.x даёт границу исправления.
+    Открытый диапазон ограничивается началом следующей ветки того же ПО.
+    """
+    out: list[BduVersionSpec] = []
+    for s in specs:
+        if s.start and not s.end and not s.exact and not s.unknown:
+            later = [o.start for o in specs
+                     if o is not s and o.software == s.software and o.start and o.end
+                     and compare_versions(o.start, s.start) > 0]
+            if later:
+                cap = later[0]
+                for v in later[1:]:
+                    if compare_versions(v, cap) < 0:
+                        cap = v
+                s = BduVersionSpec(s.software, start=s.start, end=cap)
+        out.append(s)
+    return out
 
 
 def _join_split_ranges(specs: list[BduVersionSpec]) -> list[BduVersionSpec]:
