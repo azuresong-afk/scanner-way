@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef } from "react";
 import { Copy, Download } from "lucide-react";
 import type { MfaSetupOut } from "../api/types";
+import { useCopy } from "../lib/clipboard";
 import { saveBlob } from "../lib/download";
 
 /** Поле кода из приложения-аутентификатора (6 цифр) или кода восстановления. */
@@ -67,22 +68,16 @@ export function MfaSetupBox({ setup }: { setup: MfaSetupOut }) {
 
 /** Одноразовые коды восстановления: показываются один раз. */
 export function RecoveryCodesBox({ codes, username }: { codes: string[]; username: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, copy] = useCopy();
+  const list = useRef<HTMLUListElement>(null);
   const text = codes.join("\n");
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
   return (
     <div className="stack" style={{ gap: 13 }}>
       <div className="alert alert-warn" role="note">
         Сохраните коды восстановления в надёжном месте. Каждый код срабатывает один раз и заменяет код из приложения, если телефон потерян. Больше они показаны не будут.
       </div>
       <ul
+        ref={list}
         aria-label="Коды восстановления"
         className="mono"
         style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 21px", fontSize: 14 }}
@@ -92,9 +87,14 @@ export function RecoveryCodesBox({ codes, username }: { codes: string[]; usernam
         ))}
       </ul>
       <div className="inline" style={{ gap: 8 }}>
-        <button type="button" className="btn btn-sm" onClick={copy}>
-          <Copy size={14} /> {copied ? "Скопировано" : "Скопировать"}
+        <button type="button" className="btn btn-sm" onClick={() => void copy(text, list.current)}>
+          <Copy size={14} /> {copyState === "ok" ? "Скопировано" : "Скопировать"}
         </button>
+        {copyState === "fail" && (
+          <span className="faint" role="status">
+            Не удалось скопировать — коды выделены, нажмите Ctrl+C
+          </span>
+        )}
         <button type="button" className="btn btn-sm" onClick={() => saveBlob(new Blob([text + "\n"], { type: "text/plain" }), `scanner-recovery-${username}.txt`)}>
           <Download size={14} /> Скачать .txt
         </button>

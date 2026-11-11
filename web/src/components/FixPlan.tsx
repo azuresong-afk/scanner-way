@@ -4,6 +4,7 @@ import { Check, Copy, RotateCw, Search, Wrench } from "lucide-react";
 import { api } from "../api/client";
 import type { FindingOut, FixHostOut, FixKind, FixTaskOut, Severity } from "../api/types";
 import { SEVERITIES, SEVERITY_LABEL } from "../lib/labels";
+import { useCopy } from "../lib/clipboard";
 import { useAsync } from "../lib/useAsync";
 import { PAGE_SIZES, useDebounced } from "../lib/useFindingsPage";
 import { FindingDrawer } from "./FindingDrawer";
@@ -58,27 +59,28 @@ const isHttp = (u: string) => /^https?:\/\//i.test(u);
 
 /** Блок команд с кнопкой «Скопировать». */
 function Commands({ title, lines }: { title: string; lines: string[] }) {
-  const [copied, setCopied] = useState(false);
+  const [state, copy] = useCopy();
+  const pre = useRef<HTMLPreElement>(null);
   if (!lines.length) return null;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(lines.join("\n"));
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* буфер обмена недоступен (http без TLS) — текст можно выделить вручную */
-    }
-  };
+  const text = lines.join("\n");
   return (
     <div className="fix-cmd">
       <div className="fix-cmd-head">
         <span className="faint">{title}</span>
-        <button type="button" className="btn btn-sm btn-ghost" onClick={copy} aria-label={`Скопировать: ${title}`}>
-          {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-          {copied ? "Скопировано" : "Скопировать"}
-        </button>
+        <span className="inline" style={{ gap: 8 }}>
+          {state === "fail" && (
+            <span className="faint" role="status">
+              Не удалось скопировать — команды выделены, нажмите Ctrl+C
+            </span>
+          )}
+          {state === "ok" && <span className="sr-only" role="status">Скопировано</span>}
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => void copy(text, pre.current)} aria-label={`Скопировать: ${title}`}>
+            {state === "ok" ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+            {state === "ok" ? "Скопировано" : "Скопировать"}
+          </button>
+        </span>
       </div>
-      <pre className="mono">{lines.join("\n")}</pre>
+      <pre className="mono" ref={pre}>{text}</pre>
     </div>
   );
 }

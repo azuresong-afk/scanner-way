@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { SearchOut, Severity } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
+import { copyText } from "../lib/clipboard";
 import { SEVERITY_SHORT } from "../lib/labels";
 
 /** Строка результата: что показать и что сделать по Enter. */
@@ -259,11 +260,10 @@ function Palette({ engagementId, project, onClose }: { engagementId: number; pro
         return;
       }
       if (it.copy) {
-        try {
-          await navigator.clipboard.writeText(it.copy);
+        if (await copyText(it.copy)) {
           setCopied(it.id);
           window.setTimeout(() => setCopied((c) => (c === it.id ? null : c)), 1500);
-        } catch {
+        } else {
           setError("Буфер обмена недоступен: откройте действие и выделите команду вручную");
         }
       }

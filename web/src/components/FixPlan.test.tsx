@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "../auth/AuthContext";
@@ -87,4 +87,43 @@ it("план исправлений: действие, команды, хост�
   const card = screen.getByText("Обновить libssl3, openssl до 3.0.15-1~deb12u1").closest("details")!;
   await userEvent.click(within(card).getByRole("button", { name: "CVE-2023-5678" }));
   expect(await screen.findByText("CVE-2023-5678: пакет openssl")).toBeInTheDocument();
+});
+
+function renderPlan() {
+  setToken("t");
+  mockApi({ "GET /me": me(["operator"], OPERATOR), "GET /runs/7/fixes": plan([task()]) });
+  render(
+    <MemoryRouter initialEntries={["/findings?run=7"]}>
+      <AuthProvider>
+        <FixPlan runId={7} onHost={() => undefined} />
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+}
+
+it("«Скопировать» работает по http без Clipboard API — через запасной способ", async () => {
+  // стенд по http на IP: navigator.clipboard отсутствует
+  vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+  let copied = "";
+  const exec = vi.fn((cmd: string) => {
+    copied = (document.activeElement as HTMLTextAreaElement).value;
+    return cmd === "copy";
+  });
+  Object.defineProperty(document, "execCommand", { value: exec, configurable: true });
+  renderPlan();
+  const btn = await screen.findByRole("button", { name: "Скопировать: Команды (Debian 12)" });
+  fireEvent.click(btn);
+  expect(await within(btn).findByText("Скопировано")).toBeInTheDocument();
+  expect(exec).toHaveBeenCalledWith("copy");
+  expect(copied).toBe("sudo apt-get update\nsudo apt-get install --only-upgrade -y libssl3 openssl");
+  expect(document.querySelector("textarea")).toBeNull();
+});
+
+it("«Скопировать»: если скопировать не вышло — подсказка и команды выделены", async () => {
+  vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+  Object.defineProperty(document, "execCommand", { value: vi.fn(() => false), configurable: true });
+  renderPlan();
+  fireEvent.click(await screen.findByRole("button", { name: "Скопировать: Команды (Debian 12)" }));
+  expect(await screen.findByText(/Не удалось скопировать — команды выделены/)).toBeInTheDocument();
+  expect(window.getSelection()?.toString()).toContain("sudo apt-get update");
 });
