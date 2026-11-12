@@ -59,6 +59,7 @@ from scanner.core.orchestrator import ModuleFactory, RunService
 from scanner.core.reachability import CheckThrottle, ReachabilityResult, check_host
 from scanner.feeds.scheduler import FeedScheduler, seed_feed_sync
 from scanner.feeds.sources import FeedSource
+from scanner.feeds.store import get_bdu_many
 from scanner.integrations.base import Transports
 from scanner.integrations.dispatcher import Dispatcher
 from scanner.reporting.remediation import RemediationResolver, host_os_from_findings
@@ -75,15 +76,12 @@ def bdu_resolver_factory(store) -> ResolverFactory:
         ids = {b.upper() for f in findings for b in f.bdu_ids}
         ids |= {f.vuln_id.upper() for f in findings
                 if f.vuln_id and f.vuln_id.upper().startswith("BDU:")}
-        bdu = {}
-        for bid in sorted(ids):
-            try:
-                rec = store.get_bdu(bid)
-            except Exception:
-                log.warning("BDU reference store is unavailable", exc_info=True)
-                break
-            if rec is not None:
-                bdu[bid] = rec
+        try:
+            # Один запрос на пачку id, а не по запросу на каждую запись (N+1)
+            bdu = get_bdu_many(store, ids)
+        except Exception:
+            log.warning("BDU reference store is unavailable", exc_info=True)
+            bdu = {}
         # ОС хостов из сводок инвентаризации по учётке: рекомендации и ссылки — для неё
         return RemediationResolver(bdu=bdu, host_os=host_os_from_findings(findings))
     return factory
