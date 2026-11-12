@@ -330,25 +330,42 @@ def _link_fits_host(link: RefLink, os: HostOs) -> bool:
     return True
 
 
+# Уязвимость пакета дистрибутива: исправляется обновлением из репозитория ОС,
+# бюллетени сторонних продуктов (NetApp, Apple, IBM…) и GitHub Advisory не нужны.
+_PACKAGE_MODULES = frozenset({"auth_inventory"})
+_COMPACT_KINDS = frozenset({RefKind.OS, RefKind.REGISTRY, RefKind.PATCH})
+_COMPACT_MAX_PATCHES = 1
+
+
 def curate_refs(urls: Iterable[str], limit: int = MAX_REFERENCES,
-                host_os: HostOs | None = None) -> list[str]:
+                host_os: HostOs | None = None, compact: bool = False) -> list[str]:
     """Убирает бесполезные и повторные ссылки, упорядочивает по пользе.
 
     host_os — ОС хоста: бюллетени других дистрибутивов (и выпусков) убираются,
     бюллетень ОС хоста ставится первым.
+    compact — короткий набор для уязвимости пакета на известном дистрибутиве:
+    бюллетень ОС хоста, БДУ, NVD и не больше одного исправления в апстриме.
     """
     seen: set[str] = set()
     links: list[tuple[int, int, str]] = []
+    patches = 0
     for i, u in enumerate(urls):
         link = describe_ref(u)
         if link is None:
             continue
         if host_os is not None and not _link_fits_host(link, host_os):
             continue
+        if compact:
+            if link.kind not in _COMPACT_KINDS:
+                continue
+            if link.kind is RefKind.PATCH and patches >= _COMPACT_MAX_PATCHES:
+                continue
         key = link.url.rstrip("/").lower().replace("http://", "https://")
         if key in seen:
             continue
         seen.add(key)
+        if link.kind is RefKind.PATCH:
+            patches += 1
         order = -1 if host_os is not None and link.kind is RefKind.OS else int(link.kind)
         links.append((order, i, link.url))
     links.sort()
@@ -645,7 +662,8 @@ class RemediationResolver:
             for rx, links in _TOPICS:
                 if rx.search(topic):
                     urls.extend(links)
-        return curate_refs(urls, host_os=os)
+        compact = os is not None and f.module in _PACKAGE_MODULES
+        return curate_refs(urls, host_os=os, compact=compact)
 
     def resolve(self, f: Finding) -> Remediation:
         deadline = self.deadlines.get(f.severity)
