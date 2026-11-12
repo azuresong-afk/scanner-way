@@ -338,13 +338,13 @@ def retry_run(run_id: int, request: Request,
               user: Annotated[Principal, Depends(require(Perm.RUN_SCAN))],
               session: SessionDep, audit: AuditDep,
               runs: Annotated[RunService, Depends(_runs)]) -> RunCreated:
-    """«Повторить»: новый прогон с параметрами прогона с ошибкой, прерванного или
-    остановленного. Права, учётки и allowlist проверяются заново, как при
+    """«Повторить»: новый прогон с параметрами завершённого прогона (успешного,
+    с ошибкой, частичного, прерванного или остановленного). Права, учётки и allowlist проверяются заново, как при
     обычном запуске; исходный прогон и его результаты не меняются."""
     run = _get_run(session, run_id)
     if run.status not in RETRYABLE:
-        raise HTTPException(409, "повторить можно только прогон с ошибкой, частичный, прерванный "
-                                 f"или остановленный (сейчас: {run.status})")
+        raise HTTPException(409, "повторить можно только завершённый прогон "
+                                 f"(сейчас: {run.status})")
     modules = list(run.modules)
     check_run_options(run.engagement_id, modules=modules, rate_profile=run.rate_profile,
                       credential_ids=list(run.credential_ids or []),
