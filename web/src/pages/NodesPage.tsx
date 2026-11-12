@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Copy, KeyRound, Network, Pencil, Plus, Power, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
@@ -6,6 +6,7 @@ import type { NodeMode, ScanNode, ScanNodeCreated } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { NodeKeyCard, OfflineResultUpload } from "../components/OfflineJob";
 import { Empty, ErrorAlert, Loading, Modal } from "../components/ui";
+import { useCopy } from "../lib/clipboard";
 import { fmtDate } from "../lib/format";
 import { NODE_MODE_LABEL, NODE_STATUS_LABEL, NODE_STATUS_PILL, needsAllowHttp, nodeEnv, splitScope } from "../lib/nodes";
 import { useAsync, useInterval } from "../lib/useAsync";
@@ -108,18 +109,11 @@ function NodeForm({ node, onClose, onSaved }: { node: ScanNode | null; onClose: 
 
 /** Токен показывается один раз — сразу с готовым .env.node и командами установки. */
 function TokenModal({ node, onClose }: { node: ScanNodeCreated; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, copy] = useCopy();
+  const envRef = useRef<HTMLPreElement>(null);
   const server = centerUrl();
   const env = nodeEnv(server, node.token ?? "", node.scope);
   const plainHttp = needsAllowHttp(server);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(env);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
   return (
     <Modal
       wide
@@ -137,7 +131,7 @@ function TokenModal({ node, onClose }: { node: ScanNodeCreated; onClose: () => v
       <p style={{ margin: "8px 0 4px" }}>
         1. На машине внутри сегмента положите в каталог сканера файл <code>.env.node</code>:
       </p>
-      <pre className="code-block" data-testid="node-env">{env}</pre>
+      <pre className="code-block" data-testid="node-env" ref={envRef}>{env}</pre>
       {plainHttp && (
         <div className="alert alert-warn" role="note" style={{ marginTop: 8 }}>
           Интерфейс открыт по HTTP, а узел подключается к центру только по HTTPS. Опубликуйте центр через HTTPS-прокси
@@ -145,9 +139,14 @@ function TokenModal({ node, onClose }: { node: ScanNodeCreated; onClose: () => v
           строка <code>SCANNER_NODE_ALLOW_HTTP=1</code> в <code>.env.node</code> — токен тогда идёт по сети открытым текстом.
         </div>
       )}
-      <button type="button" className="btn btn-sm" onClick={() => void copy()}>
-        <Copy size={12} /> {copied ? "Скопировано" : "Скопировать"}
+      <button type="button" className="btn btn-sm" onClick={() => void copy(env, envRef.current)}>
+        <Copy size={12} /> {copyState === "ok" ? "Скопировано" : "Скопировать"}
       </button>
+      {copyState === "fail" && (
+        <span className="faint" role="status" style={{ marginLeft: 8 }}>
+          Не удалось скопировать — текст выделен, нажмите Ctrl+C
+        </span>
+      )}
       <p style={{ margin: "12px 0 4px" }}>2. Запустите узел:</p>
       <pre className="code-block">docker compose -f docker-compose.node.yml --env-file .env.node up -d</pre>
       <p className="muted" style={{ margin: "8px 0 0" }}>
