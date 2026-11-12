@@ -52,7 +52,7 @@ def test_review_scenario_20_live_hosts_gentle_and_normal():
 
 
 def test_rate_limit_is_never_raised():
-    for name, rate in PROFILES.items():
+    for rate in PROFILES.values():
         cmd = build_nmap_command(["10.0.0.5"], rate)
         assert float(_arg(cmd, "--max-rate")) == rate.max_requests_per_sec
         assert _arg(cmd, "--max-parallelism") == str(rate.max_concurrency)
