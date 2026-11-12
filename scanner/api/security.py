@@ -1,11 +1,15 @@
 """Пароли (scrypt) и подписанные токены доступа (HMAC-SHA256).
 
 Без внешних зависимостей: только стандартная библиотека. Токен —
-`base64url(payload).base64url(hmac)`, payload = {"uid", "iat", "exp"[, "typ"]}.
+`base64url(payload).base64url(hmac)`, payload = {"uid", "iat", "exp"[, "typ"][, "sid"]}.
 `typ` отличает промежуточный токен второго шага входа (2FA, typ="mfa") от токена
 доступа: токен без `typ` — токен доступа (так выпускались и раньше). Права в
 токен не кладутся: они читаются из БД на каждый запрос, поэтому отзыв роли или
 блокировка пользователя действуют сразу.
+
+`sid` — сеанс входа (таблица auth_sessions, миграция 0030): токен доступа
+принимается, только пока его сеанс не отозван, поэтому выход действует сразу,
+а не по истечении срока токена (scanner.api.sessions).
 """
 from __future__ import annotations
 
@@ -71,17 +75,29 @@ class TokenSigner:
     def _sig(self, body: str) -> str:
         return _b64(hmac.new(self._key, body.encode(), hashlib.sha256).digest())
 
-    def issue(self, user_id: int, *, typ: str = ACCESS, ttl: int | None = None) -> str:
+    def issue(self, user_id: int, *, typ: str = ACCESS, ttl: int | None = None,
+              sid: str | None = None, not_after: int | None = None) -> str:
+        """Подписанный токен. not_after — срок не позже этого момента (unix-время):
+        токен сеанса не переживает предельный срок самого сеанса."""
         now = int(self._clock())
-        payload: dict[str, object] = {"uid": user_id, "iat": now,
-                                      "exp": now + (self.ttl if ttl is None else ttl)}
+        exp = now + (self.ttl if ttl is None else ttl)
+        if not_after is not None:
+            exp = min(exp, int(not_after))
+        payload: dict[str, object] = {"uid": user_id, "iat": now, "exp": exp}
         if typ != ACCESS:
             payload["typ"] = typ
+        if sid is not None:
+            payload["sid"] = sid
         body = _b64(json.dumps(payload, separators=(",", ":")).encode())
         return f"{body}.{self._sig(body)}"
 
     def verify(self, token: str, *, typ: str = ACCESS) -> int | None:
         """user_id или None (подпись неверна / токен истёк / не того типа / мусор)."""
+        claims = self.claims(token, typ=typ)
+        return None if claims is None else claims[0]
+
+    def claims(self, token: str, *, typ: str = ACCESS) -> tuple[int, str | None, int] | None:
+        """(user_id, sid, exp) или None — те же проверки, что у verify."""
         try:
             body, sig = token.split(".")
             if not hmac.compare_digest(sig, self._sig(body)):
@@ -91,7 +107,9 @@ class TokenSigner:
                 return None
             if payload.get("typ", ACCESS) != typ:
                 return None
-            return int(payload["uid"])
+            sid = payload.get("sid")
+            return int(payload["uid"]), (str(sid) if sid is not None else None), \
+                int(payload["exp"])
         except (ValueError, KeyError, TypeError):
             return None
 

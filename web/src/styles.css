@@ -356,6 +356,7 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .alert-warn { background: var(--warn-soft); color: var(--warn); }
 .alert-info { background: var(--info-soft); color: var(--accent-text); }
 .alert-ok { background: var(--ok-soft); color: var(--ok); }
+.session-notice { position: sticky; top: 8px; z-index: 30; align-items: center; margin-bottom: 16px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
 .alert svg { flex: 0 0 auto; margin-top: 1px; }
 
 .empty { padding: 40px 20px; text-align: center; color: var(--text-2); display: flex; flex-direction: column; align-items: center; gap: 10px; }
