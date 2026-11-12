@@ -233,6 +233,9 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .btn-ghost { border-color: transparent; }
 /* Ширина кнопок форматов 89 px ≈ 55 × φ. */
 .btn-report { min-width: 89px; }
+/* «Остановить» и «Повторить» у прогона — одного размера: 144 px в шапке страницы, 112 px в строке списка. */
+.btn-run { width: 144px; padding-inline: 0; }
+.btn-sm.btn-run { width: 112px; }
 @media (max-width: 600px) {
   /* На телефоне: форматы отчёта — одной строкой на всю ширину, «Новый прогон» — под ними. */
   .page-head .actions, .page-head .actions > * { width: 100%; }

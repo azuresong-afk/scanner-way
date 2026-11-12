@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ListChecks, Network, Square, Wifi } from "lucide-react";
+import { ListChecks, Network, Wifi } from "lucide-react";
 import { ApiError, api } from "../api/client";
 import type { DeniedTarget, PortMode, PortScanDetail, PortScanOut, PortScanStatus } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -397,7 +397,7 @@ function ScanResult({ scan, canStop, onStopped }: { scan: PortScanDetail; canSto
         </div>
         {active && canStop && (
           <button type="button" className="btn" onClick={stop} disabled={stopping}>
-            <Square size={14} /> Остановить
+            Остановить
           </button>
         )}
       </div>

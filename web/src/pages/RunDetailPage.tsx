@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { CheckCircle2, RotateCcw, Square } from "lucide-react";
+import { CheckCircle2, RotateCcw } from "lucide-react";
 import { api } from "../api/client";
 import type { FindingOut, RunCreated } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -114,12 +114,12 @@ export function RunDetailPage() {
         <div className="actions">
           {/* автономный прогон после выгрузки задания останавливают «Отменить задание» */}
           {has("run_scan") && !finished && !(isOfflineRun(r) && r.status === "running") && (
-            <button type="button" className="btn btn-danger" onClick={stop}>
-              <Square size={14} /> Остановить
+            <button type="button" className="btn btn-danger btn-run" onClick={stop}>
+              Остановить
             </button>
           )}
           {has("run_scan") && isRetryable(r.status) && (
-            <button type="button" className="btn" onClick={retry}>
+            <button type="button" className="btn btn-run" onClick={retry}>
               <RotateCcw size={14} /> Повторить
             </button>
           )}

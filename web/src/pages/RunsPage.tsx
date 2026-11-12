@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Play, Radar, RotateCcw, Square } from "lucide-react";
+import { Play, Radar, RotateCcw } from "lucide-react";
 import { api } from "../api/client";
 import type { RunStatus } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -134,19 +134,19 @@ export function RunsPage() {
                       {has("run_scan") && !isFinished(r.status) && (
                         <button
                           type="button"
-                          className="btn btn-sm btn-danger"
+                          className="btn btn-sm btn-danger btn-run"
                           onClick={(e) => {
                             e.stopPropagation();
                             void stop(r.id);
                           }}
                         >
-                          <Square size={12} /> Остановить
+                          Остановить
                         </button>
                       )}
                       {has("run_scan") && isRetryable(r.status) && (
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="btn btn-sm btn-run"
                           onClick={(e) => {
                             e.stopPropagation();
                             void retry(r.id);
