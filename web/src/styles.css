@@ -831,3 +831,33 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .health-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .health-items li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .spin { animation: spin 0.8s linear infinite; }
+
+/* ---------- макеты меню (В4), ключ localStorage «scanner.menu» ---------- */
+.nav-count { margin-left: auto; font-size: 11px; padding: 0 7px; border-radius: 10px; background: var(--surface-3); color: var(--text-3); line-height: 18px; }
+.nav-section-btn { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); padding: 14px 10px 6px; }
+.nav-section-btn:hover { color: var(--text-2); }
+.nav-section-btn .nav-count { margin-left: 0; text-transform: none; letter-spacing: 0; }
+.nav-section-btn svg:last-child { margin-left: auto; }
+.nav-bottom { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--border); }
+.section-tabs { margin-bottom: calc(-1 * var(--s1)); }
+/* v4 «Шаги работы» */
+.nav-step { margin-top: 6px; border-radius: 10px; }
+.nav-step.current { background: var(--surface-2); }
+:root[data-theme="light"] .nav-step.current { background: var(--surface-2); }
+.nav-step-head { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px; cursor: pointer;
+  padding: 9px 10px; font-weight: 600; color: var(--text); border-radius: var(--radius-sm); }
+.nav-step-head svg { margin-left: auto; color: var(--text-3); }
+.nav-step-head:hover { background: var(--surface-2); }
+.step-num { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700;
+  background: var(--surface-3); color: var(--text-2); }
+.nav-step.current .step-num { background: var(--accent); color: #fff; }
+.nav-step-items { padding: 0 0 6px 20px; display: flex; flex-direction: column; gap: 2px; }
+.nav-step-items .nav-link { padding: 7px 10px; }
+/* v3 «Узкая панель» */
+.sidebar.rail { width: 92px; flex: 0 0 92px; padding: 18px 8px; align-items: stretch; }
+.rail-brand { justify-content: center; padding: 4px 0 18px; }
+.rail-group { display: flex; flex-direction: column; gap: 4px; }
+.nav-link.rail-link { flex-direction: column; gap: 5px; padding: 10px 2px 8px; font-size: 11.5px; text-align: center; line-height: 1.15; }
+.rail-bottom { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--border); }
+.rail-foot { align-items: center; gap: 10px; }

@@ -30,6 +30,7 @@ import { ROLE_LABEL } from "../lib/labels";
 import { HealthChip } from "./HealthChip";
 import { QuickSearch } from "./QuickSearch";
 import { RunProgressChip } from "./RunProgressChip";
+import { menuVariant, SectionTabs, VariantNav } from "./MenuVariants";
 
 interface NavItem {
   to: string;
@@ -102,6 +103,15 @@ function ThemeToggle() {
   );
 }
 
+function RailThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button type="button" className="btn btn-sm btn-ghost icon-btn" onClick={toggleTheme} aria-label="Сменить тему" title="Сменить тему">
+      {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+    </button>
+  );
+}
+
 function Brand() {
   return (
     <div className="brand">
@@ -126,25 +136,44 @@ export function Layout() {
   const roles = me?.roles.map((r) => ROLE_LABEL[r] ?? r).join(", ") || "нет ролей";
   const main = items.filter((i) => !i.admin);
   const admin = items.filter((i) => i.admin);
+  const variant = menuVariant();
+  const rail = variant === "v3";
 
   return (
     <div className="shell">
       {open && <div className="scrim" onClick={() => setOpen(false)} />}
-      <nav className={`sidebar ${open ? "open" : ""}`} aria-label="Основное меню">
-        <Brand />
-        {main.map((i) => (
+      <nav className={`sidebar ${open ? "open" : ""} ${rail ? "rail" : ""} menu-${variant}`} aria-label="Основное меню">
+        {rail ? (
+          <div className="brand rail-brand" title="Scanner">
+            <div className="brand-mark" aria-hidden="true">
+              <Radar size={18} />
+            </div>
+          </div>
+        ) : (
+          <Brand />
+        )}
+        {variant !== "now" && <VariantNav variant={variant} has={has} />}
+        {variant === "now" && main.map((i) => (
           <NavLink key={i.to} to={i.to} end={i.to === "/"} className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
             {i.icon}
             <span>{i.label}</span>
           </NavLink>
         ))}
-        {admin.length > 0 && <div className="nav-section">Администрирование</div>}
-        {admin.map((i) => (
+        {variant === "now" && admin.length > 0 && <div className="nav-section">Администрирование</div>}
+        {variant === "now" && admin.map((i) => (
           <NavLink key={i.to} to={i.to} className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
             {i.icon}
             <span>{i.label}</span>
           </NavLink>
         ))}
+        {rail ? (
+          <div className="sidebar-foot rail-foot">
+            <div className="avatar" title={`${name} · ${roles}`}>
+              {initials(name)}
+            </div>
+            <RailThemeToggle />
+          </div>
+        ) : (
         <div className="sidebar-foot">
           <div className="user-card">
             <div className="avatar" aria-hidden="true">
@@ -163,6 +192,7 @@ export function Layout() {
           </div>
           <ThemeToggle />
         </div>
+        )}
       </nav>
       <div className="main">
         <header className="topbar">
@@ -179,6 +209,7 @@ export function Layout() {
           </span>
         </header>
         <main className="content">
+          <SectionTabs variant={variant} has={has} />
           <Outlet />
         </main>
       </div>
