@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Check, Copy, RotateCw, Search, Wrench } from "lucide-react";
 import { api } from "../api/client";
-import type { FindingOut, FixHostOut, FixKind, FixTaskOut, Severity } from "../api/types";
+import type { FindingOut, FixHostOut, FixKind, FixTaskOut, Severity, TableFormat } from "../api/types";
 import { SEVERITIES, SEVERITY_LABEL } from "../lib/labels";
 import { useCopy } from "../lib/clipboard";
 import { useAsync } from "../lib/useAsync";
 import { PAGE_SIZES, useDebounced } from "../lib/useFindingsPage";
+import { FIX_EXPORTS } from "../lib/exports";
+import { ExportButtons } from "./ExportButtons";
 import { FindingDrawer } from "./FindingDrawer";
 import { Pager } from "./Pager";
 import { Empty, ErrorAlert, Loading, RefTags, SeverityBadge } from "./ui";
@@ -372,6 +374,14 @@ export function FixPlan({
         )}
     </>
   );
+  // выгрузка — весь план по тем же фильтрам, что на экране (без страниц)
+  const exportPlan = (id: string) => {
+    const format: TableFormat = id === "xlsx" ? "xlsx" : "csv";
+    const common = { severity: severities, kind: kindParam, q: urlQ || undefined, sheet: id === "csv-hosts" ? ("hosts" as const) : undefined };
+    if (runId === null) return api.exportHostFixes(engagementId!, host!, format, common);
+    return api.exportFixes(runId, format, { ...common, os: host ? [] : oses, host });
+  };
+  const exportButtons = d && d.total > 0 && <ExportButtons what="план исправлений" options={FIX_EXPORTS} load={exportPlan} />;
   const reload = (
     <button type="button" className="btn btn-sm btn-ghost" onClick={() => void plan.reload()} aria-label="Обновить план">
       <RotateCw size={14} aria-hidden="true" />
@@ -419,6 +429,7 @@ export function FixPlan({
             <span className="faint" style={{ fontSize: 12 }}>
               {source} · сначала — самые важные по приоритету {reload}
             </span>
+            {exportButtons}
           </div>
           {list}
         </>
@@ -434,6 +445,7 @@ export function FixPlan({
               <span className="faint" style={{ fontSize: 12 }}>
                 {source} · сначала — самые важные по приоритету
               </span>
+              {exportButtons}
               {reload}
             </div>
             {list}

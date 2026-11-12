@@ -5,6 +5,7 @@ import { AuthProvider } from "../auth/AuthContext";
 import { setToken } from "../api/client";
 import type { FixPlanOut, FixTaskOut } from "../api/types";
 import { finding, me, mockApi, OPERATOR } from "../test/fixtures";
+import * as download from "../lib/download";
 import { FixPlan } from "./FixPlan";
 
 afterEach(() => {
@@ -126,4 +127,65 @@ it("«Скопировать»: если скопировать не вышло 
   fireEvent.click(await screen.findByRole("button", { name: "Скопировать: Команды (Debian 12)" }));
   expect(await screen.findByText(/Не удалось скопировать — команды выделены/)).toBeInTheDocument();
   expect(window.getSelection()?.toString()).toContain("sudo apt-get update");
+});
+
+it("выгрузка плана: Excel и CSV по хостам — с фильтрами экрана", async () => {
+  setToken("t");
+  const seen: string[] = [];
+  mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /runs/7/fixes": plan([task()]),
+    "GET /runs/7/fixes/export": (_init: RequestInit | undefined, url: URL) => {
+      seen.push(url.search);
+      const csv = url.searchParams.get("format") === "csv";
+      return new Response("x", {
+        headers: { "Content-Disposition": `attachment; filename="fixes-run-7${csv ? "-hosts.csv" : ".xlsx"}"` },
+      });
+    },
+  });
+  const save = vi.spyOn(download, "saveBlob").mockImplementation(() => {});
+  render(
+    <MemoryRouter initialEntries={["/findings?run=7&sev=high&os=Debian+12"]}>
+      <AuthProvider>
+        <FixPlan runId={7} onHost={() => undefined} />
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "Выгрузить план исправлений: Excel" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][1]).toBe("fixes-run-7.xlsx");
+  const q = new URLSearchParams(seen[0]);
+  expect(q.get("format")).toBe("xlsx");
+  expect(q.getAll("severity")).toEqual(["high"]);
+  expect(q.getAll("os")).toEqual(["Debian 12"]);
+  expect(q.get("limit")).toBeNull();
+
+  await userEvent.click(screen.getByRole("button", { name: "Выгрузить план исправлений: CSV по хостам" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(save.mock.calls[1][1]).toBe("fixes-run-7-hosts.csv");
+  expect(new URLSearchParams(seen[1]).get("sheet")).toBe("hosts");
+  save.mockRestore();
+});
+
+it("выгрузка плана актива без прогона — по последним данным хоста", async () => {
+  setToken("t");
+  const api = mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /engagements/3/hosts/10.0.0.2/fixes": plan([task()]),
+    "GET /engagements/3/hosts/10.0.0.2/fixes/export": () =>
+      new Response("x", { headers: { "Content-Disposition": 'attachment; filename="fixes-host-10.0.0.2.csv"' } }),
+  });
+  const save = vi.spyOn(download, "saveBlob").mockImplementation(() => {});
+  render(
+    <MemoryRouter initialEntries={["/hosts/10.0.0.2"]}>
+      <AuthProvider>
+        <FixPlan runId={null} engagementId={3} host="10.0.0.2" onHost={() => undefined} />
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "Выгрузить план исправлений: CSV" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][1]).toBe("fixes-host-10.0.0.2.csv");
+  expect(api.calls.some((c) => c.path === "/engagements/3/hosts/10.0.0.2/fixes/export")).toBe(true);
+  save.mockRestore();
 });

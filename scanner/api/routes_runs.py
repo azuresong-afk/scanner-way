@@ -418,6 +418,121 @@ def findings_summary(run_id: int,
     return FindingsSummaryOut(**fq.summary(session, run_id, run.engagement_id))
 
 
+@router.get("/runs/{run_id}/findings/export")
+def export_findings(run_id: int, request: Request,
+                    user: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                    session: SessionDep, audit: AuditDep,
+                    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "xlsx",
+                    module: Annotated[list[str] | None, Query()] = None,
+                    severity: Annotated[list[str] | None, Query()] = None,
+                    status_: Annotated[list[str] | None, Query(alias="status")] = None,
+                    host: Annotated[str | None, Query(max_length=64)] = None,
+                    q: Annotated[str | None, Query(max_length=200)] = None,
+                    bdu_only: bool = False,
+                    include_info: bool = True,
+                    false_positives: Annotated[str, Query(
+                        pattern=f"^({'|'.join(fq.FP_MODES)})$")] = "include",
+                    sort: Annotated[str | None, Query(
+                        pattern=f"^({'|'.join(fq.FINDING_SORTS)})$")] = None,
+                    order: Annotated[str, Query(pattern="^(asc|desc)$")] = "asc",
+                    ) -> Response:
+    """«Все находки» в CSV или Excel — с теми же фильтрами и сортировкой, что
+    GET /runs/{id}/findings, но целиком, без страниц. К каждой находке —
+    рекомендация и ссылки на устранение (как в отчёте); сроков устранения нет.
+    CSV — UTF-8 с BOM, разделитель «;»; XLSX — лист находок и лист «Сведения»
+    (прогон, фильтры, кто и когда выгрузил). Больше 100 000 строк — 413."""
+    from scanner.reporting import tabular
+    from scanner.reporting.export import (
+        SEVERITY_BY_VALUE,
+        STATUS_BY_VALUE,
+        findings_sheet,
+    )
+    from scanner.reporting.model import MODULE_LABELS
+
+    run = _get_run(session, run_id)
+    try:
+        flt = fq.FindingFilter(severities=severity or [], modules=module or [],
+                               statuses=status_ or [], host=host, query=q,
+                               bdu_only=bdu_only, include_info=include_info,
+                               false_positives=false_positives)
+        if host:
+            ipaddress.ip_address(host.strip())
+    except ValueError as e:
+        raise HTTPException(422, f"invalid host: {host}") from e
+    fmt = tabular.TableFormat(format)
+    marks = repo.false_positive_marks(session, run.engagement_id)
+    priorities = run_priorities(session, run_id, run.engagement_id, marks)
+    ranks = {k: p.rank for k, p in priorities.items()} if sort == "priority" else None
+    rows, total = fq.page_findings(session, run_id, run.engagement_id, flt,
+                                   sort=sort or "severity", desc=order == "desc",
+                                   limit=tabular.MAX_EXPORT_ROWS + 1, ranks=ranks)
+    target = f"scan_run:{run_id}"
+    if total > tabular.MAX_EXPORT_ROWS:
+        audit.record(subject=user.subject, action="export", target=target,
+                     result="too_large", details={"table": "findings", "format": fmt.value,
+                                                  "rows": total})
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE,
+                            f"too many findings to export ({total}); "
+                            f"narrow the filter (limit {tabular.MAX_EXPORT_ROWS})")
+    services = services_by_port(session, run_id)
+    findings = [repo.row_to_finding(r) for r in rows]
+    resolver = request.app.state.resolver_factory(findings)
+    resolver.add_host_os(repo.host_os_names(session, run.engagement_id), override=False)
+    from scanner.core.models import FindingType
+    items = [(finding_out(r, marks, services, priorities),
+              None if f.finding_type is FindingType.INFO else resolver.resolve(f))
+             for r, f in zip(rows, findings, strict=True)]
+    eng = get_engagement(session, run.engagement_id)
+    info = tabular.info_sheet(_export_info(
+        eng, run, user, filters={"Уровень": labeled(severity, SEVERITY_BY_VALUE),
+                                 "Модуль": labeled(module, MODULE_LABELS),
+                                 "Статус": labeled(status_, STATUS_BY_VALUE),
+                                 "Хост": host, "Поиск": q,
+                                 "Только с БДУ": bdu_only or None,
+                                 "Информационные": include_info,
+                                 "Ложные срабатывания": {"include": "включены",
+                                                         "exclude": "исключены",
+                                                         "only": "только они"}.get(
+                                                             false_positives)},
+        rows=len(items)))
+    body = tabular.render(fmt, findings_sheet(items), info=info)
+    audit.record(subject=user.subject, action="export", target=target, result="ok",
+                 details={"table": "findings", "format": fmt.value, "rows": len(items)})
+    return table_response(fmt, body, f"findings-run-{run_id}")
+
+
+def labeled(values: list[str] | None, labels: dict) -> list[str] | None:
+    """Значения фильтра подписями для листа «Сведения» (high → «Высокий»)."""
+    return [str(labels.get(v, v)) for v in values] if values else None
+
+
+def _export_info(eng, run: ScanRun | None, user: Principal, *, filters: dict,
+                 rows: int, source: str | None = None) -> list[tuple[str, object]]:
+    """Строки листа «Сведения» выгрузки: откуда данные и что отфильтровано."""
+    def fmt_filter(v):
+        if isinstance(v, list | tuple):
+            return ", ".join(str(x) for x in v)
+        return "да" if v is True else ("нет" if v is False else str(v))
+    used = [f"{k}: {fmt_filter(v)}" for k, v in filters.items()
+            if v not in (None, "", [], ())]
+    pairs: list[tuple[str, object]] = [
+        ("Заказчик", eng.client or ""), ("Договор", eng.contract_ref or eng.name)]
+    if run is not None:
+        pairs.append(("Прогон", f"№{run.id}" + (f" · {run.name}" if run.name else "")))
+    if source:
+        pairs.append(("Данные", source))
+    pairs += [("Фильтры", "\n".join(used) or "без фильтров"), ("Строк", rows),
+              ("Выгружено", datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")),
+              ("Кто выгрузил", user.username)]
+    return pairs
+
+
+def table_response(fmt, body: bytes, stem: str) -> Response:
+    from scanner.reporting.tabular import CONTENT_TYPES
+    return Response(content=body, media_type=CONTENT_TYPES[fmt], headers={
+        "Content-Disposition": f'attachment; filename="{stem}.{fmt.value}"'})
+
+
 @router.get("/runs/{run_id}/coverage", response_model=CoverageOut)
 def run_coverage(run_id: int,
                  _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
