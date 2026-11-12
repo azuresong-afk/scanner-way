@@ -488,7 +488,8 @@ sync-msrc`): продукты SQL Server в него раньше не попа�
 
 | Параметр | По умолчанию | Назначение |
 |---|---|---|
-| `SCANNER_API_TOKEN_TTL_MINUTES` | 60 | срок токена |
+| `SCANNER_API_TOKEN_TTL_MINUTES` | 60 | срок токена = время бездействия до выхода (интерфейс продлевает токен, пока пользователь работает) |
+| `SCANNER_API_SESSION_MAX_HOURS` | 12 | предельный срок сеанса входа: дольше токен не продлевается, нужен новый вход; `0` — без предела |
 | `SCANNER_API_LOGIN_MAX_FAILURES`, `SCANNER_API_LOGIN_LOCKOUT_MINUTES` | 5, 15 | защита от перебора |
 | `SCANNER_API_CORS_ORIGINS` | пусто | CORS выключен (веб и API на одном origin) |
 | `SCANNER_API_LDAP_URL` | пусто (выкл.) | вход через AD/LDAP: контроллеры `ldaps://…` через запятую |

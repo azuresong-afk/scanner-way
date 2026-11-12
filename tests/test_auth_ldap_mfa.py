@@ -122,7 +122,8 @@ def test_defaults_off_local_login_unchanged(sqlite_factory):
         assert r.status_code == 200
         body = r.json()
         # ответ как раньше: никаких полей 2FA
-        assert set(body) == {"access_token", "token_type", "expires_in"}
+        assert set(body) == {"access_token", "token_type", "expires_in",
+                             "session_expires_at"}
         me = c.get("/me", headers=_bearer(body["access_token"])).json()
         assert me["auth_source"] == "local" and me["mfa_enabled"] is False
         assert c.post("/me/mfa/setup", headers=_bearer(body["access_token"])).status_code == 409
