@@ -1,8 +1,11 @@
 // Макеты меню для утверждения (предложение В4 разбора продукта). Вариант выбирается
 // ключом localStorage «scanner.menu» (now | v1 | v2 | v3 | v4); по умолчанию — текущее меню.
 // Страницы и URL не меняются: варианты только по-разному группируют пункты и
-// показывают вкладки раздела над страницей, если раздел объединяет несколько страниц.
-import { useState, type ReactNode } from "react";
+// показывают второй уровень меню под шапкой, если пункт объединяет несколько страниц.
+// У вариантов v1–v4 включается «угловатый» вид (data-look="sharp" на <html>):
+// скругления 2–4 px, размеры меню — из ряда Фибоначчи (см. конец styles.css).
+import type { ReactNode } from "react";
+import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Activity,
@@ -67,33 +70,28 @@ const P: Record<string, Page> = {
 
 const ADMIN = [P.feeds, P.nodes, P.notify, P.health, P.audit, P.users];
 
-/** Пункт меню, объединяющий несколько страниц: вкладки показываются над страницей. */
+/** Пункт меню; если страниц несколько — они показываются вторым уровнем под шапкой. */
 interface Item {
   label: string;
   icon: (size: number) => ReactNode;
   pages: Page[];
   /** Короткая подпись для узкой панели. */
   short?: string;
-  /** Подписи вкладок, если они отличаются от названий страниц. */
+  /** Подписи второго уровня, если они отличаются от названий страниц. */
   tabLabels?: Record<string, string>;
 }
 
-const one = (p: Page, short?: string): Item => ({ label: p.label, icon: p.icon, pages: [p], short });
+const one = (p: Page, over: Partial<Item> = {}): Item => ({ label: p.label, icon: p.icon, pages: [p], ...over });
 
 const SCAN: Item = {
   label: "Сканирование",
-  short: "Скан",
   icon: P.runs.icon,
   pages: [P.runs, P.reach, P.sched],
   tabLabels: { "/runs": "Прогоны" },
 };
-const ASSETS: Item = {
-  label: "Активы",
-  icon: P.assets.icon,
-  pages: [P.assets, P.creds],
-  tabLabels: { "/hosts": "Список активов" },
-};
-const SETTINGS: Item = { label: "Настройка", short: "Настройка", icon: (s) => <Settings size={s} />, pages: ADMIN };
+const NORMS = one(P.compl, { label: "Нормативы" });
+const CREDS = one(P.creds, { short: "Учётки" });
+const SETTINGS: Item = { label: "Настройка", icon: (s) => <Settings size={s} />, pages: ADMIN };
 
 type Has = (p: Perm) => boolean;
 const allowed = (p: Page, has: Has) => (Array.isArray(p.perm) ? p.perm : [p.perm]).some(has);
@@ -119,27 +117,15 @@ function structure(v: MenuVariant): { top: Section[]; bottom?: Item } {
       return {
         top: [
           { items: [one(P.summary)] },
-          { title: "Проверки", items: [one(P.assets), one(P.creds), SCAN] },
-          { title: "Результаты", items: [one(P.findings), { ...one(P.compl), label: "Нормативы" }, one(P.reports)] },
-          { title: "Настройка", collapsible: true, items: [one(P.projects), ...ADMIN.map((p) => one(p))] },
+          { title: "Проверки", items: [one(P.projects), one(P.assets), CREDS, SCAN] },
+          { title: "Результаты", items: [one(P.findings), NORMS, one(P.reports)] },
+          { title: "Настройка", collapsible: true, items: ADMIN.map((p) => one(p)) },
         ],
       };
     case "v2":
     case "v3":
       return {
-        top: [
-          {
-            items: [
-              one(P.summary),
-              one(P.projects),
-              ASSETS,
-              SCAN,
-              one(P.findings),
-              { ...one(P.compl), label: "Нормативы", short: "Нормативы" },
-              one(P.reports),
-            ],
-          },
-        ],
+        top: [{ items: [one(P.summary), one(P.projects), one(P.assets), CREDS, SCAN, one(P.findings), NORMS, one(P.reports)] }],
         bottom: SETTINGS,
       };
     case "v4":
@@ -148,7 +134,7 @@ function structure(v: MenuVariant): { top: Section[]; bottom?: Item } {
           { items: [one(P.summary)] },
           { title: "Подготовка", step: 1, items: [one(P.projects), one(P.assets), one(P.creds)] },
           { title: "Проверка", step: 2, items: [one(P.reach), one(P.runs), one(P.sched)] },
-          { title: "Результаты", step: 3, items: [one(P.findings), { ...one(P.compl), label: "Нормативы" }, one(P.reports)] },
+          { title: "Результаты", step: 3, items: [one(P.findings), NORMS, one(P.reports)] },
         ],
         bottom: SETTINGS,
       };
@@ -157,18 +143,18 @@ function structure(v: MenuVariant): { top: Section[]; bottom?: Item } {
   }
 }
 
-function ItemLink({ it, path, rail }: { it: Item; path: string; rail?: boolean }) {
+function ItemLink({ it, path, mode }: { it: Item; path: string; mode?: "rail" | "step" }) {
   const first = it.pages[0];
   const active = itemActive(it, path);
   return (
     <NavLink
       to={first.to}
       end={first.to === "/"}
-      className={() => `nav-link ${rail ? "rail-link" : ""} ${active ? "active" : ""}`}
-      title={rail ? it.label : undefined}
+      className={() => `nav-link ${mode === "rail" ? "rail-link" : ""} ${mode === "step" ? "step-link" : ""} ${active ? "active" : ""}`}
+      title={mode === "rail" ? it.label : undefined}
     >
-      {it.icon(rail ? 20 : 18)}
-      <span>{rail ? it.short ?? it.label : it.label}</span>
+      {mode !== "step" && <span className="nav-ic">{it.icon(mode === "rail" ? 21 : 18)}</span>}
+      <span>{mode === "rail" ? it.short ?? it.label : it.label}</span>
     </NavLink>
   );
 }
@@ -182,66 +168,62 @@ export function VariantNav({ variant, has }: { variant: MenuVariant; has: Has })
     .filter((s) => s.items.length);
   const bottomItem = bottom ? visible(bottom, has) : null;
   const activeStep = sections.find((s) => s.step && s.items.some((i) => itemActive(i, pathname)))?.step;
-  const [openSteps, setOpenSteps] = useState<Record<number, boolean>>({});
   const adminActive = sections.some((s) => s.collapsible && s.items.some((i) => itemActive(i, pathname)));
   const [adminOpen, setAdminOpen] = useState(false);
   const rail = variant === "v3";
 
   return (
-    <>
+    <div className={`nav-body ${rail ? "rail-body" : ""}`}>
       {sections.map((s, idx) => {
         if (s.step) {
-          const open = openSteps[s.step] ?? s.step === activeStep;
+          // Шаги всегда раскрыты: любая страница — в один щелчок, номера показывают порядок работы.
           return (
             <div key={idx} className={`nav-step ${s.step === activeStep ? "current" : ""}`}>
-              <button type="button" className="nav-step-head" aria-expanded={open} onClick={() => setOpenSteps({ ...openSteps, [s.step!]: !open })}>
+              <div className="nav-step-head">
                 <span className="step-num">{s.step}</span>
                 <span>{s.title}</span>
-                {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-              </button>
-              {open && (
-                <div className="nav-step-items">
-                  {s.items.map((i) => (
-                    <ItemLink key={i.label} it={i} path={pathname} />
-                  ))}
-                </div>
-              )}
+              </div>
+              <div className="nav-step-items">
+                {s.items.map((i) => (
+                  <ItemLink key={i.label} it={i} path={pathname} mode="step" />
+                ))}
+              </div>
             </div>
           );
         }
         if (s.collapsible) {
           const open = adminOpen || adminActive;
           return (
-            <div key={idx}>
+            <div key={idx} className="nav-group">
               <button type="button" className="nav-section nav-section-btn" aria-expanded={open} onClick={() => setAdminOpen(!open)}>
                 <span>{s.title}</span>
                 <span className="nav-count">{s.items.length}</span>
-                {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </button>
               {open && s.items.map((i) => <ItemLink key={i.label} it={i} path={pathname} />)}
             </div>
           );
         }
         return (
-          <div key={idx} className={rail ? "rail-group" : undefined}>
+          <div key={idx} className="nav-group">
             {s.title && <div className="nav-section">{s.title}</div>}
             {s.items.map((i) => (
-              <ItemLink key={i.label} it={i} path={pathname} rail={rail} />
+              <ItemLink key={i.label} it={i} path={pathname} mode={rail ? "rail" : undefined} />
             ))}
           </div>
         );
       })}
       {bottomItem && (
-        <div className={rail ? "rail-bottom" : "nav-bottom"}>
-          <ItemLink it={bottomItem} path={pathname} rail={rail} />
+        <div className="nav-group nav-bottom">
+          <ItemLink it={bottomItem} path={pathname} mode={rail ? "rail" : undefined} />
         </div>
       )}
-    </>
+    </div>
   );
 }
 
-/** Вкладки над страницей, если пункт меню объединяет несколько страниц. */
-export function SectionTabs({ variant, has }: { variant: MenuVariant; has: Has }) {
+/** Второй уровень меню под шапкой, если пункт объединяет несколько страниц. */
+export function SubNav({ variant, has }: { variant: MenuVariant; has: Has }) {
   const { pathname } = useLocation();
   if (variant === "now") return null;
   const { top, bottom } = structure(variant);
@@ -249,15 +231,13 @@ export function SectionTabs({ variant, has }: { variant: MenuVariant; has: Has }
   const it = all.map((i) => visible(i, has)).find((i) => i && i.pages.length > 1 && itemActive(i, pathname));
   if (!it) return null;
   return (
-    <div className="section-tabs">
-      <div className="tabs" role="tablist">
-        {it.pages.map((p) => (
-          <NavLink key={p.to} to={p.to} role="tab" aria-selected={isOn(pathname, p.to)} className="tab">
-            {p.icon(15)}
-            {it.tabLabels?.[p.to] ?? p.label}
-          </NavLink>
-        ))}
-      </div>
-    </div>
+    <nav className="subnav" aria-label={it.label}>
+      {it.pages.map((p) => (
+        <NavLink key={p.to} to={p.to} aria-current={isOn(pathname, p.to) ? "page" : undefined} className="subnav-link">
+          {p.icon(15)}
+          {it.tabLabels?.[p.to] ?? p.label}
+        </NavLink>
+      ))}
+    </nav>
   );
 }

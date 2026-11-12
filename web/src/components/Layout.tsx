@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Activity,
@@ -30,7 +30,8 @@ import { ROLE_LABEL } from "../lib/labels";
 import { HealthChip } from "./HealthChip";
 import { QuickSearch } from "./QuickSearch";
 import { RunProgressChip } from "./RunProgressChip";
-import { menuVariant, SectionTabs, VariantNav } from "./MenuVariants";
+import { menuVariant, SubNav, VariantNav } from "./MenuVariants";
+import { SessionNotice } from "./SessionNotice";
 
 interface NavItem {
   to: string;
@@ -106,7 +107,7 @@ function ThemeToggle() {
 function RailThemeToggle() {
   const { theme, toggleTheme } = useTheme();
   return (
-    <button type="button" className="btn btn-sm btn-ghost icon-btn" onClick={toggleTheme} aria-label="Сменить тему" title="Сменить тему">
+    <button type="button" className="btn btn-ghost icon-btn" onClick={toggleTheme} aria-label="Сменить тему" title="Сменить тему">
       {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
     </button>
   );
@@ -138,6 +139,11 @@ export function Layout() {
   const admin = items.filter((i) => i.admin);
   const variant = menuVariant();
   const rail = variant === "v3";
+  // Макеты v1–v4 показываются в «угловатом» виде; текущее меню — как есть.
+  useLayoutEffect(() => {
+    if (variant === "now") delete document.documentElement.dataset.look;
+    else document.documentElement.dataset.look = "sharp";
+  }, [variant]);
 
   return (
     <div className="shell">
@@ -171,7 +177,13 @@ export function Layout() {
             <div className="avatar" title={`${name} · ${roles}`}>
               {initials(name)}
             </div>
+            <Link to="/security" className="btn btn-ghost icon-btn" aria-label="Безопасность входа" title="Безопасность входа (2FA)">
+              <ShieldCheck size={16} />
+            </Link>
             <RailThemeToggle />
+            <button type="button" className="btn btn-ghost icon-btn" onClick={logout} aria-label="Выйти" title="Выйти">
+              <LogOut size={16} />
+            </button>
           </div>
         ) : (
         <div className="sidebar-foot">
@@ -208,8 +220,9 @@ export function Layout() {
             Только цели из allowlist проекта
           </span>
         </header>
+        <SubNav variant={variant} has={has} />
         <main className="content">
-          <SectionTabs variant={variant} has={has} />
+          <SessionNotice />
           <Outlet />
         </main>
       </div>

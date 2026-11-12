@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "./App";
-import { setToken } from "./api/client";
+import { getToken, setToken } from "./api/client";
 import { AuthProvider } from "./auth/AuthContext";
 import { ThemeProvider } from "./theme/ThemeContext";
 import { ADMIN, OPERATOR, finding, me, mockApi, summaryOf } from "./test/fixtures";
@@ -713,4 +713,68 @@ it("находки: фильтры и страницы — на сервере, 
   expect(q.get("sort")).toBe("severity");
   await userEvent.click(screen.getByRole("button", { name: "Следующая страница" }));
   await waitFor(() => expect(lastQuery().get("offset")).toBe("100"));
+});
+
+it("находки: «Выгрузить Excel» — все находки по фильтрам экрана, без страниц", async () => {
+  setToken("t");
+  const run = { id: 3, engagement_id: 1, modules: ["vuln"], rate_profile: "gentle", status: "done", targets: [], schedule_id: null,
+    started_by: 1, started_at: "2026-10-27T10:00:00", finished_at: "2026-10-27T11:00:00", created_at: "2026-10-27T10:00:00" };
+  const page = [finding({ id: 1 }), finding({ id: 2, host: "10.0.0.2" })];
+  let exported: URLSearchParams | null = null;
+  mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [run],
+    "GET /runs/3/findings": () => new Response(JSON.stringify(page), { status: 200, headers: { "Content-Type": "application/json", "X-Total-Count": "2" } }),
+    "GET /runs/3/findings/export": (_i: RequestInit | undefined, url: URL) => {
+      exported = url.searchParams;
+      return new Response("x", { headers: { "Content-Disposition": 'attachment; filename="findings-run-3.xlsx"' } });
+    },
+  });
+  const dl = await import("./lib/download");
+  const save = vi.spyOn(dl, "saveBlob").mockImplementation(() => {});
+  renderApp("/findings?view=all&run=3&sev=high&page=2&sort=cvss&dir=desc");
+  await userEvent.click(await screen.findByRole("button", { name: "Выгрузить находки: Excel" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][1]).toBe("findings-run-3.xlsx");
+  const q = exported!;
+  expect(q.get("format")).toBe("xlsx");
+  expect(q.getAll("severity")).toEqual(["high"]);
+  expect(q.get("sort")).toBe("cvss");
+  expect(q.get("order")).toBe("desc");
+  expect(q.get("false_positives")).toBe("exclude");
+  expect(q.get("limit")).toBeNull();
+  expect(q.get("offset")).toBeNull();
+  save.mockRestore();
+});
+
+it("«Выйти» закрывает сеанс на сервере и возвращает на страницу входа", async () => {
+  setToken("t");
+  const api = mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [],
+    "POST /auth/logout": () => new Response(null, { status: 204 }),
+  });
+  renderApp("/");
+  await userEvent.click(await screen.findByRole("button", { name: "Выйти" }));
+  expect(await screen.findByLabelText("Имя пользователя")).toBeInTheDocument();
+  const call = api.calls.find((c) => c.method === "POST" && c.path === "/auth/logout");
+  expect(new Headers(call?.init?.headers).get("Authorization")).toBe("Bearer t");
+});
+
+it("после перезагрузки вкладки вход продлевается и запоминает предел сеанса", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+  setToken(`${b64({ uid: 1, iat: now - 1000, exp: now + 2600, sid: "s1" })}.sig`);
+  const api = mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [],
+    "POST /auth/refresh": { access_token: "fresh", token_type: "bearer", expires_in: 3600, session_expires_at: "2099-01-01T00:00:00Z" },
+  });
+  renderApp("/");
+  await screen.findByRole("heading", { name: "Сводка по проекту" });
+  await waitFor(() => expect(api.calls.some((c) => c.path === "/auth/refresh")).toBe(true));
+  await waitFor(() => expect(getToken()).toBe("fresh"));
 });

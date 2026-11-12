@@ -190,6 +190,9 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 | **Находки и отчёты** | | |
 | `GET /runs/{r}/findings`, `GET /runs/{r}/findings/summary`, `GET /findings/{id}` | `view_report` | находки, счётчики, карточка |
 | `GET /runs/{r}/fixes` | `view_report` | план устранения «Что исправить» |
+| `GET /runs/{r}/findings/export?format=xlsx\|csv` | `view_report` | все находки файлом; фильтры и сортировка — как у `/findings`, без `limit`; больше 100 000 строк — 413 |
+| `GET /runs/{r}/fixes/export?format=xlsx\|csv&sheet=tasks\|hosts` | `view_report` | план «Что исправить» файлом; фильтры — как у `/fixes`; `sheet` — какой лист отдать в CSV |
+| `GET /engagements/{e}/hosts/{адрес}/fixes/export` | `view_report` | план одного актива по последним данным, те же параметры |
 | `PUT/DELETE /findings/{id}/false-positive` | `triage_findings` | отметка ложного срабатывания |
 | `POST /runs/{r}/false-positives/by-software`, `…/by-software/unmark` | `triage_findings` | отметка всех уязвимостей ПО |
 | `GET /engagements/{e}/false-positives` | `view_report` | перечень отметок проекта |
@@ -488,7 +491,8 @@ sync-msrc`): продукты SQL Server в него раньше не попа�
 
 | Параметр | По умолчанию | Назначение |
 |---|---|---|
-| `SCANNER_API_TOKEN_TTL_MINUTES` | 60 | срок токена |
+| `SCANNER_API_TOKEN_TTL_MINUTES` | 60 | срок токена = время бездействия до выхода (интерфейс продлевает токен, пока пользователь работает) |
+| `SCANNER_API_SESSION_MAX_HOURS` | 12 | предельный срок сеанса входа: дольше токен не продлевается, нужен новый вход; `0` — без предела |
 | `SCANNER_API_LOGIN_MAX_FAILURES`, `SCANNER_API_LOGIN_LOCKOUT_MINUTES` | 5, 15 | защита от перебора |
 | `SCANNER_API_CORS_ORIGINS` | пусто | CORS выключен (веб и API на одном origin) |
 | `SCANNER_API_LDAP_URL` | пусто (выкл.) | вход через AD/LDAP: контроллеры `ldaps://…` через запятую |

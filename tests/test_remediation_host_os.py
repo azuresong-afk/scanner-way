@@ -126,6 +126,41 @@ def test_resolver_uses_host_os_for_text_and_links():
     assert not any("ycombinator" in x for x in n.references)   # новости — никогда
 
 
+REDOS = "10.0.0.41"
+# Типичный набор ссылок NVD по CVE пакета: бюллетени сторонних продуктов,
+# GitHub Advisory и несколько коммитов апстрима.
+NVD_REFS = ["https://security.netapp.com/advisory/ntap-20230803-0010/",
+            "https://support.apple.com/kb/HT213940",
+            "https://www.ibm.com/support/pages/node/7022",
+            "https://github.com/openssh/openssh-portable/security/advisories/GHSA-x",
+            "https://github.com/openssh/openssh-portable/commit/aaa111",
+            "https://github.com/openssh/openssh-portable/commit/bbb222",
+            "https://example-vendor.test/sa-2023-01"]
+
+
+def test_package_vuln_on_known_distro_gets_compact_links():
+    """Пакет на известном дистрибутиве: бюллетень ОС, БДУ, NVD и одно исправление."""
+    r = RemediationResolver(bdu={REC.bdu_id: REC}, host_os={REDOS: "РЕД ОС 7.3"},
+                            nvd_refs={"CVE-2023-38408": NVD_REFS})
+    refs = r.resolve(vuln(REDOS)).references
+    kinds = [describe_ref(u).kind.name for u in refs]
+    assert set(kinds) <= {"OS", "REGISTRY", "PATCH"}
+    assert kinds.count("PATCH") == 1
+    assert "OS" not in kinds          # бюллетеней других дистрибутивов нет
+    assert "https://bdu.fstec.ru/vul/2023-03950" in refs
+    assert "https://nvd.nist.gov/vuln/detail/CVE-2023-38408" in refs
+    assert not any(x in " ".join(refs) for x in ("netapp", "apple", "ibm.com", "advisories",
+                                                 "example-vendor", "openssh.com"))
+
+    # ОС не определена или находка не из инвентаря пакетов — набор прежний
+    full = r.resolve(vuln(NOOS)).references
+    assert any("netapp" in u for u in full)
+    other = Finding(module="nuclei", host=REDOS, finding_type=FindingType.VULN,
+                    title="OpenSSH", severity=Severity.HIGH, vuln_id="CVE-2023-38408",
+                    cve_ids=["CVE-2023-38408"])
+    assert any("netapp" in u for u in r.resolve(other).references)
+
+
 def test_add_host_os_does_not_override_run_data():
     r = RemediationResolver(host_os={ASTRA: "Astra Linux 1.7"})
     r.add_host_os({ASTRA: "Debian 12", NOOS: "Linux 5.x", UBUNTU: "Ubuntu 24.04"},

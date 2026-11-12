@@ -113,7 +113,21 @@ function EditUser({ user, onClose, onDone, self }: { user: UserOut; onClose: () 
   const [error, setError] = useState<string | null>(null);
   const [mfaOn, setMfaOn] = useState(!!user.mfa_enabled);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [sessionsNote, setSessionsNote] = useState<string | null>(null);
   const ldap = user.auth_source === "ldap";
+
+  const endSessions = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { revoked } = await api.endUserSessions(user.id);
+      setSessionsNote(revoked ? `Завершено сеансов: ${revoked}` : "Открытых сеансов не было");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const resetMfa = async () => {
     setBusy(true);
@@ -194,6 +208,18 @@ function EditUser({ user, onClose, onDone, self }: { user: UserOut; onClose: () 
           </div>
         ) : (
           <RolePicker value={roles} onChange={setRoles} />
+        )}
+        {!self && (
+          <div className="field">
+            <span>Сеансы входа</span>
+            <div className="inline" style={{ gap: 8, flexWrap: "wrap" }}>
+              <button type="button" className="btn btn-sm" onClick={() => void endSessions()} disabled={busy}>
+                Завершить все сеансы
+              </button>
+              {sessionsNote && <span className="muted" style={{ fontSize: 13 }}>{sessionsNote}</span>}
+            </div>
+            <small className="faint">Пользователь выйдет на всех устройствах. Отключение учётной записи, новый пароль и сброс 2FA закрывают сеансы сами.</small>
+          </div>
         )}
         {mfaOn && (
           <div className="field">

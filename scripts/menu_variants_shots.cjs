@@ -43,7 +43,7 @@ const routes = {
   const pages = (process.argv[4]||"runs:/runs,sched:/schedules").split(",");
   for (const v of variants) for (const theme of ["light","dark"]) for (const pg of pages) {
     const [name, path] = pg.split(":");
-    const ctx = await browser.newContext({ viewport:{ width:1440, height:900 }, deviceScaleFactor:2, locale:"ru-RU", timezoneId:"Europe/Moscow" });
+    const ctx = await browser.newContext({ viewport: process.env.MEASURE ? { width:1366, height:768 } : { width:1440, height:900 }, deviceScaleFactor: process.env.MEASURE ? 1 : 2, locale:"ru-RU", timezoneId:"Europe/Moscow" });
     await ctx.addInitScript(([v,theme]) => { sessionStorage.setItem("scanner.token","t"); localStorage.setItem("scanner.theme",theme); localStorage.setItem("scanner.menu",v); localStorage.setItem("scanner.engagement","1"); }, [v,theme]);
     const page = await ctx.newPage();
     page.on("pageerror", e => console.error("pageerror", e.message));
@@ -60,7 +60,10 @@ const routes = {
     });
     await page.goto(BASE + path);
     await page.waitForTimeout(900);
-    await page.screenshot({ path: `${OUT}/${v}-${name}-${theme}.png` });
+    if (process.env.MEASURE) {
+      const m = await page.evaluate(() => { const s = document.querySelector(".sidebar"); const foot = s.querySelector(".sidebar-foot"); const kids = [...s.children].filter((c) => c !== foot); const last = kids[kids.length - 1].getBoundingClientRect(); return { need: Math.round(last.bottom + foot.getBoundingClientRect().height + parseFloat(getComputedStyle(s).paddingBottom)), width: Math.round(s.getBoundingClientRect().width), topbar: Math.round(document.querySelector(".topbar").getBoundingClientRect().height), brand: Math.round(s.querySelector(".brand").getBoundingClientRect().height), link: Math.round(s.querySelector(".nav-link").getBoundingClientRect().height) }; });
+      if (theme === "light") console.log(v, name, JSON.stringify(m));
+    } else await page.screenshot({ path: `${OUT}/${v}-${name}-${theme}.png` });
     await ctx.close();
   }
   await browser.close();

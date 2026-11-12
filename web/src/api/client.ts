@@ -52,6 +52,7 @@ import type {
   FixPlanOut,
   SearchOut,
   FixQuery,
+  TableFormat,
   HostLatestOut,
   InventoryHostOut,
   MeOut,
@@ -76,6 +77,7 @@ import type {
   SoftwareFalsePositiveOut,
   TokenOut,
   AuthConfigOut,
+  AuthSessionOut,
   MfaSetupOut,
   MfaStatusOut,
   UserCreate,
@@ -124,6 +126,20 @@ export function setToken(value: string | null): void {
     else sessionStorage.removeItem(TOKEN_KEY);
   } catch {
     /* хранилище недоступно — токен живёт до перезагрузки вкладки */
+  }
+}
+
+/** Срок токена из его же полезной нагрузки (iat/exp, секунды unix). Подпись
+ * проверяет сервер; здесь срок нужен только, чтобы вовремя продлить вход. */
+export function tokenTimes(value: string | null): { iat: number; exp: number } | null {
+  if (!value) return null;
+  try {
+    const b = value.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
+    const p = JSON.parse(atob(b + "=".repeat((4 - (b.length % 4)) % 4))) as { iat?: unknown; exp?: unknown };
+    if (typeof p.exp !== "number" || typeof p.iat !== "number") return null;
+    return { iat: p.iat, exp: p.exp };
+  } catch {
+    return null;
   }
 }
 
@@ -226,6 +242,13 @@ export const api = {
   login: (username: string, password: string) =>
     json<TokenOut>("/auth/token", { method: "POST", ...body({ username, password }) }),
   me: () => json<MeOut>("/me"),
+  // сеанс входа: продление токена и выход с отзывом на сервере
+  refresh: () => json<TokenOut>("/auth/refresh", { method: "POST" }),
+  logout: () => request("/auth/logout", { method: "POST" }).then(() => undefined),
+  mySessions: () => json<AuthSessionOut[]>("/me/sessions"),
+  endMySession: (id: string) => request(`/me/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }).then(() => undefined),
+  endOtherSessions: () => json<{ revoked: number }>("/me/sessions/revoke-others", { method: "POST" }),
+  endUserSessions: (id: number) => json<{ revoked: number }>(`/users/${id}/sessions`, { method: "DELETE" }),
   authConfig: () => json<AuthConfigOut>("/auth/config"),
   // второй шаг входа (2FA): mfa_token из /auth/token + код из приложения
   mfaVerify: (mfa_token: string, code: string) =>
@@ -390,6 +413,18 @@ export const api = {
   /** План исправлений актива по последним известным данным хоста (без выбранного прогона). */
   hostFixes: (engagementId: number, host: string, params: FixQuery = {}) =>
     json<FixPlanOut>(`/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/fixes${listQuery(params)}`),
+  /** «Все находки» файлом CSV/Excel — с фильтрами и сортировкой списка, без страниц. */
+  exportFindings: (runId: number, format: TableFormat, params: Omit<FindingQuery, "limit" | "offset"> = {}) =>
+    request(`/runs/${runId}/findings/export${listQuery({ ...params, format })}`).then(fileOf),
+  /** «Что исправить» файлом; sheet=hosts — CSV по строке на действие × хост. */
+  exportFixes: (runId: number, format: TableFormat, params: Omit<FixQuery, "limit" | "offset"> & { sheet?: "tasks" | "hosts" } = {}) =>
+    request(`/runs/${runId}/fixes/export${listQuery({ ...params, format })}`).then(fileOf),
+  exportHostFixes: (
+    engagementId: number,
+    host: string,
+    format: TableFormat,
+    params: Omit<FixQuery, "limit" | "offset" | "os" | "host"> & { sheet?: "tasks" | "hosts" } = {},
+  ) => request(`/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/fixes/export${listQuery({ ...params, format })}`).then(fileOf),
   finding: (id: number) => json<FindingOut>(`/findings/${id}`),
   /** Отметить находку хоста как ложное срабатывание (действует и в следующих прогонах). */
   markFalsePositive: (findingId: number, reason: string | null) =>

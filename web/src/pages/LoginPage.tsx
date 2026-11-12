@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { FileCheck2, KeyRound, Lock, Radar, ScrollText, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "../api/client";
-import type { AuthConfigOut, MfaSetupOut } from "../api/types";
+import type { AuthConfigOut, MfaSetupOut, TokenOut } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { CodeField, MfaSetupBox, RecoveryCodesBox } from "../components/Mfa";
 import { codeLooksValid } from "../lib/mfa";
@@ -36,7 +36,7 @@ export function LoginPage() {
   const [mfaToken, setMfaToken] = useState("");
   const [setup, setSetup] = useState<MfaSetupOut | null>(null);
   const [code, setCode] = useState("");
-  const [recovery, setRecovery] = useState<{ token: string; codes: string[] } | null>(null);
+  const [recovery, setRecovery] = useState<{ token: string; codes: string[]; info: TokenOut } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,13 +84,13 @@ export function LoginPage() {
         }
       } else if (step === "code") {
         const t = await api.mfaVerify(mfaToken, code.trim());
-        if (t.access_token) await acceptToken(t.access_token);
+        if (t.access_token) await acceptToken(t.access_token, t);
       } else if (step === "enroll") {
         const t = await api.mfaEnrollConfirm(mfaToken, code.trim());
-        if (t.access_token) setRecovery({ token: t.access_token, codes: t.recovery_codes ?? [] });
+        if (t.access_token) setRecovery({ token: t.access_token, codes: t.recovery_codes ?? [], info: t });
         setStep("recovery");
       } else if (recovery) {
-        await acceptToken(recovery.token);
+        await acceptToken(recovery.token, recovery.info);
       }
     });
   };

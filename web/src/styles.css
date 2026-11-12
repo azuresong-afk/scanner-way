@@ -356,6 +356,7 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .alert-warn { background: var(--warn-soft); color: var(--warn); }
 .alert-info { background: var(--info-soft); color: var(--accent-text); }
 .alert-ok { background: var(--ok-soft); color: var(--ok); }
+.session-notice { position: sticky; top: 8px; z-index: 30; align-items: center; margin-bottom: 16px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
 .alert svg { flex: 0 0 auto; margin-top: 1px; }
 
 .empty { padding: 40px 20px; text-align: center; color: var(--text-2); display: flex; flex-direction: column; align-items: center; gap: 10px; }
@@ -832,32 +833,114 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .health-items li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .spin { animation: spin 0.8s linear infinite; }
 
-/* ---------- макеты меню (В4), ключ localStorage «scanner.menu» ---------- */
-.nav-count { margin-left: auto; font-size: 11px; padding: 0 7px; border-radius: 10px; background: var(--surface-3); color: var(--text-3); line-height: 18px; }
-.nav-section-btn { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 8px; cursor: pointer;
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); padding: 14px 10px 6px; }
+/* ---------- макеты меню (В4), ключ localStorage «scanner.menu» ----------
+   Варианты v1–v4 показываются в «угловатом» виде: <html data-look="sharp">.
+   Скругления: 4 px — крупные блоки, 3 px — кнопки, поля и пункты меню, 2 px — метки и полосы.
+   Размеры меню — числа ряда Фибоначчи (соседние относятся как φ ≈ 1,618):
+   меню 233 px, узкая панель 89 px (233 : 89 = φ²), шапка и плитка панели 55 px,
+   строка меню и второй уровень 34 px (55 : 34 = φ), колонка значков 21 px (34 : 21 = φ),
+   отступы 8 / 13 / 21 px. */
+:root[data-look="sharp"] { --radius: 4px; --radius-sm: 3px; --radius-xs: 2px; }
+[data-look="sharp"] .chip,
+[data-look="sharp"] .tooltip,
+[data-look="sharp"] .evidence,
+[data-look="sharp"] .option-card,
+[data-look="sharp"] .change-tile .ic,
+[data-look="sharp"] .qs-row,
+[data-look="sharp"] .qs-icon,
+[data-look="sharp"] .code-block,
+[data-look="sharp"] .avatar { border-radius: var(--radius-sm); }
+[data-look="sharp"] .modal,
+[data-look="sharp"] .sev-tile,
+[data-look="sharp"] .report-frame,
+[data-look="sharp"] .user-card,
+[data-look="sharp"] .brand-mark { border-radius: var(--radius); }
+[data-look="sharp"] .pill,
+[data-look="sharp"] .tag,
+[data-look="sharp"] .count,
+[data-look="sharp"] .nav-count,
+[data-look="sharp"] .delta-badge,
+[data-look="sharp"] .qs kbd,
+[data-look="sharp"] .qs-trigger kbd,
+[data-look="sharp"] .qs-scope,
+[data-look="sharp"] .qs-badge,
+[data-look="sharp"] .heat td.cell,
+[data-look="sharp"] .run-progress-bar,
+[data-look="sharp"] .stackbar span:only-child { border-radius: var(--radius-xs); }
+[data-look="sharp"] .sevbar-track,
+[data-look="sharp"] .sevbar-fill { border-radius: 0 2px 2px 0; }
+[data-look="sharp"] .stackbar span:first-child { border-radius: 2px 0 0 2px; }
+[data-look="sharp"] .stackbar span:last-child { border-radius: 0 2px 2px 0; }
+[data-look="sharp"] .runcols-bar { border-radius: 2px 2px 0 0; }
+[data-look="sharp"] .sev-tile2-share .sevbar-fill,
+[data-look="sharp"] .runcols-bar .sevbar-fill { border-radius: 0; }
+/* точки статуса — маленькие квадраты, как метки уровней */
+[data-look="sharp"] .pill::before,
+[data-look="sharp"] .run-chip-dot,
+[data-look="sharp"] .health-chip-dot,
+[data-look="sharp"] .feed-dot { border-radius: 1px; }
+
+/* шапка 55 px: нижняя линия совпадает с линией под логотипом в меню */
+[data-look="sharp"] .topbar { height: 55px; padding-block: 0; gap: var(--s2); }
+
+/* меню 233 px */
+[data-look="sharp"] .sidebar { width: 233px; flex: 0 0 233px; padding: 0 var(--s2) var(--s2); gap: 0; }
+[data-look="sharp"] .brand { height: 55px; flex: 0 0 55px; margin: 0 calc(-1 * var(--s2)); padding: 0 var(--s3); gap: var(--s2); border-bottom: 1px solid var(--border); }
+[data-look="sharp"] .brand-mark { width: 34px; height: 34px; }
+[data-look="sharp"] .brand-name { line-height: 1.2; }
+[data-look="sharp"] .brand-sub { line-height: 1.2; }
+.nav-body { display: flex; flex-direction: column; gap: 0; padding-top: var(--s2); }
+.nav-group { display: flex; flex-direction: column; gap: 2px; }
+.nav-ic { width: 21px; flex: 0 0 21px; display: grid; place-items: center; }
+[data-look="sharp"] .nav-link { height: 34px; padding: 0 var(--s1); gap: var(--s2); }
+[data-look="sharp"] .nav-link.active { font-weight: 600; }
+[data-look="sharp"] .nav-section { padding: var(--s3) var(--s1) var(--s1); line-height: 13px; }
+.nav-count { font-size: 11px; padding: 0 5px; border-radius: 10px; background: var(--surface-3); color: var(--text-3); line-height: 16px; }
+.nav-section-btn { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: var(--s1); cursor: pointer;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); }
 .nav-section-btn:hover { color: var(--text-2); }
-.nav-section-btn .nav-count { margin-left: 0; text-transform: none; letter-spacing: 0; }
+.nav-section-btn:focus-visible { outline: 2px solid var(--accent); }
+.nav-section-btn .nav-count { text-transform: none; letter-spacing: 0; }
 .nav-section-btn svg:last-child { margin-left: auto; }
 .nav-bottom { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--border); }
-.section-tabs { margin-bottom: calc(-1 * var(--s1)); }
-/* v4 «Шаги работы» */
-.nav-step { margin-top: 6px; border-radius: 10px; }
-.nav-step.current { background: var(--surface-2); }
-:root[data-theme="light"] .nav-step.current { background: var(--surface-2); }
-.nav-step-head { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px; cursor: pointer;
-  padding: 9px 10px; font-weight: 600; color: var(--text); border-radius: var(--radius-sm); }
-.nav-step-head svg { margin-left: auto; color: var(--text-3); }
-.nav-step-head:hover { background: var(--surface-2); }
-.step-num { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700;
-  background: var(--surface-3); color: var(--text-2); }
-.nav-step.current .step-num { background: var(--accent); color: #fff; }
-.nav-step-items { padding: 0 0 6px 20px; display: flex; flex-direction: column; gap: 2px; }
-.nav-step-items .nav-link { padding: 7px 10px; }
-/* v3 «Узкая панель» */
-.sidebar.rail { width: 92px; flex: 0 0 92px; padding: 18px 8px; align-items: stretch; }
-.rail-brand { justify-content: center; padding: 4px 0 18px; }
-.rail-group { display: flex; flex-direction: column; gap: 4px; }
-.nav-link.rail-link { flex-direction: column; gap: 5px; padding: 10px 2px 8px; font-size: 11.5px; text-align: center; line-height: 1.15; }
-.rail-bottom { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--border); }
-.rail-foot { align-items: center; gap: 10px; }
+[data-look="sharp"] .sidebar-foot { padding-top: var(--s2); gap: var(--s1); }
+[data-look="sharp"] .user-card { padding: var(--s1); gap: var(--s1); }
+[data-look="sharp"] .avatar { width: 34px; height: 34px; flex: 0 0 34px; }
+[data-look="sharp"] .user-meta span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-look="sharp"] .sidebar-foot > .btn { height: 34px; }
+
+/* второй уровень меню под шапкой: высота 34 px */
+.subnav { display: flex; align-items: stretch; gap: var(--s3); height: 34px; flex: 0 0 34px; padding: 0 var(--gutter-x);
+  border-bottom: 1px solid var(--border); background: var(--bg); overflow-x: auto; }
+.subnav-link { display: inline-flex; align-items: center; gap: var(--s1); color: var(--text-2); font-weight: 500; font-size: 13px;
+  white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.subnav-link:hover { color: var(--text); text-decoration: none; }
+.subnav-link[aria-current="page"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.subnav-link[aria-current="page"] svg { color: var(--accent-text); }
+.subnav-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* v4 «Шаги работы»: шаги всегда раскрыты, линия соединяет номера */
+.nav-step { display: flex; flex-direction: column; }
+.nav-group + .nav-step { margin-top: var(--s2); }
+.nav-step-head { display: flex; align-items: center; gap: var(--s2); height: 34px; padding: 0 var(--s1); font-weight: 600; color: var(--text-2); }
+.nav-step.current .nav-step-head { color: var(--text); }
+.step-num { width: 21px; height: 21px; flex: 0 0 21px; border-radius: var(--radius-xs, 2px); display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; border: 1px solid var(--border-strong); color: var(--text-2); }
+.nav-step.current .step-num { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* линия по центру колонки номеров (8 + 21/2 ≈ 18 px), подписи — на одной вертикали с названием шага (42 px) */
+.nav-step-items { display: flex; flex-direction: column; gap: 2px; margin-left: 18px; padding: 0 0 var(--s1) 15px; border-left: 1px solid var(--border-strong); }
+.nav-step:last-of-type .nav-step-items { padding-bottom: 0; }
+.nav-step.current .nav-step-items { border-left-color: var(--accent); }
+[data-look="sharp"] .nav-link.step-link { height: 30px; }
+
+/* v3 «Узкая панель» 89 px: плитка 89 × 55 (φ) */
+[data-look="sharp"] .sidebar.rail { width: 89px; flex: 0 0 89px; padding: 0 0 var(--s2); }
+[data-look="sharp"] .sidebar.rail .brand { margin: 0; padding: 0; justify-content: center; }
+.rail-body { padding-top: 0; }
+.rail-body .nav-group { gap: 0; }
+[data-look="sharp"] .nav-link.rail-link { height: 55px; flex-direction: column; justify-content: center; gap: 5px; padding: 0 3px;
+  font-size: 11px; line-height: 13px; text-align: center; border-radius: 0; }
+[data-look="sharp"] .nav-link.rail-link.active { box-shadow: inset 3px 0 0 var(--accent); font-weight: 500; }
+.rail-body .nav-bottom { margin-top: var(--s1); padding-top: var(--s1); }
+.rail-foot { display: grid !important; grid-template-columns: 34px 34px; gap: var(--s1); justify-content: center; }
+.rail-foot .avatar { cursor: default; }
