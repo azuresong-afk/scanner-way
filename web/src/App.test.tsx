@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "./App";
-import { setToken } from "./api/client";
+import { getToken, setToken } from "./api/client";
 import { AuthProvider } from "./auth/AuthContext";
 import { ThemeProvider } from "./theme/ThemeContext";
 import { ADMIN, OPERATOR, finding, me, mockApi, summaryOf } from "./test/fixtures";
@@ -746,4 +746,35 @@ it("находки: «Выгрузить Excel» — все находки по 
   expect(q.get("limit")).toBeNull();
   expect(q.get("offset")).toBeNull();
   save.mockRestore();
+});
+
+it("«Выйти» закрывает сеанс на сервере и возвращает на страницу входа", async () => {
+  setToken("t");
+  const api = mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [],
+    "POST /auth/logout": () => new Response(null, { status: 204 }),
+  });
+  renderApp("/");
+  await userEvent.click(await screen.findByRole("button", { name: "Выйти" }));
+  expect(await screen.findByLabelText("Имя пользователя")).toBeInTheDocument();
+  const call = api.calls.find((c) => c.method === "POST" && c.path === "/auth/logout");
+  expect(new Headers(call?.init?.headers).get("Authorization")).toBe("Bearer t");
+});
+
+it("после перезагрузки вкладки вход продлевается и запоминает предел сеанса", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+  setToken(`${b64({ uid: 1, iat: now - 1000, exp: now + 2600, sid: "s1" })}.sig`);
+  const api = mockApi({
+    "GET /me": me(["operator"], OPERATOR),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [],
+    "POST /auth/refresh": { access_token: "fresh", token_type: "bearer", expires_in: 3600, session_expires_at: "2099-01-01T00:00:00Z" },
+  });
+  renderApp("/");
+  await screen.findByRole("heading", { name: "Сводка по проекту" });
+  await waitFor(() => expect(api.calls.some((c) => c.path === "/auth/refresh")).toBe(true));
+  await waitFor(() => expect(getToken()).toBe("fresh"));
 });

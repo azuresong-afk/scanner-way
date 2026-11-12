@@ -42,12 +42,20 @@ RUN set -eux; \
     nuclei -version || true
 
 WORKDIR /app
+# Зависимости — строго по lock-файлу с хешами (scripts/lock.sh): образ
+# собирается из тех же версий, что прошли тесты в CI, и подмена пакета в PyPI
+# не пройдёт проверку хеша. Отдельный слой: пока lock не меняется, он берётся
+# из кэша сборки.
+COPY requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+
 # Весь исходный код копируется ДО установки пакета: editable-установка
 # setuptools находит пакеты по факту их наличия, и если ставить только по
 # pyproject.toml (без каталога scanner/), консольная команда `scanner` и
 # автозагрузка БДУ в entrypoint падают с ModuleNotFoundError.
+# --no-deps: зависимости уже стоят из lock-файла, pip не должен их менять.
 COPY . .
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir --no-deps -e .
 RUN chmod +x docker/entrypoint.sh
 
 # Самоподготовка окружения и запуск — см. docker/entrypoint.sh

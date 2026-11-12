@@ -20,8 +20,6 @@
 from __future__ import annotations
 
 import json
-
-from scanner.core.naming import MODULE_TITLES
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -33,6 +31,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
 from scanner.core.models import FindingStatus, Severity
+from scanner.core.naming import MODULE_TITLES
 from scanner.reporting import charts as ch
 from scanner.reporting.charts import SEVERITY_HEX, STATUS_HEX, RunPoint, Scene
 from scanner.reporting.diff import severity_counts

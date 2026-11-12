@@ -36,6 +36,8 @@ class TokenOut(BaseModel):
     mfa_token: str | None = None
     # Только при первом подтверждении 2FA: одноразовые коды восстановления.
     recovery_codes: list[str] | None = None
+    # Предельный срок сеанса входа (дальше токен не продлевается); нет — без предела.
+    session_expires_at: datetime | None = None
 
 
 class AuthConfigOut(BaseModel):
@@ -106,6 +108,22 @@ class UserOut(_Orm):
 
 class MeOut(UserOut):
     permissions: list[str]
+
+
+class AuthSessionOut(BaseModel):
+    """Сеанс входа пользователя (профиль → «Сеансы входа»)."""
+    id: str
+    created_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime | None
+    method: str | None
+    client: str | None
+    user_agent: str | None
+    current: bool
+
+
+class SessionsRevokedOut(BaseModel):
+    revoked: int
 
 
 # ---- engagements / allowlist ----

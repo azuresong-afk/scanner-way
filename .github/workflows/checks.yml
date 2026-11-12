@@ -1,0 +1,90 @@
+name: checks
+
+# Статические проверки на каждый PR и раз в неделю (новые уязвимости в
+# зависимостях появляются и без изменений кода):
+#   ruff      — линтер Python (правила в pyproject.toml, [tool.ruff]);
+#   lock      — requirements*.lock совпадают с pyproject.toml (scripts/lock.sh);
+#   pip-audit — известные уязвимости в Python-зависимостях из lock-файлов;
+#   npm-audit — известные уязвимости в зависимостях web/ (package-lock.json).
+#
+# Что блокирует PR: любая находка ruff; рассинхрон lock-файлов; уязвимость в
+# зависимостях приложения (requirements.lock); уязвимость high/critical в
+# пакетах, попадающих в сборку web (npm --omit=dev). Инструменты разработки
+# (pytest, vite, vitest, eslint…) в образ не попадают — по ним отчёт без
+# блокировки, его видно в логе задания.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * 1"      # понедельник, 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.11.32"
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: ruff (версия из requirements-dev.lock)
+        run: |
+          ruff_pin=$(grep -m1 -E '^ruff==' requirements-dev.lock | cut -d' ' -f1)
+          pip install "$ruff_pin"
+          ruff check --output-format=github .
+
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "uv==${UV_VERSION}"
+      - name: Lock-файлы совпадают с pyproject.toml
+        run: |
+          scripts/lock.sh
+          if ! git diff --exit-code -- requirements.lock requirements-dev.lock; then
+            echo "::error::requirements*.lock не совпадают с pyproject.toml — запустите scripts/lock.sh и закоммитьте результат"
+            exit 1
+          fi
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pip-audit (версия из requirements-dev.lock)
+        run: |
+          pin=$(grep -m1 -E '^pip-audit==' requirements-dev.lock | cut -d' ' -f1)
+          pip install "$pin"
+      - name: Зависимости приложения (блокирует)
+        run: pip-audit -r requirements.lock --require-hashes --disable-pip --progress-spinner off
+      - name: Инструменты разработки (отчёт)
+        continue-on-error: true
+        run: pip-audit -r requirements-dev.lock --require-hashes --disable-pip --progress-spinner off
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Пакеты сборки web (блокирует high и critical)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Все пакеты, включая инструменты разработки (отчёт)
+        continue-on-error: true
+        run: npm audit

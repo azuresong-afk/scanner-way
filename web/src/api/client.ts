@@ -77,6 +77,7 @@ import type {
   SoftwareFalsePositiveOut,
   TokenOut,
   AuthConfigOut,
+  AuthSessionOut,
   MfaSetupOut,
   MfaStatusOut,
   UserCreate,
@@ -125,6 +126,20 @@ export function setToken(value: string | null): void {
     else sessionStorage.removeItem(TOKEN_KEY);
   } catch {
     /* хранилище недоступно — токен живёт до перезагрузки вкладки */
+  }
+}
+
+/** Срок токена из его же полезной нагрузки (iat/exp, секунды unix). Подпись
+ * проверяет сервер; здесь срок нужен только, чтобы вовремя продлить вход. */
+export function tokenTimes(value: string | null): { iat: number; exp: number } | null {
+  if (!value) return null;
+  try {
+    const b = value.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
+    const p = JSON.parse(atob(b + "=".repeat((4 - (b.length % 4)) % 4))) as { iat?: unknown; exp?: unknown };
+    if (typeof p.exp !== "number" || typeof p.iat !== "number") return null;
+    return { iat: p.iat, exp: p.exp };
+  } catch {
+    return null;
   }
 }
 
@@ -227,6 +242,13 @@ export const api = {
   login: (username: string, password: string) =>
     json<TokenOut>("/auth/token", { method: "POST", ...body({ username, password }) }),
   me: () => json<MeOut>("/me"),
+  // сеанс входа: продление токена и выход с отзывом на сервере
+  refresh: () => json<TokenOut>("/auth/refresh", { method: "POST" }),
+  logout: () => request("/auth/logout", { method: "POST" }).then(() => undefined),
+  mySessions: () => json<AuthSessionOut[]>("/me/sessions"),
+  endMySession: (id: string) => request(`/me/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }).then(() => undefined),
+  endOtherSessions: () => json<{ revoked: number }>("/me/sessions/revoke-others", { method: "POST" }),
+  endUserSessions: (id: number) => json<{ revoked: number }>(`/users/${id}/sessions`, { method: "DELETE" }),
   authConfig: () => json<AuthConfigOut>("/auth/config"),
   // второй шаг входа (2FA): mfa_token из /auth/token + код из приложения
   mfaVerify: (mfa_token: string, code: string) =>

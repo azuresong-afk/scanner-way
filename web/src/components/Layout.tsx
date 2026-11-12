@@ -30,6 +30,7 @@ import { ROLE_LABEL } from "../lib/labels";
 import { HealthChip } from "./HealthChip";
 import { QuickSearch } from "./QuickSearch";
 import { RunProgressChip } from "./RunProgressChip";
+import { SessionNotice } from "./SessionNotice";
 
 interface NavItem {
   to: string;
@@ -179,6 +180,7 @@ export function Layout() {
           </span>
         </header>
         <main className="content">
+          <SessionNotice />
           <Outlet />
         </main>
       </div>

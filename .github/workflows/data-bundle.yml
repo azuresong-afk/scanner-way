@@ -59,7 +59,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .
+      - run: pip install --require-hashes -r requirements.lock
+      - run: pip install --no-deps -e .
       - name: Схема БД (миграции применяет первая команда scanner)
         run: scanner --actor ci:data-bundle feeds auto-enabled nvd || true
 
