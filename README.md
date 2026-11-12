@@ -69,10 +69,20 @@ docker compose exec app scanner feeds sync-nvd
 
 ### Запуск без Docker (dev)
 ```bash
-pip install -e ".[dev]"
+pip install --require-hashes -r requirements-dev.lock && pip install --no-deps -e .
 alembic upgrade head          # нужен PostgreSQL; URL в SCANNER_DATABASE_URL
 uvicorn scanner.api.main:app --reload
 ```
+
+### Зависимости и проверки
+Версии Python-пакетов зафиксированы в `requirements.lock` (приложение, из него
+ставит Dockerfile) и `requirements-dev.lock` (+ инструменты разработки), с
+хешами. После правки зависимостей в `pyproject.toml` — `scripts/lock.sh`
+(нужен [uv](https://docs.astral.sh/uv/)); обновить пакет —
+`scripts/lock.sh --upgrade-package <имя>`, все — `scripts/lock.sh --upgrade`.
+CI (workflow `checks`, на каждый PR и раз в неделю) проверяет: `ruff check .`,
+совпадение lock-файлов с `pyproject.toml`, `pip-audit` и `npm audit` (блокируют
+уязвимости в том, что попадает в образ; по инструментам разработки — отчёт).
 
 ## Веб-интерфейс
 Каталог [`web/`](web/README.md): React + TypeScript поверх REST API — сводка,
