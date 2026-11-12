@@ -52,6 +52,7 @@ import type {
   FixPlanOut,
   SearchOut,
   FixQuery,
+  TableFormat,
   HostLatestOut,
   InventoryHostOut,
   MeOut,
@@ -390,6 +391,18 @@ export const api = {
   /** План исправлений актива по последним известным данным хоста (без выбранного прогона). */
   hostFixes: (engagementId: number, host: string, params: FixQuery = {}) =>
     json<FixPlanOut>(`/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/fixes${listQuery(params)}`),
+  /** «Все находки» файлом CSV/Excel — с фильтрами и сортировкой списка, без страниц. */
+  exportFindings: (runId: number, format: TableFormat, params: Omit<FindingQuery, "limit" | "offset"> = {}) =>
+    request(`/runs/${runId}/findings/export${listQuery({ ...params, format })}`).then(fileOf),
+  /** «Что исправить» файлом; sheet=hosts — CSV по строке на действие × хост. */
+  exportFixes: (runId: number, format: TableFormat, params: Omit<FixQuery, "limit" | "offset"> & { sheet?: "tasks" | "hosts" } = {}) =>
+    request(`/runs/${runId}/fixes/export${listQuery({ ...params, format })}`).then(fileOf),
+  exportHostFixes: (
+    engagementId: number,
+    host: string,
+    format: TableFormat,
+    params: Omit<FixQuery, "limit" | "offset" | "os" | "host"> & { sheet?: "tasks" | "hosts" } = {},
+  ) => request(`/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/fixes/export${listQuery({ ...params, format })}`).then(fileOf),
   finding: (id: number) => json<FindingOut>(`/findings/${id}`),
   /** Отметить находку хоста как ложное срабатывание (действует и в следующих прогонах). */
   markFalsePositive: (findingId: number, reason: string | null) =>

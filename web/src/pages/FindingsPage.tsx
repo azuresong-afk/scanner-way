@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Search, ShieldAlert } from "lucide-react";
 import { api } from "../api/client";
-import type { FindingOut, FindingQuery, FindingStatus, Severity } from "../api/types";
+import type { FindingOut, FindingQuery, FindingStatus, Severity, TableFormat } from "../api/types";
 import { SeverityStack } from "../components/charts/SeverityBars";
+import { ExportButtons } from "../components/ExportButtons";
+import { FINDINGS_EXPORTS } from "../lib/exports";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { FixPlan } from "../components/FixPlan";
 import { FindingsTable, type SortKey, type SortState } from "../components/FindingsTable";
@@ -226,6 +228,19 @@ export function FindingsPage() {
                 Прогон №{run.id}
                 {grouped && " · группировка по хостам — в пределах страницы"}
               </span>
+              {total > 0 && (
+                <ExportButtons
+                  what="находки"
+                  options={FINDINGS_EXPORTS}
+                  load={(fmt) =>
+                    api.exportFindings(run.id, fmt as TableFormat, {
+                      ...filter,
+                      sort: sort.key,
+                      order: sort.dir === -1 ? "desc" : "asc",
+                    })
+                  }
+                />
+              )}
             </div>
             {findings.loading && !findings.data ? (
               <Loading />

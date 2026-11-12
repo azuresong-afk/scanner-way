@@ -1147,6 +1147,9 @@ export interface FixPlanOut {
   severities: Partial<Record<Severity, number>>;
 }
 
+/** Формат табличной выгрузки «Все находки» / «Что исправить». */
+export type TableFormat = "xlsx" | "csv";
+
 export interface FixQuery {
   severity?: Severity[];
   kind?: string[];

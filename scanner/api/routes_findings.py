@@ -14,7 +14,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -362,6 +362,15 @@ def _fix_plan_out(tasks: list, fps: int, *, severity: list[str] | None, kind: li
         out["os"][t.os or "-"] = out["os"].get(t.os or "-", 0) + 1
         out["severities"][str(t.severity)] = out["severities"].get(str(t.severity), 0) + 1
     out["kinds"] = {k: out["kinds"][k] for k in KINDS if k in out["kinds"]}
+    sel = _filter_tasks(tasks, severity=severity, kind=kind, os=os, host=host, q=q)
+    out["total"] = len(sel)
+    out["items"] = [t.to_dict() for t in sel[offset:offset + limit]]
+    return out
+
+
+def _filter_tasks(tasks: list, *, severity: list[str] | None, kind: list[str] | None,
+                  os: list[str] | None, host: str | None, q: str | None) -> list:
+    """Действия плана по фильтрам экрана «Что исправить» (порядок сохраняется)."""
     sel = tasks
     if severity:
         sel = [t for t in sel if str(t.severity) in severity]
@@ -378,9 +387,7 @@ def _fix_plan_out(tasks: list, fps: int, *, severity: list[str] | None, kind: li
     if q and q.strip():
         needle = q.strip().lower()
         sel = [t for t in sel if needle in t.search_text()]
-    out["total"] = len(sel)
-    out["items"] = [t.to_dict() for t in sel[offset:offset + limit]]
-    return out
+    return sel
 
 
 @router.get("/engagements/{engagement_id}/hosts/{host}/fixes", response_model=FixPlanOut)
@@ -396,14 +403,25 @@ def host_fixes(engagement_id: int, host: str, request: Request,
     хоста по каждому виду проверки — из последнего прогона, где она хост
     проверила (как GET /engagements/{id}/hosts/{host}/latest). Карточка актива
     в «Активах» без выбранного прогона. Ложные срабатывания не входят."""
+    tasks, fps = _host_fix_plan(request, session, engagement_id, host)
+    return _fix_plan_out(tasks, fps, severity=severity, kind=kind, os=None, host=None,
+                         q=q, limit=limit, offset=offset)
+
+
+def _host_key(host: str) -> str:
+    try:
+        return str(ipaddress.ip_address(host.strip()))
+    except ValueError as e:
+        raise HTTPException(422, f"invalid host: {host}") from e
+
+
+def _host_fix_plan(request: Request, session: Session, engagement_id: int, host: str):
+    """(действия, исключено ложных) по последним известным данным хоста."""
     from scanner.core import host_latest
     from scanner.reporting.fixplan import build_fix_plan
 
     get_engagement(session, engagement_id)
-    try:
-        key = str(ipaddress.ip_address(host.strip()))
-    except ValueError as e:
-        raise HTTPException(422, f"invalid host: {host}") from e
+    key = _host_key(host)
     lt, rows = host_latest.latest_findings(session, engagement_id, key)
     marks = repo.false_positive_marks(session, engagement_id)
     items, fps = [], 0
@@ -426,8 +444,88 @@ def host_fixes(engagement_id: int, host: str, request: Request,
     resolver.add_host_os(repo.host_os_names(session, engagement_id), override=False)
     tasks = build_fix_plan(items, resolver=resolver, managers=managers,
                            services=services, priorities=priorities)
-    return _fix_plan_out(tasks, fps, severity=severity, kind=kind, os=None, host=None,
-                         q=q, limit=limit, offset=offset)
+    return tasks, fps
+
+
+FIX_SHEETS = ("tasks", "hosts")
+
+
+def _fixes_file(fmt_value: str, sheet: str, tasks: list, info_pairs: list, stem: str,
+                *, user: Principal, audit, target: str):
+    from scanner.api.routes_runs import table_response
+    from scanner.reporting import tabular
+    from scanner.reporting.export import fix_plan_sheets
+
+    fmt = tabular.TableFormat(fmt_value)
+    main, per_host = fix_plan_sheets(tasks)
+    if fmt is tabular.TableFormat.CSV and sheet == "hosts":
+        main, per_host = per_host, main
+        stem += "-hosts"
+    body = tabular.render(fmt, main, per_host, info=tabular.info_sheet(info_pairs))
+    audit.record(subject=user.subject, action="export", target=target, result="ok",
+                 details={"table": "fixes", "format": fmt.value, "tasks": len(tasks),
+                          "sheet": sheet if fmt is tabular.TableFormat.CSV else None})
+    return table_response(fmt, body, stem)
+
+
+@router.get("/runs/{run_id}/fixes/export")
+def export_fixes(run_id: int, request: Request,
+                 user: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                 session: SessionDep, audit: AuditDep,
+                 format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "xlsx",
+                 sheet: Annotated[str, Query(pattern="^(tasks|hosts)$")] = "tasks",
+                 severity: Annotated[list[str] | None, Query()] = None,
+                 kind: Annotated[list[str] | None, Query()] = None,
+                 os: Annotated[list[str] | None, Query()] = None,
+                 host: Annotated[str | None, Query(max_length=64)] = None,
+                 q: Annotated[str | None, Query(max_length=200)] = None) -> Response:
+    """«Что исправить» в CSV или Excel — с фильтрами экрана, весь план без страниц.
+    XLSX: лист действий (команды, проверка, хосты, CVE/БДУ, ссылки), лист
+    «По хостам» (строка на действие × хост — удобно раздать администраторам) и
+    «Сведения». CSV — один лист: sheet=tasks (по умолчанию) или sheet=hosts.
+    Сроков устранения нет."""
+    from scanner.api.routes_runs import FINISHED, _export_info, _get_run, labeled
+    from scanner.reporting.export import SEVERITY_BY_VALUE
+    from scanner.reporting.fixplan import KIND_LABELS
+
+    run = _get_run(session, run_id)
+    tasks, fps = fix_plan(request, session, run_id, run.engagement_id,
+                          cacheable=run.status in FINISHED)
+    sel = _filter_tasks(tasks, severity=severity, kind=kind, os=os, host=host, q=q)
+    eng = get_engagement(session, run.engagement_id)
+    info = _export_info(eng, run, user, rows=len(sel), filters={
+        "Уровень": labeled(severity, SEVERITY_BY_VALUE),
+        "Действие": labeled(kind, KIND_LABELS), "ОС": os, "Хост": host, "Поиск": q,
+        "Исключено ложных срабатываний": fps or None})
+    return _fixes_file(format, sheet, sel, info, f"fixes-run-{run_id}", user=user,
+                       audit=audit, target=f"scan_run:{run_id}")
+
+
+@router.get("/engagements/{engagement_id}/hosts/{host}/fixes/export")
+def export_host_fixes(engagement_id: int, host: str, request: Request,
+                      user: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                      session: SessionDep, audit: AuditDep,
+                      format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "xlsx",
+                      sheet: Annotated[str, Query(pattern="^(tasks|hosts)$")] = "tasks",
+                      severity: Annotated[list[str] | None, Query()] = None,
+                      kind: Annotated[list[str] | None, Query()] = None,
+                      q: Annotated[str | None, Query(max_length=200)] = None) -> Response:
+    """План исправлений одного актива (последние данные хоста) в CSV или Excel."""
+    from scanner.api.routes_runs import _export_info, labeled
+    from scanner.reporting.export import SEVERITY_BY_VALUE
+    from scanner.reporting.fixplan import KIND_LABELS
+
+    tasks, fps = _host_fix_plan(request, session, engagement_id, host)
+    sel = _filter_tasks(tasks, severity=severity, kind=kind, os=None, host=None, q=q)
+    key = _host_key(host)
+    eng = get_engagement(session, engagement_id)
+    info = _export_info(eng, None, user, rows=len(sel),
+                        source=f"Хост {key}: последние данные по каждому виду проверки",
+                        filters={"Уровень": labeled(severity, SEVERITY_BY_VALUE),
+                                 "Действие": labeled(kind, KIND_LABELS), "Поиск": q,
+                                 "Исключено ложных срабатываний": fps or None})
+    return _fixes_file(format, sheet, sel, info, f"fixes-host-{key.replace(':', '_')}",
+                       user=user, audit=audit, target=f"engagement:{engagement_id}")
 
 
 def _same_host(a: object, b: str) -> bool:
