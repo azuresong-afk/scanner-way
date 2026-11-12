@@ -247,10 +247,8 @@ def build_risk_context(session, findings: Iterable[Finding], engagement_id: int
     if bdus:
         store = SqlReferenceStore(engine)
         try:
-            for b in sorted(bdus):
-                rec = store.get_bdu(b)
-                if rec is not None and exploit_known(rec.exploit_available):
-                    exploit.add(b)
+            exploit = {b for b, rec in store.get_bdu_many(bdus).items()
+                       if exploit_known(rec.exploit_available)}
         except SQLAlchemyError:
             exploit = set()
     crit = {normalize_host(a): c for a, c in session.execute(

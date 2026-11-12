@@ -28,6 +28,20 @@ export interface TokenOut {
   mfa_token?: string;
   /** Только при первом подтверждении 2FA. */
   recovery_codes?: string[];
+  /** Предельный срок сеанса входа: дальше токен не продлевается. Нет — без предела. */
+  session_expires_at?: string;
+}
+
+/** Сеанс входа (профиль → «Сеансы входа»). */
+export interface AuthSessionOut {
+  id: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string | null;
+  method: string | null;
+  client: string | null;
+  user_agent: string | null;
+  current: boolean;
 }
 
 export type MfaMode = "off" | "optional" | "required";

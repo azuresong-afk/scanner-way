@@ -19,7 +19,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from scanner.api import mfa
+from scanner.api import mfa, sessions
 from scanner.api.deps import AuditDep, CurrentUser, Principal, SessionDep, require
 from scanner.api.rbac import Perm
 from scanner.api.routes_auth import _user_out, issue_access
@@ -149,7 +149,7 @@ def verify(body: MfaVerifyIn, request: Request, session: SessionDep,
     audit.record(subject=f"user:{user.username}", action="login", target=_client(request),
                  result="ok", details={"mfa": used,
                                        "recovery_codes_left": len(user.mfa_recovery or [])})
-    return issue_access(request, user)
+    return issue_access(request, session, user)
 
 
 @router.post("/auth/mfa/enroll", response_model=MfaSetupOut)
@@ -177,7 +177,7 @@ def enroll_confirm(body: MfaVerifyIn, request: Request, session: SessionDep,
                  target=f"user:{user.username}", result="ok", details={"at_login": True})
     audit.record(subject=f"user:{user.username}", action="login", target=_client(request),
                  result="ok", details={"mfa": "totp"})
-    out = issue_access(request, user)
+    out = issue_access(request, session, user)
     out.recovery_codes = codes
     return out
 
@@ -255,6 +255,7 @@ def my_disable(body: MfaCodeIn, principal: CurrentUser, request: Request,
                             "2FA is required on this server and cannot be turned off")
     _check_code(request, session, audit, user, body.code, allow_recovery=True)
     _clear(user)
+    sessions.revoke_user(session, user.id, "mfa_disabled", keep=principal.session_id)
     session.commit()
     audit.record(subject=principal.subject, action="mfa_disable",
                  target=f"user:{user.username}", result="ok")
@@ -279,7 +280,10 @@ def reset_mfa(user_id: int,
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
     was = bool(user.mfa_enabled)
     _clear(user)
+    # Потерян телефон — открытые входы этого пользователя закрываются тоже.
+    revoked = sessions.revoke_user(session, user.id, "mfa_reset")
     session.commit()
     audit.record(subject=principal.subject, action="mfa_reset",
-                 target=f"user:{user.username}", result="ok", details={"was_enabled": was})
+                 target=f"user:{user.username}", result="ok", details={"was_enabled": was,
+                                                        "sessions_revoked": revoked})
     return _user_out(session, user)

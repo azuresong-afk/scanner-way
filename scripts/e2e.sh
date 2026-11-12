@@ -11,7 +11,7 @@
 # (E2E_DIR), там пишется свой .env со случайными секретами, стек поднимается
 # под именем scanner-e2e на своих портах (E2E_WEB_PORT, по умолчанию 28080).
 # Нужны: docker с compose v2.24.4+, python 3.12 с зависимостями проекта
-# (pip install -e ".[dev]"), для проверки UI — node 18+ и пакет playwright
+# (pip install --require-hashes -r requirements-dev.lock && pip install --no-deps -e .), для проверки UI — node 18+ и пакет playwright
 # с chromium (без них шаг UI пропускается с предупреждением, если не задано
 # E2E_REQUIRE_UI=1).
 #

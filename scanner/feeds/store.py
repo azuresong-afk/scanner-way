@@ -42,10 +42,32 @@ class ReferenceStore(Protocol):
     def upsert_nvd(self, records: Iterable[NvdRecord]) -> int: ...
     def get_nvd(self, cve_id: str) -> NvdRecord | None: ...
     def get_bdu(self, bdu_id: str) -> BduRecord | None: ...
+    def get_bdu_many(self, bdu_ids: Iterable[str]) -> dict[str, BduRecord]: ...
     def bdu_by_cve(self, cve_id: str) -> list[BduRecord]: ...
     def cpe_matches(self, product: str) -> list[CpeMatch]: ...
     def bdu_by_software(self, name: str) -> list[BduRecord]: ...
     def bdu_software_names(self) -> set[str]: ...
+
+
+# Размер пачки для IN (…): SQLite до 3.32 ограничивает 999 параметрами.
+_IN_CHUNK = 500
+
+
+def get_bdu_many(store, bdu_ids: Iterable[str]) -> dict[str, BduRecord]:
+    """Пакетный поиск записей БДУ в любом справочнике.
+
+    Хранилища с get_bdu_many отвечают одним запросом на пачку; остальные
+    (например, справочник центра на узле сканирования) — по одному id.
+    Ключи ответа — id в верхнем регистре."""
+    many = getattr(store, "get_bdu_many", None)
+    if many is not None:
+        return many(bdu_ids)
+    out: dict[str, BduRecord] = {}
+    for bid in sorted({i.upper() for i in bdu_ids}):
+        rec = store.get_bdu(bid)
+        if rec is not None:
+            out[bid] = rec
+    return out
 
 
 # ---------- In-memory ----------
@@ -91,6 +113,10 @@ class InMemoryReferenceStore:
 
     def get_bdu(self, bdu_id: str) -> BduRecord | None:
         return self.bdu.get(bdu_id.upper())
+
+    def get_bdu_many(self, bdu_ids: Iterable[str]) -> dict[str, BduRecord]:
+        ids = {i.upper() for i in bdu_ids}
+        return {i: self.bdu[i] for i in sorted(ids) if i in self.bdu}
 
     def bdu_by_cve(self, cve_id: str) -> list[BduRecord]:
         return [self.bdu[i] for i in sorted(self._bdu_by_cve.get(cve_id.upper(), ()))]
@@ -367,6 +393,22 @@ class SqlReferenceStore:
                 bdu_entry.c.bdu_id == bdu_id.upper())).first()
         return _row_to_bdu(row) if row else None
 
+    def get_bdu_many(self, bdu_ids: Iterable[str]) -> dict[str, BduRecord]:
+        """Записи БДУ по списку идентификаторов: один SELECT … IN на пачку
+        (вместо запроса на каждый id). Отсутствующие id в ответ не попадают."""
+        ids = sorted({i.upper() for i in bdu_ids})
+        out: dict[str, BduRecord] = {}
+        if not ids:
+            return out
+        with self.engine.connect() as conn:
+            for k in range(0, len(ids), _IN_CHUNK):
+                rows = conn.execute(select(bdu_entry).where(
+                    bdu_entry.c.bdu_id.in_(ids[k:k + _IN_CHUNK]))).all()
+                for r in rows:
+                    rec = _row_to_bdu(r)
+                    out[rec.bdu_id] = rec
+        return out
+
     def bdu_by_cve(self, cve_id: str) -> list[BduRecord]:
         cve_id = cve_id.upper()
         if self._pg:
@@ -430,7 +472,7 @@ class UnavailableReferenceStore:
     def _fail(self, *_a, **_kw):
         raise RuntimeError(f"справочники недоступны: {self.reason}")
 
-    counts = get_nvd = get_bdu = bdu_by_cve = cpe_matches = _fail
+    counts = get_nvd = get_bdu = get_bdu_many = bdu_by_cve = cpe_matches = _fail
     bdu_by_software = bdu_software_names = upsert_bdu = upsert_nvd = _fail
 
 
@@ -468,6 +510,15 @@ class CachingReferenceStore:
 
     def get_bdu(self, bdu_id: str) -> BduRecord | None:
         return self._get("get_bdu", bdu_id)
+
+    def get_bdu_many(self, bdu_ids: Iterable[str]) -> dict[str, BduRecord]:
+        ids = sorted({i.upper() for i in bdu_ids})
+        missing = [i for i in ids if ("get_bdu", i) not in self._cache]
+        if missing:
+            found = get_bdu_many(self.store, missing)
+            for i in missing:
+                self._cache[("get_bdu", i)] = found.get(i)
+        return {i: r for i in ids if (r := self._cache[("get_bdu", i)]) is not None}
 
     def bdu_by_cve(self, cve_id: str) -> list[BduRecord]:
         return self._get("bdu_by_cve", cve_id)

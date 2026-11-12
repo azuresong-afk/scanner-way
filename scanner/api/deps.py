@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from scanner.api import sessions
 from scanner.api.rbac import Perm, user_permissions
 from scanner.core.audit import AuditSink
 from scanner.core.db import User, session_scope
@@ -21,6 +22,9 @@ class Principal:
     id: int
     username: str
     permissions: frozenset[str]
+    # Сеанс входа, к которому относится токен (None — внутренние вызовы, например
+    # прогоны по расписанию).
+    session_id: str | None = None
 
     @property
     def subject(self) -> str:
@@ -51,11 +55,19 @@ def current_user(request: Request,
                                  headers={"WWW-Authenticate": "Bearer"})
     if creds is None:
         raise unauthorized
-    uid = request.app.state.signer.verify(creds.credentials)
-    user = session.get(User, uid) if uid is not None else None
+    claims = request.app.state.signer.claims(creds.credentials)
+    if claims is None:
+        raise unauthorized
+    uid, sid, _exp = claims
+    # Токен без сеанса или отозванного сеанса (выход, блокировка, смена пароля)
+    # не принимается, даже если его срок ещё не вышел.
+    if sessions.get_alive(session, sid, uid) is None:
+        raise unauthorized
+    user = session.get(User, uid)
     if user is None or not user.is_active:
         raise unauthorized
-    return Principal(user.id, user.username, frozenset(user_permissions(session, user.id)))
+    return Principal(user.id, user.username, frozenset(user_permissions(session, user.id)),
+                     session_id=sid)
 
 
 CurrentUser = Annotated[Principal, Depends(current_user)]
