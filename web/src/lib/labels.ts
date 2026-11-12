@@ -41,8 +41,8 @@ export const FINISHED: RunStatus[] = ["done", "partial", "failed", "stopped", "i
 /** Прогоны с результатом, пригодным для сравнения (базовые). */
 export const COMPARABLE: RunStatus[] = ["done", "partial"];
 export const isFinished = (s: RunStatus) => FINISHED.includes(s);
-/** Прогоны, которые можно повторить кнопкой «Повторить». */
-export const RETRYABLE: RunStatus[] = ["failed", "partial", "interrupted", "stopped"];
+/** Прогоны, которые можно повторить кнопкой «Повторить»: любой завершённый, включая успешный. */
+export const RETRYABLE: RunStatus[] = ["done", "failed", "partial", "interrupted", "stopped"];
 export const isRetryable = (s: RunStatus) => RETRYABLE.includes(s);
 
 export interface ModuleInfo {

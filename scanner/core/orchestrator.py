@@ -96,8 +96,9 @@ MAX_TARGETS_PER_RUN = 4096
 
 ModuleFactory = Callable[[], ScanModule]
 
-# Какие прогоны можно повторить кнопкой «Повторить».
-RETRYABLE = frozenset({"failed", "interrupted", "stopped", "partial"})
+# Какие прогоны можно повторить кнопкой «Повторить»: любой завершённый,
+# в том числе успешный (повторная проверка тех же целей после устранения).
+RETRYABLE = frozenset({"done", "failed", "interrupted", "stopped", "partial"})
 
 log = logging.getLogger(__name__)
 
@@ -933,16 +934,16 @@ class RunService:
             return node.name
 
     def retry(self, scan_run_id: int, *, actor: str, started_by: int | None = None) -> int:
-        """Новый прогон с параметрами завершившегося (ошибка, прерван,
-        остановлен). Allowlist и учётки проверяются заново при исполнении.
-        ValueError — прогон ещё идёт или успешно завершён (API отдаёт 409)."""
+        """Новый прогон с параметрами завершившегося (успешно, с ошибкой,
+        частично, прерван, остановлен). Allowlist и учётки проверяются заново
+        при исполнении. ValueError — прогон ещё идёт (API отдаёт 409)."""
         with session_scope(self.sessions) as s:
             run = repo.get_scan_run(s, scan_run_id)
             if run is None:
                 raise LookupError(f"scan_run {scan_run_id} not found")
             if run.status not in RETRYABLE:
-                raise ValueError(f"повторить можно только прогон с ошибкой, частичный, "
-                                 f"прерванный или остановленный (сейчас: {run.status})")
+                raise ValueError(f"повторить можно только завершённый прогон "
+                                 f"(сейчас: {run.status})")
             params = {"engagement_id": run.engagement_id, "modules": list(run.modules),
                       "rate_profile": run.rate_profile,
                       "requested_targets": list(run.targets or []),

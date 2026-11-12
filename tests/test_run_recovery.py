@@ -317,8 +317,13 @@ def test_retry_creates_new_run_with_same_params(client, sqlite_factory):
     assert new["targets"] == ["10.0.0.1"]
     assert len(client.get(f"/runs/{new['id']}/findings", headers=op).json()) == 1
     assert client.get(f"/runs/{old}/findings", headers=op).json() == []
-    # успешный прогон повторять незачем; аудитор не запускает прогоны
-    assert client.post(f"/runs/{new['id']}/retry", headers=op).status_code == 409
+    # успешный прогон тоже можно повторить (повторная проверка после устранения)
+    again = client.post(f"/runs/{new['id']}/retry", headers=op)
+    assert again.status_code == 202, again.text
+    assert again.json()["retry_of"] == new["id"] and again.json()["targets"] == ["10.0.0.1"]
+    # идущий прогон повторить нельзя; аудитор не запускает прогоны
+    running = _orphan(sqlite_factory, eid, status="running", worker_id=None, heartbeat=None)
+    assert client.post(f"/runs/{running}/retry", headers=op).status_code == 409
     aud = _login(client, "aud")
     assert client.post(f"/runs/{old}/retry", headers=aud).status_code == 403
 

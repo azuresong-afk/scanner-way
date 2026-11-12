@@ -64,6 +64,18 @@ it("прерванный прогон: статус, причина и «Пов�
   expect(await screen.findByText(/повтор/)).toBeInTheDocument();
 });
 
+it("успешный прогон тоже можно повторить", async () => {
+  const api = renderPage(OPERATOR, run({ status: "done", error_message: null }));
+  await userEvent.click(await screen.findByRole("button", { name: /Повторить/ }));
+  await waitFor(() => expect(api.calls.some((c) => c.method === "POST" && c.path === "/runs/7/retry")).toBe(true));
+});
+
+it("у идущего прогона «Повторить» нет", async () => {
+  renderPage(OPERATOR, run({ status: "running", error_message: null }));
+  expect(await screen.findByRole("button", { name: /Остановить/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Повторить/ })).not.toBeInTheDocument();
+});
+
 it("причина ошибки видна, без права запуска кнопки нет", async () => {
   renderPage(ADMIN, run({ status: "failed", error_message: "Прогон завершён с ошибками — модуль vuln: timeout" }));
   expect(await screen.findByText(/модуль vuln: timeout/)).toBeInTheDocument();
