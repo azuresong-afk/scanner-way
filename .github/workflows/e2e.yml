@@ -19,7 +19,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pip install -e ".[dev]"
+      - run: pip install --require-hashes -r requirements-dev.lock
+      - run: pip install --no-deps -e .
       - name: Playwright для проверки UI
         working-directory: web
         run: |

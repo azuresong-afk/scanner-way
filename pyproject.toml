@@ -42,7 +42,7 @@ dependencies = [
 scanner = "scanner.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "pip-audit>=2.7"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -50,3 +50,29 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["scanner*"]
+
+# Линтер (CI: workflow checks). Набор правил — ошибки (E/F/W), сортировка
+# импортов (I), типичные баги (B) и устаревший синтаксис (UP). Форматирование
+# (ruff format) и длина строки не проверяются: массовое переформатирование
+# сломало бы параллельные ветки.
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["web", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # длина строки — см. выше
+    "B905",  # zip() без strict=: в отчётах длины рядов заведомо равны
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "E731",  # lambda в переменной для подмен в тестах
+    "E402",  # импорт после настройки окружения теста
+    "B011",  # assert False в недостижимых ветках теста
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["scanner"]

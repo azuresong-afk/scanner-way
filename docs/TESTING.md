@@ -1206,7 +1206,8 @@ allowlist, хост с SSH и учёткой, по возможности Debian
 Не обязательно для приёмки, но полезно после правок кода:
 
 ```bash
-pip install -e ".[dev]" && pytest -q                     # Python: ядро, модули, API, отчёты
+pip install --require-hashes -r requirements-dev.lock && pip install --no-deps -e .
+ruff check . && pytest -q                                # Python: линтер; ядро, модули, API, отчёты
 # PostgreSQL-тесты — только во временной базе на указанном сервере (рабочую не трогают):
 SCANNER_TEST_DATABASE_URL=postgresql+psycopg://user:pass@host:5432/postgres pytest -q
 cd web && npm ci && npm run lint && npm run typecheck && npm test && npm run build
@@ -1218,7 +1219,7 @@ cd web && npm ci && npm run lint && npm run typecheck && npm test && npm run bui
 аудит паролей → отчёт по группе активов) — `pytest -q tests/test_wave1_e2e.py`.
 
 **Сквозной сценарий на живом Docker** — `scripts/e2e.sh` (нужны Docker с
-compose v2.24.4+, Python 3.12 с `pip install -e ".[dev]"`; для проверки
+compose v2.24.4+, Python 3.12 с зависимостями из `requirements-dev.lock` (см. выше); для проверки
 интерфейса — Node 18+ и `cd web && npm i --no-save playwright && npx playwright
 install chromium`). Скрипт копирует проект во временный каталог, пишет туда
 свой `.env` со случайными секретами и поднимает отдельный стек

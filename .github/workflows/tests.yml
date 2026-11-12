@@ -26,5 +26,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
+      - run: pip install --require-hashes -r requirements-dev.lock
+      - run: pip install --no-deps -e .
       - run: pytest -q
