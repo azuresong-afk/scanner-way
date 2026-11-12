@@ -631,6 +631,30 @@ class OfflineJobRow(Base):
     result_summary: Mapped[dict | None] = mapped_column(Jsonb)
 
 
+# ========== Сеансы входа (миграция 0030) ==========
+class AuthSessionRow(Base):
+    """Сеанс входа: на него ссылается каждый токен доступа (поле sid).
+
+    Выход, «завершить сеанс» и блокировка пользователя ставят revoked_at — токен
+    перестаёт приниматься сразу, не дожидаясь своего срока. last_seen_at
+    обновляется при продлении токена; expires_at — предельный срок сеанса
+    (после него нужен новый вход), NULL — без предела.
+    """
+    __tablename__ = "auth_sessions"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(TsTz, server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(TsTz)
+    revoked_at: Mapped[datetime | None] = mapped_column(TsTz)
+    # logout | user | admin | user_disabled | password_changed | mfa_reset | mfa_disabled
+    revoked_reason: Mapped[str | None] = mapped_column(Text)
+    method: Mapped[str | None] = mapped_column(Text)        # local | ldap
+    client: Mapped[str | None] = mapped_column(Text)        # IP клиента
+    user_agent: Mapped[str | None] = mapped_column(Text)
+
+
 def make_engine(url: str | None = None, **kwargs) -> Engine:
     """Engine по URL; по умолчанию — Postgres из настроек окружения."""
     if url is None:

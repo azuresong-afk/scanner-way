@@ -4,13 +4,14 @@ import { api } from "../api/client";
 import type { MfaSetupOut } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { CodeField, MfaSetupBox, RecoveryCodesBox } from "../components/Mfa";
+import { SessionsCard } from "../components/SessionsCard";
 import { codeLooksValid } from "../lib/mfa";
 import { ErrorAlert, Loading } from "../components/ui";
 import { useAsync } from "../lib/useAsync";
 
 type Action = "setup" | "recovery" | "disable" | null;
 
-/** Профиль: способ входа и своя двухфакторная аутентификация. */
+/** Профиль: способ входа, своя двухфакторная аутентификация и сеансы входа. */
 export function SecurityPage() {
   const { me } = useAuth();
   const status = useAsync(() => api.myMfa(), []);
@@ -143,6 +144,7 @@ export function SecurityPage() {
           </>
         )}
       </section>
+      <SessionsCard />
     </>
   );
 }
