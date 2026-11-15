@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Pencil, Wifi } from "lucide-react";
+import { FileText, Pencil, Wifi } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
@@ -10,10 +10,11 @@ import { SeverityBars } from "../components/charts/SeverityBars";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { FindingsTable } from "../components/FindingsTable";
 import { FixPlan } from "../components/FixPlan";
+import { ReportMenu } from "../components/ReportMenu";
 import { RunPicker } from "../components/RunPicker";
 import { ServicesTable } from "../components/ServicesTable";
 import { SoftwareTable } from "../components/SoftwareTable";
-import { Empty, ErrorAlert, Kpi, Loading } from "../components/ui";
+import { Empty, ErrorAlert, Kpi, Loading, Modal } from "../components/ui";
 import { fmtDate } from "../lib/format";
 import { MODULE_LABEL } from "../lib/labels";
 import { byHost, emptyCounts, isFalsePositive, isIssue, replaceFinding } from "../lib/stats";
@@ -27,6 +28,8 @@ const SOURCE_LABEL: Record<string, string> = { manual: "", discovery: "прог�
 interface HostData {
   findings: FindingOut[];
   services: ServiceOut[];
+  /** Откуда открытые порты (без выбранного прогона: последний прогон или «Доступность»). */
+  servicesLabel: string | null;
   packages: PackageOut[];
   /** Прогон выбранный, а без выбора — последний, где хост проверялся (null — не проверялся). */
   runId: number | null;
@@ -77,24 +80,38 @@ export function HostDetailPage() {
           api.services(run.id),
           withPackages ? api.packages(run.id, host) : Promise.resolve([]),
         ]);
-        return { findings, services: services.filter((s) => s.host === host), packages, runId: run.id, moduleRuns: null };
+        return { findings, services: services.filter((s) => s.host === host), servicesLabel: null, packages, runId: run.id, moduleRuns: null };
       }
-      const [lt, inventory] = await Promise.all([api.hostLatest(eid!, host), api.hosts(eid!)]);
+      const [lt, inventory, ports] = await Promise.all([
+        api.hostLatest(eid!, host),
+        api.hosts(eid!),
+        api.hostPorts(eid!, host).catch(() => null),
+      ]);
       const inv = inventory.find((h) => h.host === host);
       const packages = inv?.packages_run_id ? await api.packages(inv.packages_run_id, host) : [];
-      return { findings: lt.findings, services: inv?.services ?? [], packages, runId: lt.checked_run_id, moduleRuns: lt.module_runs };
+      return {
+        findings: lt.findings,
+        services: ports ? ports.services : (inv?.services ?? []),
+        servicesLabel: ports?.source ? ports.label : null,
+        packages,
+        runId: lt.checked_run_id,
+        moduleRuns: lt.module_runs,
+      };
     },
     [run?.id, host, eid],
     !!run || (latest && !!eid),
   );
   const [open, setOpen] = useState<FindingOut | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
   const [view, setView] = useState<VulnView>(loadView);
   const { has } = useAuth();
   const row = useMemo(() => {
     if (!data.data) return undefined;
     // без прогона хост с данными есть, даже если уязвимостей нет
     const r = byHost(data.data.findings.filter(isIssue), data.data.services)[0];
-    return r ?? (data.data.runId !== null ? { host, counts: emptyCounts(), total: 0, maxSeverity: "info" as const, findings: [], services: [], summary: "" } : undefined);
+    // хост, который видела только «Доступность» (без прогона), тоже показывается — с портами
+    if (r) return { ...r, services: data.data.services };
+    return data.data.runId !== null || data.data.services.length ? ({ host, counts: emptyCounts(), total: 0, maxSeverity: "info" as const, findings: [], services: data.data.services, summary: "" }) : undefined;
   }, [data.data, host]);
   const info = data.data?.findings.filter((f) => f.severity === "info" && !isFalsePositive(f)) ?? [];
   const falsePositives = data.data?.findings.filter(isFalsePositive) ?? [];
@@ -119,6 +136,11 @@ export function HostDetailPage() {
               <Wifi size={15} /> Проверить доступность
             </Link>
           )}
+          {has("view_report") && current && row && (
+            <button type="button" className="btn" onClick={() => setReportOpen(true)}>
+              <FileText size={15} /> Отчёт по активу
+            </button>
+          )}
           {runs.length > 0 && <RunPicker runs={runs} value={run?.id ?? null} onChange={setRun} latestLabel="Последние данные" />}
         </div>
       </div>
@@ -127,11 +149,11 @@ export function HostDetailPage() {
       {data.error && <ErrorAlert error={data.error} onRetry={data.reload} />}
       {(loading && !runs.length) || (data.loading && !data.data) ? (
         <Loading />
-      ) : !runs.length ? (
+      ) : !runs.length && !data.data?.services.length ? (
         <div className="card">
           <Empty title="Нет завершённых прогонов" />
         </div>
-      ) : !row || data.data?.runId == null ? (
+      ) : !row || (data.data?.runId == null && !data.data?.services.length) ? (
         <div className="card">
           <Empty title={run ? "Хост не найден в этом прогоне" : "Хост ещё не проверялся"}>
             {run ? "Выберите «Последние данные», чтобы увидеть последние известные уязвимости хоста." : "Уязвимости появятся после прогона, который проверит этот хост."}
@@ -154,9 +176,10 @@ export function HostDetailPage() {
             </div>
             <div className="card grow-2" style={{ overflow: "hidden", alignSelf: "flex-start" }}>
               <div className="card-head">
-                <h2>Сервисы</h2>
+                <h2>Открытые порты и сервисы</h2>
+                {data.data.servicesLabel && <span className="faint" style={{ fontSize: 13 }}>{data.data.servicesLabel}</span>}
               </div>
-              <ServicesTable services={row.services} />
+              <ServicesTable services={row.services} hideHost />
             </div>
           </section>
           <section className="card" style={{ overflow: "hidden" }}>
@@ -193,7 +216,7 @@ export function HostDetailPage() {
                 services={row.services}
                 onOpen={setOpen}
                 selected={open}
-                runId={data.data.runId}
+                runId={data.data.runId ?? undefined}
                 host={host}
                 triage={has("triage_findings")}
                 onChanged={() => void data.reload()}
@@ -218,6 +241,17 @@ export function HostDetailPage() {
             </details>
           )}
         </>
+      )}
+      {reportOpen && current && (
+        <Modal title={`Отчёт по активу ${host}`} onClose={() => setReportOpen(false)} wide>
+          <p className="muted" style={{ marginTop: 0 }}>
+            {run
+              ? `Только этот хост в прогоне №${run.id}: его находки, открытые порты и сервисы.`
+              : "По последним данным актива — как в карточке: находки каждого вида проверки из последнего прогона, где он хост проверил; открытые порты — из последнего прогона или «Доступности»."}{" "}
+            Для печати откройте «Просмотр» → «Печать» или скачайте PDF.
+          </p>
+          <ReportMenu runId={run?.id ?? null} engagementId={current.id} host={host} />
+        </Modal>
       )}
       {open && (
         <FindingDrawer

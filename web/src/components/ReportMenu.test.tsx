@@ -175,3 +175,37 @@ it("разделы: план и профили соответствия — оп
   await userEvent.click(screen.getByRole("radio", { name: "Краткий" }));
   expect(screen.getByRole("checkbox", { name: "План устранения" })).toBeDisabled();
 });
+
+it("отчёт по активу: по последним данным — свой адрес, в прогоне — host=", async () => {
+  setToken("t");
+  const seen: string[] = [];
+  mockApi({
+    "GET /engagements/5/hosts/10.0.0.1/report": (_init: RequestInit | undefined, url: URL) => {
+      seen.push(`latest:${url.searchParams.get("format")}:${url.searchParams.get("details") ?? ""}`);
+      return new Response("x");
+    },
+    "GET /runs/7/report": (_init: RequestInit | undefined, url: URL) => {
+      seen.push(`run:${url.searchParams.get("host")}`);
+      return new Response("x");
+    },
+    "GET /engagements/5/compliance-profiles": [],
+    "GET /compliance/profiles": [],
+    "GET /engagements/5/asset-groups": [{ id: 1, name: "DMZ", asset_count: 2 }],
+  });
+  const save = vi.spyOn(download, "saveBlob").mockImplementation(() => {});
+  const { unmount } = render(<ReportMenu runId={null} engagementId={5} host="10.0.0.1" runs={[run(3, "done")]} />);
+  // в отчёте по активу нет сравнения и выбора группы
+  expect(screen.queryByLabelText("Сравнить с прогоном")).toBeNull();
+  expect(screen.queryByLabelText("Группа активов")).toBeNull();
+  await userEvent.click(screen.getByLabelText("Рекомендации инженерам"));
+  await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт PDF" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][1]).toBe("report-host-10.0.0.1.pdf");
+  unmount();
+
+  render(<ReportMenu runId={7} engagementId={5} host="10.0.0.1" />);
+  await userEvent.click(screen.getByRole("button", { name: "Скачать отчёт HTML" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(save.mock.calls[1][1]).toBe("report-run-7-host-10.0.0.1.html");
+  expect(seen).toEqual(["latest:pdf:false", "run:10.0.0.1"]);
+});

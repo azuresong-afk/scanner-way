@@ -147,6 +147,10 @@
   .host td:first-child, .host th:first-child { padding-left: 14px; }
   .host td:last-child, .host th:last-child { padding-right: 14px; }
   .host tr:last-child td { border-bottom: none; }
+  .host-sub { padding: 8px 14px 4px; font-size: 8pt; font-weight: 600; color: var(--muted);
+              text-transform: uppercase; letter-spacing: .04em; border-top: 1px solid var(--line); }
+  .host-empty { padding: 8px 14px 10px; margin: 0; color: var(--muted); font-size: 9pt;
+                border-top: 1px solid var(--line); }
   .host th { background: var(--bg); }
   .strip { display: flex; height: 6px; width: 100%; border-radius: 3px; overflow: hidden;
            background: var(--line); }
@@ -196,13 +200,15 @@
   <div class="meta">
     {% if r.context.engagement %}<span>Договор / проект: <b>{{ r.context.engagement }}</b></span>{% endif %}
     {% if r.context.group %}<span>Группа активов: <b>{{ r.context.group }}</b></span>{% endif %}
+    {% if r.context.host %}<span>Актив: <b>{{ r.context.host }}</b></span>{% endif %}
+    {% if r.context.sources %}<span>Данные: <b>{{ r.context.sources }}</b></span>{% endif %}
     {% if r.context.run_id is not none %}<span>Прогон: <b>{{ r.context.run_id }}</b></span>{% endif %}
     {% if r.context.previous_run_id is not none %}<span>Сравнение с прогоном: <b>{{ r.context.previous_run_id }}</b></span>{% endif %}
     <span>Сформирован: <b>{{ r.context.generated_at.strftime("%d.%m.%Y %H:%M UTC") }}</b></span>
   </div>
   <div class="score">
     <div class="risk" style="border-top-color: {{ SEVERITY_HEX[r.summary.risk_level] if r.summary.risk_level else '#12b76a' }}"><small>Уровень риска</small><b>{{ r.summary.risk_label }}</b></div>
-    <div><small>Хостов с находками</small><b>{{ r.summary.hosts }}</b></div>
+    {% if r.context.host and r.services is not none %}<div><small>Открытых портов</small><b>{{ (r.services.values()|first or [])|length }}</b></div>{% else %}<div><small>Хостов с находками</small><b>{{ r.summary.hosts }}</b></div>{% endif %}
     <div><small>Всего находок</small><b>{{ r.summary.total }}</b></div>
     <div><small>Критических и высоких</small><b>{{ sc.critical + sc.high }}</b></div>
   </div>
@@ -436,15 +442,27 @@
 
 <h2><span class="n">{{ "%02d"|format(num.hosts) }}</span>Результаты по хостам</h2>
 {% if hosts %}
-<p class="lead">Все находки по каждому хосту. Хосты упорядочены по уровню риска.</p>
+<p class="lead">Все находки по каждому хосту{% if r.services is not none %}, открытые порты и сервисы на них{% endif %}. Хосты упорядочены по уровню риска.</p>
 {% for h in hosts %}
 <div class="host" id="host-{{ loop.index }}">
   <div class="host-head">
     <span class="name mono">{{ h.host }}</span>
     {% if h.risk %}{{ sev(h.risk) }}{% endif %}
-    <span class="facts">Находок: {{ h.total }}{% if h.ports %} · Порты: {{ h.ports|join(", ") }}{% endif %}</span>
+    <span class="facts">Находок: {{ h.total }}{% if h.services is not none %} · Открытых портов: {{ h.services|length }}{% elif h.ports %} · Порты: {{ h.ports|join(", ") }}{% endif %}</span>
     <div style="flex: 1 1 100%">{{ strip(h.counts) }}</div>
   </div>
+  {% if h.services %}
+  <div class="host-sub">Открытые порты и сервисы</div>
+  <table class="svc">
+    <colgroup><col style="width: 14%"><col style="width: 18%"><col style="width: 34%"><col style="width: 34%"></colgroup>
+    <tr><th>Порт</th><th>Сервис</th><th>Продукт и версия</th><th>CPE</th></tr>
+    {% for s in h.services %}
+    <tr><td class="mono">{{ s.port }}/{{ s.protocol }}</td><td>{{ s.service or "—" }}</td><td>{{ service_label(s) }}</td><td class="ids">{{ s.cpe or "—" }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if h.findings %}
+  {% if h.services %}<div class="host-sub">Находки</div>{% endif %}
   <table>
     <colgroup><col style="width: 20%"><col style="width: {{ 28 if t else 43 }}%"><col style="width: 7%"><col style="width: 22%"><col style="width: 8%">{% if t %}<col style="width: 15%">{% endif %}</colgroup>
     <tr><th>Опасность</th><th>Находка</th><th>Порт</th><th>Идентификаторы</th><th class="num">CVSS</th>{% if t %}<th>Статус</th>{% endif %}</tr>
@@ -461,6 +479,9 @@
     </tr>
     {% endfor %}
   </table>
+  {% else %}
+  <p class="host-empty">Уязвимостей не найдено.</p>
+  {% endif %}
 </div>
 {% endfor %}
 {% else %}

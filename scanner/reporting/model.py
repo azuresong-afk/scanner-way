@@ -31,6 +31,7 @@ from scanner.core.models import (
     Finding,
     FindingStatus,
     FindingType,
+    ServiceInfo,
     Severity,
 )
 from scanner.reporting.diff import RunDiff, diff_by_module, diff_runs, severity_counts
@@ -116,6 +117,9 @@ class ReportContext:
     run_id: str | int | None = None
     previous_run_id: str | int | None = None
     group: str | None = None             # группа активов, если отчёт — разрез по группе
+    host: str | None = None              # отчёт по одному активу (хосту)
+    # откуда данные, если отчёт собран не по одному прогону (последние данные актива)
+    sources: str | None = None
     generated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -445,6 +449,9 @@ class Report:
     coverage: dict | None = None
     warnings: list[dict] = field(default_factory=list)
     comparability: dict | None = None
+    # Открытые порты и сервисы по хостам: {хост: [{port, protocol, service,
+    # product, version, cpe}]}; None — сведения не передавались.
+    services: dict[str, list[dict]] | None = None
 
     @property
     def coverage_gaps(self) -> list[dict]:
@@ -479,7 +486,7 @@ class Report:
             "meta": {
                 "title": c.title, "customer": c.customer, "engagement": c.engagement,
                 "run_id": c.run_id, "previous_run_id": c.previous_run_id,
-                "group": c.group,
+                "group": c.group, "host": c.host, "sources": c.sources,
                 "generated_at": c.generated_at.isoformat(),
                 "variant": self.variant,
                 "sections": {"plan": self.show_plan, "compliance": bool(self.compliance),
@@ -501,6 +508,8 @@ class Report:
         out["coverage"] = self.coverage
         out["warnings"] = list(self.warnings)
         out["comparability"] = self.comparability
+        if self.services is not None:
+            out["services"] = [{"host": h, "ports": list(p)} for h, p in self.services.items()]
         if not self.show_plan:
             del out["remediation_plan"]
         if self.brief:
@@ -521,6 +530,22 @@ def _compliance_dict(c: dict, brief: bool) -> dict:
     return {**c, "failures": strip,
             "controls": [x for x in c.get("controls", []) if x.get("status") != "failed"]
             + strip}
+
+
+def _services_by_host(services: Iterable[ServiceInfo] | None,
+                      allowed: set[str] | None) -> dict[str, list[dict]] | None:
+    """Сервисы -> {хост: порты по возрастанию}; дубли (хост, порт, протокол) — один."""
+    if services is None:
+        return None
+    out: dict[str, dict[tuple[int, str], dict]] = {}
+    for s in services:
+        key = _host_key(s.host)
+        if allowed is not None and key not in allowed:
+            continue
+        out.setdefault(key, {})[(s.port, s.protocol)] = {
+            "port": s.port, "protocol": s.protocol, "service": s.service,
+            "product": s.product, "version": s.version, "cpe": s.cpe}
+    return {h: [ports[k] for k in sorted(ports)] for h, ports in out.items()}
 
 
 def without_plan(report: Report) -> Report:
@@ -690,6 +715,7 @@ def build_report(
     previous_coverage: Coverage | None = None,
     run_status: str | None = None,
     warnings: list[dict] | None = None,
+    services: Iterable[ServiceInfo] | None = None,
 ) -> Report:
     """Строит модель отчёта.
 
@@ -710,6 +736,9 @@ def build_report(
     coverage/previous_coverage — покрытие прогона и базы сравнения: раздел
     «Полнота проверки», честное сравнение (не проверенное — не «устранено»).
     run_status/warnings — статус прогона и ограничения достоверности.
+    services — открытые порты и сервисы (разведка nmap -sV): в разделе «Результаты
+    по хостам» у каждого хоста таблица портов; хосты без находок, но с открытыми
+    портами тоже попадают в раздел. Фильтр hosts действует и на них.
     """
     resolver = resolver or RemediationResolver()
     context = context or ReportContext()
@@ -783,5 +812,6 @@ def build_report(
         warnings=list(warnings or []),
         comparability=comparability,
         with_details=with_details,
+        services=_services_by_host(services, allowed if hosts is not None else None),
     )
     return report if with_plan else without_plan(report)

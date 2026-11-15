@@ -7,6 +7,7 @@ import type {
   AllowlistBulkOut,
   AllowlistIn,
   ReportSections,
+  HostPortsOut,
   AssetBulkIn,
   AssetFilters,
   AssetGroupOut,
@@ -474,9 +475,10 @@ export const api = {
     compareTo: number | null = null,
     groupId: number | null = null,
     sections: ReportSections = {},
+    host: string | null = null,
   ): Promise<Blob> => {
     const cmp = compareTo === null ? "" : `&compare_to=${compareTo}`;
-    const grp = groupId === null ? "" : `&group_id=${groupId}`;
+    const grp = (groupId === null ? "" : `&group_id=${groupId}`) + (host === null ? "" : `&host=${encodeURIComponent(host)}`);
     // Разделы-опции: без плана — plan=false; профили соответствия — списком (none — без раздела).
     const plan = sections.plan === false ? "&plan=false" : "";
     const det = sections.details === false ? "&details=false" : "";
@@ -485,6 +487,19 @@ export const api = {
     const res = await request(`/runs/${runId}/report?format=${format}&variant=${variant}${cmp}${grp}${plan}${det}${cmpl}`);
     return res.blob();
   },
+  /** Отчёт по одному активу по последним данным (как карточка актива без выбранного прогона). */
+  hostReport: async (engagementId: number, host: string, format: ReportFormat, variant: ReportVariant = "full", sections: ReportSections = {}): Promise<Blob> => {
+    const plan = sections.plan === false ? "&plan=false" : "";
+    const det = sections.details === false ? "&details=false" : "";
+    const cmpl =
+      sections.compliance === undefined ? "" : `&compliance=${encodeURIComponent(sections.compliance.join(",") || "none")}`;
+    const res = await request(
+      `/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/report?format=${format}&variant=${variant}${plan}${det}${cmpl}`,
+    );
+    return res.blob();
+  },
+  /** Открытые порты актива по последним данным: последний прогон или «Доступность», что свежее. */
+  hostPorts: (engagementId: number, host: string) => json<HostPortsOut>(`/engagements/${engagementId}/hosts/${encodeURIComponent(host)}/ports`),
 
   /** Состояние самого сканера; refresh — проверить заново, минуя кэш сервера. */
   systemHealth: (refresh = false) => json<SystemHealth>(`/system/health${refresh ? "?refresh=true" : ""}`),

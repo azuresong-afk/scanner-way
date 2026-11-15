@@ -198,3 +198,41 @@ it("«Что исправить» на карточке актива: по по�
   expect(localStorage.getItem("scanner.host.vulnView")).toBe("list");
   expect(screen.getByRole("heading", { name: "Уязвимости хоста" })).toBeInTheDocument();
 });
+
+it("порты из «Доступности» и кнопка «Отчёт по активу»", async () => {
+  setToken("t");
+  perms = ["view_report"];
+  mockApi({
+    "GET /engagements/5/runs": [run(1, ["discovery"])],
+    "GET /engagements/5/hosts": [],
+    "GET /engagements/5/hosts/10.0.0.5/latest": { host: "10.0.0.5", run_ids: [], checked_run_id: null, module_runs: {}, findings: [] },
+    "GET /engagements/5/hosts/10.0.0.5/ports": {
+      host: "10.0.0.5",
+      source: "port_scan",
+      label: "проверка доступности 4 от 14.11.2026",
+      run_id: null,
+      port_scan_id: 4,
+      seen_at: "2026-11-14T10:00:00Z",
+      versions_from_run: false,
+      ports_from_run: false,
+      services: [{ host: "10.0.0.5", port: 443, protocol: "tcp", service: "https", product: "nginx", version: "1.24", cpe: null }],
+    },
+    "GET /engagements/5/compliance-profiles": [],
+    "GET /compliance/profiles": [],
+    "GET /engagements/5/asset-groups": [],
+  });
+  render(
+    <MemoryRouter initialEntries={["/hosts/10.0.0.5"]}>
+      <Routes>
+        <Route path="/hosts/:host" element={<HostDetailPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  // хост видела только проверка доступности — карточка всё равно показывает порты
+  expect(await screen.findByText("Открытые порты и сервисы")).toBeInTheDocument();
+  expect(screen.getByText("проверка доступности 4 от 14.11.2026")).toBeInTheDocument();
+  expect(screen.getByText("443/tcp")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Отчёт по активу/ }));
+  expect(screen.getByRole("dialog")).toHaveTextContent("По последним данным актива");
+  expect(screen.getByRole("button", { name: "Скачать отчёт PDF" })).toBeInTheDocument();
+});

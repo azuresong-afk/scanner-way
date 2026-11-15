@@ -693,6 +693,21 @@ export interface ServiceOut {
   cpe: string | null;
 }
 
+/** Открытые порты актива по последним данным (GET /engagements/{id}/hosts/{host}/ports). */
+export interface HostPortsOut {
+  host: string;
+  /** run — разведка прогона; port_scan — «Доступность»; null — сведений нет. */
+  source: "run" | "port_scan" | null;
+  /** Подпись источника: «прогон 5 от 12.11.2026», «проверка доступности 3 от …; версии ПО — из прогона 5». */
+  label: string;
+  run_id: number | null;
+  port_scan_id: number | null;
+  seen_at: string | null;
+  versions_from_run: boolean;
+  ports_from_run: boolean;
+  services: ServiceOut[];
+}
+
 /** Хост инвентаря договора (по всем прогонам). */
 export interface InventoryHostOut {
   host: string;
