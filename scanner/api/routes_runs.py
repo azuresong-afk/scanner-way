@@ -316,6 +316,86 @@ def host_latest_findings(engagement_id: int, host: str,
                               priorities.get(r.scan_run_id)) for r in rows])
 
 
+@router.get("/engagements/{engagement_id}/hosts/{host}/ports")
+def host_latest_ports(engagement_id: int, host: str,
+                      _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                      session: SessionDep) -> dict:
+    """Открытые порты и сервисы актива по последним данным: последний прогон
+    (разведка nmap -sV) или «Доступность», что свежее (scanner.core.host_ports)."""
+    from scanner.core import host_ports
+    get_engagement(session, engagement_id)
+    return host_ports.latest_ports(session, engagement_id, _report_host(host)).to_dict()
+
+
+@router.get("/engagements/{engagement_id}/hosts/{host}/report")
+def host_report(engagement_id: int, host: str, request: Request,
+                user: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
+                session: SessionDep, audit: AuditDep,
+                format: Annotated[str, Query(pattern="^(html|pdf|docx|json)$")] = "html",
+                variant: Annotated[str, Query(pattern="^(full|brief)$")] = "full",
+                plan: bool = True,
+                details: bool = True,
+                compliance: Annotated[str | None, Query(
+                    max_length=300, pattern=r"^[a-z0-9,-]*$")] = None) -> Response:
+    """Отчёт по одному активу по последним данным — то же, что карточка актива
+    без выбранного прогона: находки по каждому виду проверки из последнего
+    прогона, где она хост проверила, открытые порты и сервисы — из последнего
+    прогона или «Доступности». Отчёт по активу в конкретном прогоне —
+    GET /runs/{id}/report?host=<адрес>. Параметры variant/plan/details/compliance —
+    как у отчёта по прогону; сравнения нет."""
+    from scanner.core import host_ports
+    from scanner.reporting.model import ReportContext, build_report, module_label
+    from scanner.reporting.render import (
+        CONTENT_TYPES,
+        ReportFormat,
+        ReportRenderer,
+        ReportVariant,
+    )
+    from scanner.reporting.risk import build_risk_context
+
+    eng = get_engagement(session, engagement_id)
+    key = _report_host(host)
+    profiles = _report_profiles(compliance)
+    lt, rows = host_latest.latest_findings(session, engagement_id, key)
+    ports = host_ports.latest_ports(session, engagement_id, key)
+    if not lt.module_runs and ports.source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "no data for this host yet: run a scan or a port check")
+    current = [repo.row_to_finding(r) for r in rows]
+    by_run: dict[int, list[str]] = {}
+    for module, rid in sorted(lt.module_runs.items()):
+        by_run.setdefault(rid, []).append(module_label(module).lower())
+    parts = [f"прогон {rid} — {', '.join(mods)}" for rid, mods in
+             sorted(by_run.items(), reverse=True)]
+    if ports.source is not None:
+        parts.append(f"порты — {ports.label}")
+    resolver = request.app.state.resolver_factory(current)
+    resolver.add_host_os(repo.host_os_names(session, engagement_id), override=False)
+    comp_run = lt.module_runs.get("config_audit") or lt.checked_run_id
+    report = build_report(
+        current, resolver=resolver,
+        context=ReportContext(customer=eng.client,
+                              engagement=eng.contract_ref or eng.name,
+                              host=key, sources="; ".join(parts) or None),
+        false_positives=repo.false_positive_marks(session, engagement_id), hosts={key},
+        risk=build_risk_context(session, current, engagement_id),
+        compliance=(_compliance_sections(session, comp_run, engagement_id, {key}, profiles)
+                    if comp_run is not None else []),
+        with_plan=plan, with_details=details,
+        services=ports.services)
+    fmt, var = ReportFormat(format), ReportVariant(variant)
+    body = ReportRenderer().render(report, fmt, variant=var)
+    audit.record(subject=user.subject, action="export", target=f"engagement:{engagement_id}",
+                 result="ok", details={"report": "host", "host": key, "format": fmt.value,
+                                       "variant": var.value, "findings": len(current),
+                                       "run_ids": lt.run_ids, "plan": report.show_plan,
+                                       "details": report.show_details})
+    suffix = "-brief" if var is ReportVariant.BRIEF else ""
+    return Response(content=body, media_type=CONTENT_TYPES[fmt], headers={
+        "Content-Disposition":
+            f'attachment; filename="report-host-{host_file_part(key)}{suffix}.{fmt.value}"'})
+
+
 @router.get("/runs/{run_id}", response_model=RunOut)
 def read_run(run_id: int, _: Annotated[Principal, Depends(require(Perm.VIEW_REPORT))],
              session: SessionDep) -> ScanRun:
@@ -599,6 +679,7 @@ def get_report(run_id: int, request: Request,
                variant: Annotated[str, Query(pattern="^(full|brief)$")] = "full",
                compare_to: int | None = None,
                group_id: int | None = None,
+               host: Annotated[str | None, Query(max_length=64)] = None,
                plan: bool = True,
                details: bool = True,
                compliance: Annotated[str | None, Query(
@@ -606,6 +687,7 @@ def get_report(run_id: int, request: Request,
     """Отчёт по прогону. По умолчанию — только по этому прогону, без сравнения;
     compare_to=<id> — сравнить с выбранным более ранним прогоном договора.
     group_id=<id> — разрез по группе активов: только хосты группы.
+    host=<адрес> — отчёт по одному активу: только находки, порты и сервисы хоста.
     variant=brief — краткая версия: без плана устранения,
     по находкам вместо рекомендаций только ссылки на устранение.
     plan=false — без раздела «План устранения» (рекомендации по находкам остаются).
@@ -635,6 +717,13 @@ def get_report(run_id: int, request: Request,
         if group is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "asset group not found")
         hosts = asset_svc.group_hosts(session, group_id)
+    host_key = None
+    if host is not None:
+        host_key = _report_host(host)
+        if hosts is not None and host_key not in {_report_host(h) for h in hosts}:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                                "host is not in the asset group")
+        hosts = {host_key}
     current = repo.get_findings(session, run_id)
     prev_id = None
     if compare_to is not None:
@@ -655,7 +744,7 @@ def get_report(run_id: int, request: Request,
         context=ReportContext(customer=eng.client,
                               engagement=eng.contract_ref or eng.name,
                               run_id=run_id, previous_run_id=prev_id,
-                              group=group.name if group else None),
+                              group=group.name if group else None, host=host_key),
         false_positives=repo.false_positive_marks(session, eng.id), hosts=hosts,
         risk=build_risk_context(session, current, eng.id),
         compliance=_compliance_sections(session, run_id, eng.id, hosts, profiles),
@@ -663,22 +752,39 @@ def get_report(run_id: int, request: Request,
         coverage=repo.run_coverage(session, run),
         previous_coverage=(repo.run_coverage(session, prev_id)
                            if prev_id is not None else None),
-        run_status=run.status, warnings=list(run.warnings or []))
+        run_status=run.status, warnings=list(run.warnings or []),
+        services=repo.get_services(session, run_id))
     fmt, var = ReportFormat(format), ReportVariant(variant)
     body = ReportRenderer().render(report, fmt, variant=var)
     audit.record(subject=user.subject, action="export", target=f"scan_run:{run_id}",
                  result="ok", details={"format": fmt.value, "variant": var.value,
                                        "previous_run_id": prev_id, "findings": len(current),
-                                       "group_id": group_id, "plan": report.show_plan,
+                                       "group_id": group_id, "host": host_key,
+                                       "plan": report.show_plan,
                                        "details": report.show_details,
                                        "compliance": [c["profile"]["id"]
                                                       for c in report.compliance]})
     suffix = (f"-group-{group_id}" if group_id is not None else "") + (
+        f"-host-{host_file_part(host_key)}" if host_key else "") + (
         "-brief" if var is ReportVariant.BRIEF else "") + (
         f"-vs-{prev_id}" if prev_id is not None else "")
     return Response(content=body, media_type=CONTENT_TYPES[fmt], headers={
         "Content-Disposition":
             f'attachment; filename="report-run-{run_id}{suffix}.{fmt.value}"'})
+
+
+def _report_host(host: str) -> str:
+    """Адрес актива для отчёта в каноническом виде; не IP — 422."""
+    try:
+        return str(ipaddress.ip_address(str(host).strip().split("/")[0]))
+    except ValueError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            f"invalid host: {host}") from e
+
+
+def host_file_part(host: str) -> str:
+    """Адрес для имени файла: двоеточия IPv6 — подчёркивания."""
+    return host.replace(":", "_")
 
 
 def _report_profiles(compliance: str | None) -> list[str] | None:

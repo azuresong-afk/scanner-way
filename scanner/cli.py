@@ -334,6 +334,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="без раздела «План устранения» (рекомендации по находкам остаются)")
     rep.add_argument("--no-details", action="store_true",
                      help="без раздела «Детальные результаты для инженеров»")
+    rep.add_argument("--host", metavar="ADDRESS",
+                     help="отчёт по одному активу: только находки, порты и сервисы хоста")
     rep.set_defaults(handler=cmd_report)
 
     # --- auth ---
@@ -836,6 +838,14 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
             raise CliError(f"прогон в статусе {run.status}; отчёт доступен после завершения")
         eng = s.get(Engagement, run.engagement_id)
         current = repo.get_findings(s, args.run_id)
+        services = repo.get_services(s, args.run_id)
+        host_key = None
+        if args.host:
+            import ipaddress
+            try:
+                host_key = str(ipaddress.ip_address(args.host.strip()))
+            except ValueError as e:
+                raise CliError(f"неверный адрес хоста: {args.host}") from e
         prev_id = None
         if args.compare_to is not None:
             try:
@@ -846,7 +856,7 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
         hist = (repo.historically_fixed_keys(s, eng.id, prev_id)
                 if prev_id is not None else None)
         context = ReportContext(customer=eng.client, engagement=eng.contract_ref or eng.name,
-                                run_id=args.run_id, previous_run_id=prev_id)
+                                run_id=args.run_id, previous_run_id=prev_id, host=host_key)
         marks = repo.false_positive_marks(s, eng.id)
         risk = build_risk_context(s, current, eng.id)
         os_names = repo.host_os_names(s, eng.id)
@@ -861,19 +871,22 @@ def cmd_report(args: argparse.Namespace, env: _Env) -> int:
                           false_positives=marks, risk=risk, with_plan=not args.no_plan,
                           with_details=not args.no_details,
                           coverage=coverage, previous_coverage=prev_cov,
-                          run_status=run_status, warnings=run_warnings)
+                          run_status=run_status, warnings=run_warnings,
+                          services=services,
+                          hosts={host_key} if host_key else None)
     variant = "brief" if args.brief else "full"
     try:
         body = ReportRenderer().render(report, args.format, variant=variant)
     except RuntimeError as e:   # PDF без Pango
         raise CliError(str(e)) from e
-    suffix = ("-brief" if args.brief else "") + (f"-vs-{prev_id}" if prev_id is not None else "")
+    suffix = (f"-host-{host_key.replace(':', '_')}" if host_key else "") + (
+        "-brief" if args.brief else "") + (f"-vs-{prev_id}" if prev_id is not None else "")
     out = args.out or Path(f"report-run-{args.run_id}{suffix}.{args.format}")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(body)
     env.audit.record(subject=env.actor, action="export", target=f"scan_run:{args.run_id}",
                      result="ok", details={"format": args.format, "variant": variant,
-                                           "previous_run_id": prev_id,
+                                           "previous_run_id": prev_id, "host": host_key,
                                            "findings": len(current), "file": out.name})
     print(f"Отчёт: {out} ({len(body)} байт, находок — {len(current)})")
     return 0

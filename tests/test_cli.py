@@ -319,6 +319,14 @@ def test_run_and_report(engagement, tmp_path, capsys, monkeypatch):
     assert brief["meta"]["variant"] == "brief" and "remediation_plan" not in brief
     assert {r.details["variant"] for r in _audit(url, "export")} == {"full", "brief"}
     assert all(r.details["previous_run_id"] is None for r in _audit(url, "export"))
+    # отчёт по одному активу
+    assert cli.main(["--db-url", url, "report", "--run", "1", "--format", "json",
+                     "--host", "10.10.0.2"]) == 0
+    one = json.loads((tmp_path / "report-run-1-host-10.10.0.2.json").read_text(encoding="utf-8"))
+    assert one["meta"]["host"] == "10.10.0.2"
+    assert {f["host"] for f in one["combined"]["findings"]} <= {"10.10.0.2"}
+    assert cli.main(["--db-url", url, "report", "--run", "1", "--host", "bad"]) == 2
+    capsys.readouterr()
     # сравнивать можно только с более ранним прогоном
     assert cli.main(["--db-url", url, "report", "--run", "1", "--compare-to", "1"]) == 2
     assert "более ранним" in capsys.readouterr().err

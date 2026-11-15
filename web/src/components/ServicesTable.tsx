@@ -2,14 +2,14 @@ import { Link } from "react-router-dom";
 import type { ServiceOut } from "../api/types";
 import { Empty } from "./ui";
 
-export function ServicesTable({ services, runId }: { services: ServiceOut[]; runId?: number }) {
-  if (!services.length) return <Empty title="Сервисы не обнаружены" />;
+export function ServicesTable({ services, runId, hideHost }: { services: ServiceOut[]; runId?: number; hideHost?: boolean }) {
+  if (!services.length) return <Empty title="Открытые порты не обнаружены" />;
   return (
     <div className="table-wrap">
-      <table className="table" style={{ minWidth: 720 }}>
+      <table className="table" style={{ minWidth: hideHost ? 560 : 720 }}>
         <thead>
           <tr>
-            <th>Хост</th>
+            {!hideHost && <th>Хост</th>}
             <th>Порт</th>
             <th>Сервис</th>
             <th>Продукт</th>
@@ -20,9 +20,11 @@ export function ServicesTable({ services, runId }: { services: ServiceOut[]; run
         <tbody>
           {services.map((s, i) => (
             <tr key={`${s.host}:${s.port}/${s.protocol}:${i}`}>
-              <td className="mono">
-                {runId ? <Link to={`/hosts/${encodeURIComponent(s.host)}?run=${runId}`}>{s.host}</Link> : s.host}
-              </td>
+              {!hideHost && (
+                <td className="mono">
+                  {runId ? <Link to={`/hosts/${encodeURIComponent(s.host)}?run=${runId}`}>{s.host}</Link> : s.host}
+                </td>
+              )}
               <td className="mono">
                 {s.port}/{s.protocol}
               </td>
