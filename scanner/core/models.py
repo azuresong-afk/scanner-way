@@ -125,6 +125,11 @@ class HostInventory:
     livepatch_cves: list[str] = field(default_factory=list)      # canonical-livepatch
     livepatch_tool: bool = False         # canonical-livepatch есть и ответил
     reboot_required: bool = False        # /var/run/reboot-required
+    # CVE / BDU, упомянутые в журнале изменений пакета (rpm %changelog,
+    # changelog.Debian.gz): пакет -> идентификаторы. Признак бэкпорта вендора,
+    # когда в бюллетенях записи нет. В БД не сохраняется.
+    changelog_ids: dict[str, set[str]] = field(default_factory=dict)
+    changelog_collected: bool = False    # секция журнала изменений получена
 
     @property
     def os_label(self) -> str | None:
