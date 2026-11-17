@@ -36,6 +36,13 @@ const routes = {
   "GET /engagements": [{ id:1, name:"Периметр", client:"ООО Тест", contract_ref:"Д-2026/114", created_by:1, created_at:d(500) }],
   "GET /system/health": health,
   "GET /engagements/1/schedules": schedules,
+  "GET /users": [
+    { id:1, username:"ivanov", display_name:"Иванов", is_active:true, roles:["operator","admin"], auth_source:"local", mfa_enabled:true },
+    { id:2, username:"petrova", display_name:"Петрова", is_active:true, roles:["operator","host_credentials"], auth_source:"ldap", mfa_enabled:true },
+    { id:3, username:"sidorov", display_name:"Сидоров", is_active:true, roles:["auditor"], auth_source:"ldap", mfa_enabled:false },
+    { id:4, username:"kuznetsov", display_name:"Кузнецов", is_active:true, roles:["operator","cred_audit"], auth_source:"local", mfa_enabled:false },
+    { id:5, username:"orlova", display_name:"Орлова", is_active:false, roles:["operator"], auth_source:"local", mfa_enabled:false },
+  ],
 };
 (async () => {
   const browser = await chromium.launch();

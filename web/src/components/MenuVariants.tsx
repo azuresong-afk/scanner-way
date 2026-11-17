@@ -1,7 +1,9 @@
 // Макеты меню для утверждения (предложение В4 разбора продукта). Вариант выбирается
 // ключом localStorage «scanner.menu» (now | v1 | v2 | v3 | v4); по умолчанию — текущее меню.
-// Страницы и URL не меняются: варианты только по-разному группируют пункты и
-// показывают второй уровень меню под шапкой, если пункт объединяет несколько страниц.
+// Страницы и URL не меняются: варианты только по-разному группируют пункты. Если пункт
+// объединяет несколько страниц, его подпункты раскрываются прямо в боковом меню, пока
+// открыта одна из этих страниц. В узкой панели (v3) подпунктам нет места, там второй
+// уровень остаётся полосой под шапкой.
 // У вариантов v1–v4 включается «угловатый» вид (data-look="sharp" на <html>):
 // скругления 2–4 px, размеры меню — из ряда Фибоначчи (см. конец styles.css).
 import type { ReactNode } from "react";
@@ -71,7 +73,7 @@ const P: Record<string, Page> = {
 
 const ADMIN = [P.feeds, P.nodes, P.notify, P.health, P.audit, P.users];
 
-/** Пункт меню; если страниц несколько — они показываются вторым уровнем под шапкой. */
+/** Пункт меню; если страниц несколько — они раскрываются подпунктами в боковом меню. */
 interface Item {
   label: string;
   icon: (size: number) => ReactNode;
@@ -202,6 +204,31 @@ function ItemLink({ it, path, mode, service }: { it: Item; path: string; mode?: 
   );
 }
 
+/** Пункт с несколькими страницами: переход в него открывает первую страницу и раскрывает подпункты под ним. */
+function ItemGroup({ it, path }: { it: Item; path: string }) {
+  const open = itemActive(it, path);
+  return (
+    <>
+      <NavLink to={it.pages[0].to} className={() => `nav-link nav-parent ${open ? "open" : ""}`} aria-expanded={open}>
+        <span className="nav-ic">{it.icon(18)}</span>
+        <span>{it.label}</span>
+        <span className="nav-chev" aria-hidden="true">
+          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </span>
+      </NavLink>
+      {open && (
+        <div className="nav-sub" role="group" aria-label={it.label}>
+          {it.pages.map((p) => (
+            <NavLink key={p.to} to={p.to} className={() => `nav-link sub-link ${isOn(path, p.to) ? "active" : ""}`}>
+              {it.tabLabels?.[p.to] ?? p.label}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Боковое меню выбранного варианта (кроме «now» — его рисует Layout). */
 export function VariantNav({ variant, has }: { variant: MenuVariant; has: Has }) {
   const { pathname } = useLocation();
@@ -215,6 +242,12 @@ export function VariantNav({ variant, has }: { variant: MenuVariant; has: Has })
   const adminActive = sections.some((s) => s.collapsible && s.items.some((i) => itemActive(i, pathname)));
   const [adminOpen, setAdminOpen] = useState(false);
   const rail = variant === "v3";
+  const link = (i: Item, withService = false) =>
+    !rail && i.pages.length > 1 ? (
+      <ItemGroup key={i.label} it={i} path={pathname} />
+    ) : (
+      <ItemLink key={i.label} it={i} path={pathname} mode={rail ? "rail" : undefined} service={withService ? service : undefined} />
+    );
 
   return (
     <div className={`nav-body ${rail ? "rail-body" : ""}`}>
@@ -251,27 +284,19 @@ export function VariantNav({ variant, has }: { variant: MenuVariant; has: Has })
         return (
           <div key={idx} className="nav-group">
             {s.title && <div className="nav-section">{s.title}</div>}
-            {s.items.map((i) => (
-              <ItemLink key={i.label} it={i} path={pathname} mode={rail ? "rail" : undefined} />
-            ))}
+            {s.items.map((i) => link(i))}
           </div>
         );
       })}
-      {bottomItems.length > 0 && (
-        <div className="nav-group nav-bottom">
-          {bottomItems.map((i) => (
-            <ItemLink key={i.label} it={i} path={pathname} mode={rail ? "rail" : undefined} service={service} />
-          ))}
-        </div>
-      )}
+      {bottomItems.length > 0 && <div className="nav-group nav-bottom">{bottomItems.map((i) => link(i, true))}</div>}
     </div>
   );
 }
 
-/** Второй уровень меню под шапкой, если пункт объединяет несколько страниц. */
+/** Второй уровень меню под шапкой — только в узкой панели, где подпунктам нет места в самом меню. */
 export function SubNav({ variant, has }: { variant: MenuVariant; has: Has }) {
   const { pathname } = useLocation();
-  if (variant === "now") return null;
+  if (variant !== "v3") return null;
   const { top, bottom } = structure(variant);
   const all = [...top.flatMap((s) => s.items), ...(bottom ?? [])];
   const it = all.map((i) => visible(i, has)).find((i) => i && i.pages.length > 1 && itemActive(i, pathname));

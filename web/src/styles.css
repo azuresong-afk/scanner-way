@@ -906,6 +906,14 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .nav-section-btn .nav-count { text-transform: none; letter-spacing: 0; }
 .nav-section-btn svg:last-child { margin-left: auto; }
 .nav-bottom { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--border); }
+/* подпункты в боковом меню: раскрываются под пунктом, пока открыта одна из его страниц.
+   Линия идёт по центру колонки значков (8 + 21/2 ≈ 18 px), подписи стоят на одной вертикали
+   с названием пункта (42 px); строка подпункта 30 px, как у страниц внутри шагов в v4 */
+.nav-chev { margin-left: auto; display: grid; place-items: center; color: var(--text-3); }
+.nav-link.open { color: var(--text); font-weight: 600; }
+.nav-link.open .nav-ic svg { color: var(--accent-text); }
+.nav-sub { display: flex; flex-direction: column; gap: 2px; margin-left: 18px; padding-left: 15px; border-left: 1px solid var(--border-strong); }
+[data-look="sharp"] .nav-link.sub-link { height: 30px; }
 /* лампочка состояния сервиса в пункте «Состояние»: 8 px с ореолом 3 px, справа — слово-состояние */
 .lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
 .lamp.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
