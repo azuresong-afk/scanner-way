@@ -95,7 +95,7 @@ const SCAN: Item = {
 const NORMS = one(P.compl, { label: "Нормативы" });
 const CREDS = one(P.creds, { short: "Учётки" });
 const SETTINGS: Item = { label: "Настройка", icon: (s) => <Settings size={s} />, pages: ADMIN };
-// «Короткий список» и «Узкая панель»: «Состояние» — отдельный пункт с лампочкой, в «Настройке» остаются 5 страниц.
+// «Короткий список» и «Узкая панель»: «Состояние» — отдельный пункт с лампочкой под «Настройкой», в ней остаются 5 страниц.
 const HEALTH = one(P.health, { lamp: true });
 const SETTINGS_NO_HEALTH: Item = { ...SETTINGS, pages: ADMIN.filter((p) => p !== P.health) };
 
@@ -163,7 +163,7 @@ function structure(v: MenuVariant): { top: Section[]; bottom?: Item[] } {
     case "v3":
       return {
         top: [{ items: [one(P.summary), one(P.projects), one(P.assets), CREDS, SCAN, one(P.findings), NORMS, one(P.reports)] }],
-        bottom: [HEALTH, SETTINGS_NO_HEALTH],
+        bottom: [SETTINGS_NO_HEALTH, HEALTH],
       };
     case "v4":
       return {

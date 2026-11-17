@@ -7,7 +7,7 @@ import { fmtDate } from "../lib/format";
 import { useAsync, useInterval } from "../lib/useAsync";
 
 const HEALTH_LABEL: Record<HealthStatus, string> = {
-  ok: "В порядке",
+  ok: "Работает",
   warn: "Требует внимания",
   error: "Не работает",
   unknown: "Не проверено",
