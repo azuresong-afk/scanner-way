@@ -22,6 +22,7 @@ from scanner.api.schemas import ScheduleIn, ScheduleOut, ScheduleToggle
 from scanner.core.db import ScanSchedule
 from scanner.core.naming import clean_name
 from scanner.core.orchestrator import RunService, order_modules
+from scanner.core.runner.service import uses_auto_credentials
 from scanner.core.schedule import ScheduleError, ScheduleSpec, next_occurrence
 
 router = APIRouter(tags=["schedules"])
@@ -58,7 +59,8 @@ def _apply(row: ScanSchedule, body: ScheduleIn, *, request: Request, user: Princ
     check_targets(row.engagement_id, body.targets, user=user, audit=audit, runs=runs)
     try:
         runs.check_node(body.node_id, credential_ids=body.credential_ids,
-                        cred_set_ids=body.cred_set_ids)
+                        cred_set_ids=body.cred_set_ids,
+                        auto_credentials=uses_auto_credentials(modules, body.credential_ids))
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     tz = body.timezone or request.app.state.default_timezone

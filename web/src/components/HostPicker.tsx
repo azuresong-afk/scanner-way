@@ -13,7 +13,7 @@ import { Empty, ErrorAlert, Loading, Modal } from "./ui";
 const DEFAULT_CRITICALITY: Criticality = "medium";
 const critOf = (h: HostListRow): Criticality => h.asset?.criticality ?? DEFAULT_CRITICALITY;
 
-export type HostPickerMode = "run" | "allowlist";
+export type HostPickerMode = "run" | "allowlist" | "credential";
 
 /**
  * Выбор хостов из «Активов» договора: поиск, фильтры по группе, ОС, тегу и
@@ -22,6 +22,8 @@ export type HostPickerMode = "run" | "allowlist";
  * mode="run" — цели прогона: хосты вне allowlist показываются, но выбрать их
  * нельзя (сканер не выходит за объём работ). mode="allowlist" — расширение
  * allowlist: уже разрешённые хосты отмечены и не выбираются повторно.
+ * mode="credential" — привязка активов к учётной записи: как "run", выбрать
+ * можно только хосты из allowlist (область учётки не выходит за объём работ).
  */
 export function HostPicker({
   engagementId,
@@ -59,7 +61,8 @@ export function HostPicker({
   );
   const inScope = useMemo(() => new Set(hosts.filter((h) => inAllowlist(h.host, allowlist)).map((h) => h.host)), [hosts, allowlist]);
   // run: выбирать можно только разрешённые; allowlist: только ещё не разрешённые.
-  const selectable = (h: HostListRow) => (mode === "run" ? inScope.has(h.host) : !inScope.has(h.host));
+  const scoped = mode !== "allowlist";
+  const selectable = (h: HostListRow) => (scoped ? inScope.has(h.host) : !inScope.has(h.host));
   const osFamilies = useMemo(() => groupByOs(hosts).map((g) => ({ family: g.family, label: g.label, count: g.rows.length })), [hosts]);
 
   const q = query.trim().toLowerCase();
@@ -99,8 +102,8 @@ export function HostPicker({
   const loading = (inventory.loading && !inventory.data) || (assets.loading && !assets.data);
   const loadError = inventory.error && assets.error ? inventory.error : null;
   const picked = [...selected];
-  const title = mode === "run" ? "Цели прогона из активов" : "Добавить активы в allowlist";
-  const action = mode === "run" ? "Добавить в цели" : "Добавить в allowlist";
+  const title = mode === "run" ? "Цели прогона из активов" : mode === "credential" ? "Привязать активы к учётной записи" : "Добавить активы в allowlist";
+  const action = mode === "run" ? "Добавить в цели" : mode === "credential" ? "Привязать" : "Добавить в allowlist";
 
   return (
     <Modal
@@ -133,6 +136,11 @@ export function HostPicker({
         {mode === "run" ? (
           <small className="muted">
             Выбирать можно только хосты из allowlist проекта — хосты вне его показаны серым. Подряд идущие адреса сворачиваются в диапазон.
+          </small>
+        ) : mode === "credential" ? (
+          <small className="muted">
+            Сканер будет входить на выбранные активы под этой учёткой во всех прогонах и расписаниях — выбирать её в задаче не нужно. Выбирать
+            можно только хосты из allowlist проекта.
           </small>
         ) : (
           <small style={{ color: "var(--warn)" }}>
@@ -227,7 +235,7 @@ export function HostPicker({
               </button>
               <small className="muted">
                 Показано {shown.length} из {hosts.length}
-                {blockedShown > 0 && ` · ${mode === "run" ? "вне allowlist" : "уже в allowlist"}: ${blockedShown}`}
+                {blockedShown > 0 && ` · ${scoped ? "вне allowlist" : "уже в allowlist"}: ${blockedShown}`}
               </small>
             </div>
             <div className="table-wrap card" style={{ maxHeight: "50vh", overflowY: "auto" }}>

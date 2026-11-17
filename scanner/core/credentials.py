@@ -44,6 +44,8 @@ from dataclasses import dataclass, field
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from scanner.core.targetspec import parse_target
+
 AUTH_PASSWORD = "password"
 AUTH_KEY = "key"
 AUTH_KINDS = (AUTH_PASSWORD, AUTH_KEY)
@@ -192,18 +194,20 @@ def key_fingerprint(text: str, passphrase: str | None = None) -> str:
 # ---------- область действия ----------
 
 def normalize_scope(targets: Iterable[str]) -> list[str]:
-    """IP и подсети области действия -> нормализованные CIDR (без повторов)."""
+    """IP, подсети и диапазоны «a-b» области действия -> нормализованные CIDR
+    (без повторов). Диапазон сворачивается в покрывающие его подсети."""
     out: list[str] = []
     for raw in targets:
         spec = raw.strip()
         if not spec:
             continue
         try:
-            net = ipaddress.ip_network(spec, strict=False)
+            nets = parse_target(spec).networks
         except ValueError as e:
             raise CredentialError(f"не IP/подсеть: {spec}") from e
-        if str(net) not in out:
-            out.append(str(net))
+        for net in nets:
+            if str(net) not in out:
+                out.append(str(net))
     return out
 
 
@@ -375,8 +379,52 @@ def credentials_for_host(host: str, creds: Sequence[HostCredential],
 
     Только учётки нужного протокола: по умолчанию SSH — модули, входящие по
     SSH, никогда не получат учётку WinRM (и наоборот, если просить winrm).
+    Учётка без области действия (общая) подходит любому хосту и идёт после
+    привязанных к нему.
     """
     ranked = [(p, i, c) for i, c in enumerate(creds)
               if c.protocol == protocol and (p := c.scope_prefix(host)) is not None]
     ranked.sort(key=lambda x: (-x[0], x[1]))
     return [c for _, _, c in ranked[:limit]]
+
+
+def _networks(specs: Iterable[str]) -> list:
+    """Сети из целей/области: IP, CIDR, диапазон «a-b». Нераспознанное пропускается."""
+    out = []
+    for raw in specs:
+        try:
+            out.extend(parse_target(str(raw)).networks)
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def scope_touches_targets(scope: Sequence[str], targets: Iterable[str]) -> bool:
+    """Область учётки пересекается с целями прогона (пустая область — со всеми)."""
+    if not scope:
+        return True
+    nets = _networks(targets)
+    return any(n.version == t.version and n.overlaps(t)
+               for n in _networks(scope) for t in nets)
+
+
+def bound_hosts(hosts: Iterable[str], scopes: Sequence[Sequence[str]]
+                ) -> tuple[int, int, list[str]]:
+    """Покрытие хостов привязками: (с привязанной учёткой, только с общей,
+    без учётки — адреса). scopes — области учёток (пустая — «на всё»)."""
+    has_any = any(not s for s in scopes)
+    nets = [_networks(s) for s in scopes if s]
+    bound = fallback = 0
+    none: list[str] = []
+    for h in hosts:
+        try:
+            addr = ipaddress.ip_address(h)
+        except ValueError:
+            continue
+        if any(addr.version == n.version and addr in n for ns in nets for n in ns):
+            bound += 1
+        elif has_any:
+            fallback += 1
+        else:
+            none.append(h)
+    return bound, fallback, none

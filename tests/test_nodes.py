@@ -325,6 +325,15 @@ def test_node_credentials_policy(stack):
     assert r.status_code in (403, 422)
 
 
+def test_node_without_credentials_refuses_auto_credentials(stack):
+    """Подбор учёток по привязке — тоже передача учёток узлу."""
+    _api, _rec, app = stack
+    node = _create_node(_api, allow_credentials=False)
+    with pytest.raises(ValueError, match="запрещено передавать"):
+        app.state.runs.check_node(node["id"], auto_credentials=True)
+    assert app.state.runs.check_node(node["id"]) == node["name"]
+
+
 def test_node_stop_and_heartbeat(stack):
     api, _rec, _app = stack
     eid = api.engagement("10.0.0.0/8")

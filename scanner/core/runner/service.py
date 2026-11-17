@@ -25,7 +25,12 @@ from scanner.core import repository as repo
 from scanner.core import run_events as ev
 from scanner.core.allowlist import AllowlistGate
 from scanner.core.audit import AuditSink
-from scanner.core.credentials import CredentialVault, HostCredential, load_vault
+from scanner.core.credentials import (
+    CredentialVault,
+    HostCredential,
+    load_vault,
+    scope_touches_targets,
+)
 from scanner.core.db import session_scope
 from scanner.core.naming import clean_name, run_title
 from scanner.core.ratelimit import PROFILES, RateProfile, get_profile
@@ -88,6 +93,18 @@ def clean_run_options(options: Mapping[str, object] | None) -> dict:
             continue
         out[k] = bool(v) if typ is bool else str(v)[:64]
     return out
+
+
+def uses_auto_credentials(modules: list[str], credential_ids: list[int]) -> bool:
+    """Учётки прогона подбираются по привязке к активам (а не выбраны явно)."""
+    return not credential_ids and any(m in CREDENTIAL_MODULES for m in modules)
+
+
+def auto_credential_ids(rows: list, targets: list[str]) -> list[int]:
+    """Учётки проекта, применимые к целям прогона: область пересекается с
+    целями или пуста (общая учётка). Остальные не расшифровываются и не
+    уходят на узел-сканер. Выбор на конкретный хост — credentials_for_host."""
+    return [r.id for r in rows if scope_touches_targets(list(r.targets or []), targets)]
 
 
 @dataclass(slots=True)
@@ -179,13 +196,26 @@ class RunService(RecoveryMixin, NodeRunsMixin, PersistMixin):
                           credential_ids: list[int]) -> None:
         """Учётки прогона: нужны модулям из CREDENTIAL_MODULES, принадлежат договору.
 
+        Пустой credential_ids при модуле с учёткой — подбор по привязке: на
+        каждый хост берутся учётки, к области действия которых он привязан во
+        вкладке «Учётные записи» (см. auto_credential_ids). Нужна хотя бы одна
+        учётка в проекте. Явный список — только эти учётки (API, CLI, старые
+        расписания).
+
         ValueError — понятная оператору причина отказа (API отдаёт её как 422).
         """
         needs = [m for m in modules if m in CREDENTIAL_MODULES]
         if not credential_ids:
-            if needs:
-                raise ValueError(f"модулю {needs[0]} нужна учётная запись: "
-                                 "выберите хотя бы одну")
+            if not needs:
+                return
+            if self.vault is None:
+                raise ValueError("не задан ключ шифрования учётных записей "
+                                 "(SCANNER_CREDENTIALS_KEY или SCANNER_API_SECRET)")
+            with session_scope(self.sessions) as s:
+                has_any = bool(repo.list_host_credentials(s, engagement_id))
+            if not has_any:
+                raise ValueError(f"модулю {needs[0]} нужна учётная запись: добавьте её "
+                                 "во вкладке «Учётные записи» и привяжите к активам")
             return
         if not needs:
             raise ValueError("учётные записи используются только модулями "
@@ -244,7 +274,8 @@ class RunService(RecoveryMixin, NodeRunsMixin, PersistMixin):
         set_ids = list(dict.fromkeys(cred_set_ids or []))
         self.check_credentials(engagement_id, names, cred_ids)
         self.check_cred_sets(engagement_id, set_ids)
-        node_name = self.check_node(node_id, credential_ids=cred_ids, cred_set_ids=set_ids)
+        node_name = self.check_node(node_id, credential_ids=cred_ids, cred_set_ids=set_ids,
+                                    auto_credentials=uses_auto_credentials(names, cred_ids))
         # имя — по выбору оператора, без автоматически добавленных спутников
         title = clean_name(name) or run_title(order_modules(modules), requested_targets)
         with session_scope(self.sessions) as s:
@@ -262,6 +293,8 @@ class RunService(RecoveryMixin, NodeRunsMixin, PersistMixin):
                                    "schedule_id": schedule_id, "modules": names,
                                    "rate_profile": rate_profile,
                                    "credential_ids": cred_ids,
+                                   "credentials_auto":
+                                       uses_auto_credentials(names, cred_ids) or None,
                                    "cred_set_ids": set_ids,
                                    "retry_of": retry_of, "options": opts or None,
                                    "node_id": node_id, "node": node_name,
@@ -382,6 +415,12 @@ class RunService(RecoveryMixin, NodeRunsMixin, PersistMixin):
             cred_candidates: list[tuple[str, str]] = []
             if (cred_ids or set_ids) and self.vault is None:
                 raise RuntimeError("не задан ключ шифрования учётных записей")
+            if not cred_ids and uses_auto_credentials(names, cred_ids):
+                # подбор по привязке: учётки, чья область задевает цели прогона
+                if self.vault is None:
+                    raise RuntimeError("не задан ключ шифрования учётных записей")
+                cred_ids = auto_credential_ids(repo.list_host_credentials(s, engagement_id),
+                                               list(run.targets or []))
             if cred_ids:
                 credentials = repo.load_host_credentials(s, self.vault, engagement_id,
                                                          cred_ids)

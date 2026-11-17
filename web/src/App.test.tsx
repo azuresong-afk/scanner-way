@@ -163,25 +163,40 @@ describe("модуль cred_audit в форме запуска", () => {
     expect(within(dlg).getAllByText("Нужно право host_credentials")).toHaveLength(2);
   });
 
-  it("по учётной записи: нужна учётка, в запрос уходят auth_inventory и её id", async () => {
+  it("по учётной записи: учётки подбираются по привязке, в запрос уходят auth_inventory без выбора учёток", async () => {
     const { dlg, api } = await openForm([...OPERATOR, "host_credentials"], {
       "GET /engagements/1/credentials": [CRED],
-      "POST /engagements/1/runs": { id: 9, engagement_id: 1, modules: [], rate_profile: "gentle", credential_ids: [5], cred_set_ids: [], status: "pending",
+      "POST /engagements/1/runs/plan": { modules: [], removed: [], warnings: [], full_check: true, accepted_targets: 4, denied_targets: [],
+        credential_coverage: { auto: true, credentials: 1, hosts: 4, bound: 3, fallback: 0, uncovered: 1, uncovered_sample: ["10.0.0.9"] } },
+      "POST /engagements/1/runs": { id: 9, engagement_id: 1, modules: [], rate_profile: "gentle", credential_ids: [], cred_set_ids: [], status: "pending",
         started_by: 1, started_at: null, finished_at: null, created_at: null, accepted_targets: 1, denied_targets: [] },
     });
     await userEvent.click(within(dlg).getByRole("radio", { name: /По учётной записи/ }));
     await userEvent.click(within(dlg).getByRole("button", { name: /Подставить весь allowlist/ }));
     await userEvent.click(within(dlg).getByRole("checkbox", { name: /Подтверждаю/ }));
+    // выбора учёток в форме больше нет — только итог подбора по привязке
+    expect(within(dlg).queryByRole("checkbox", { name: /Серверы ДМЗ/ })).not.toBeInTheDocument();
+    const coverage = await within(dlg).findByTestId("cred-coverage");
+    expect(coverage).toHaveTextContent("3 из 4 целей — по привязке");
+    expect(coverage).toHaveTextContent("1 без учётки");
+    expect(coverage).toHaveTextContent("10.0.0.9");
     const submit = screen.getByRole("button", { name: "Запустить" });
-    expect(submit).toBeDisabled();                       // учётка не выбрана
-    await userEvent.click(await within(dlg).findByRole("checkbox", { name: /Серверы ДМЗ/ }));
     await waitFor(() => expect(submit).toBeEnabled());
     await userEvent.click(submit);
     await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")).toBe(true));
     const call = api.calls.find((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")!;
     const sent = JSON.parse(String(call.init!.body));
     expect(sent.modules).toEqual(["discovery", "auth_inventory", "win_inventory", "netdev_audit"]);
-    expect(sent.credential_ids).toEqual([5]);
+    expect(sent.credential_ids).toEqual([]);
+  });
+
+  it("по учётной записи: без учёток в проекте запуск недоступен", async () => {
+    const { dlg } = await openForm([...OPERATOR, "host_credentials"], { "GET /engagements/1/credentials": [] });
+    await userEvent.click(within(dlg).getByRole("radio", { name: /По учётной записи/ }));
+    await userEvent.click(within(dlg).getByRole("button", { name: /Подставить весь allowlist/ }));
+    await userEvent.click(within(dlg).getByRole("checkbox", { name: /Подтверждаю/ }));
+    expect(await within(dlg).findByText(/нет учётных записей — добавьте их во вкладке «Учётные записи» и привяжите к активам/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Запустить" })).toBeDisabled();
   });
 
   it("аудит конфигураций скрыт без права host_credentials", async () => {
@@ -189,7 +204,7 @@ describe("модуль cred_audit в форме запуска", () => {
     expect(within(dlg).queryByText("Аудит конфигураций")).not.toBeInTheDocument();
   });
 
-  it("аудит конфигураций требует учётку, в запрос уходят config_audit и её id", async () => {
+  it("аудит конфигураций: учётки по привязке, в запрос уходит config_audit без выбора учёток", async () => {
     const { dlg, api } = await openForm([...OPERATOR, "host_credentials"], {
       "GET /engagements/1/credentials": [CRED],
       "POST /engagements/1/runs": { id: 9, engagement_id: 1, modules: [], rate_profile: "gentle", credential_ids: [5], status: "pending",
@@ -202,17 +217,14 @@ describe("модуль cred_audit в форме запуска", () => {
     await userEvent.click(within(dlg).getByRole("button", { name: /Подставить весь allowlist/ }));
     await userEvent.click(within(dlg).getByRole("checkbox", { name: /Подтверждаю/ }));
     const submit = screen.getByRole("button", { name: "Запустить" });
-    expect(submit).toBeDisabled();                       // учётка не выбрана
-    const cred = await within(dlg).findByRole("checkbox", { name: /Серверы ДМЗ/ });
-    expect(cred.closest("label")).toHaveTextContent("sudo");
-    await userEvent.click(cred);
+    expect(within(dlg).queryByRole("checkbox", { name: /Серверы ДМЗ/ })).not.toBeInTheDocument();
     await waitFor(() => expect(submit).toBeEnabled());
     await userEvent.click(submit);
     await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")).toBe(true));
     const call = api.calls.find((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")!;
     const sent = JSON.parse(String(call.init!.body));
     expect(sent.modules).toEqual(["discovery", "config_audit"]);
-    expect(sent.credential_ids).toEqual([5]);
+    expect(sent.credential_ids).toEqual([]);
   });
 
   it("виден при наличии права", async () => {

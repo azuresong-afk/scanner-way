@@ -224,7 +224,8 @@ def build_parser() -> argparse.ArgumentParser:
                           "(заменяет vuln/auth_inventory в --modules)")
     run.add_argument("--credential", type=int, action="append", default=[],
                      dest="credentials", metavar="ID",
-                     help="учётная запись актива для auth_inventory (можно несколько)")
+                     help="только эта учётная запись (можно несколько); без --credential "
+                          "учётки подбираются по привязке к активам (область действия)")
     run.add_argument("--allow-credentials", action="store_true",
                      help="подтверждаю: вход на активы по учётным записям согласован "
                           "с заказчиком")

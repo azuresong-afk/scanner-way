@@ -1,11 +1,12 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
-import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
+import { KeyRound, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { CredentialAuth, CredentialBecome, CredentialOut, CredentialProtocol, DbProtocol, NetdevPlatform } from "../api/types";
 import { fmtDate } from "../lib/format";
 import { DB_PROTOCOLS, PROTOCOL_LABEL, isDbProtocol } from "../lib/labels";
-import { parseTargets } from "../lib/targets";
+import { mergeTargets, parseTargets } from "../lib/targets";
 import { useAsync } from "../lib/useAsync";
+import { HostPicker } from "./HostPicker";
 import { Empty, ErrorAlert, Loading, Modal } from "./ui";
 
 const DEFAULT_PORT: Record<CredentialProtocol, string> = {
@@ -39,6 +40,22 @@ const SNMP_PRIV = [
   { id: "des", label: "DES (устаревший)" },
   { id: "none", label: "Без шифрования" },
 ];
+
+/** Адрес хоста без /32 (/128): привязка показывается как список активов. */
+const hostSpec = (t: string) => t.replace(/\/(32|128)$/, "");
+
+/** Привязка учётки в таблице: первые записи области или «общая». */
+function BindingCell({ targets: raw }: { targets: string[] }) {
+  const targets = raw.map(hostSpec);
+  if (targets.length === 0) return <span className="muted" title="Пробуется на всех целях прогона после привязанных к хосту учёток">общая — для всех целей</span>;
+  const shown = targets.slice(0, 3).join(", ");
+  return (
+    <span className="mono muted" title={targets.join(", ")}>
+      {shown}
+      {targets.length > 3 ? ` и ещё ${targets.length - 3}` : ""}
+    </span>
+  );
+}
 
 const KEEP_HINT = "•••••• сохранён — оставьте пустым, чтобы не менять";
 
@@ -74,7 +91,8 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
         Для движка «По учётной записи»: Linux по SSH (пакеты → БДУ ФСТЭК и CVE), Windows по WinRM (обновления и ПО → KB/CVE и БДУ), сетевое
         оборудование по SSH или SNMP (версия ОС устройства → CVE/БДУ, аудит конфигурации) и СУБД (учётка СУБД только на чтение: версия →
         CVE/БДУ, конфигурация по CIS), а также для аудита конфигураций серверов (CIS, ФСТЭК/ГОСТ — нужен sudo). Пароли, ключи и community
-        хранятся зашифрованными и никогда не показываются.
+        хранятся зашифрованными и никогда не показываются. Привяжите учётку к активам — прогоны и расписания сами берут для каждого хоста
+        его учётки, выбирать их в задаче не нужно.
       </p>
       {list.loading && !list.data ? (
         <Loading />
@@ -95,7 +113,7 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
                 <th>Логин</th>
                 <th>Вход</th>
                 <th>Повышение прав</th>
-                <th>Область действия</th>
+                <th>Привязанные активы</th>
                 <th>Добавлена</th>
                 <th />
               </tr>
@@ -117,7 +135,9 @@ export function CredentialsCard({ engagementId }: { engagementId: number }) {
                     )}
                   </td>
                   <td className="muted">{c.protocol === "ssh" && c.become !== "none" ? "sudo" : "нет"}</td>
-                  <td className="mono muted">{c.targets.length ? c.targets.join(", ") : "все цели прогона"}</td>
+                  <td>
+                    <BindingCell targets={c.targets} />
+                  </td>
                   <td className="muted nowrap">{fmtDate(c.created_at)}</td>
                   <td className="right nowrap">
                     <button type="button" className="btn btn-sm btn-ghost" aria-label={`Изменить ${c.name}`} title="Изменить" onClick={() => setEditing(c)}>
@@ -204,7 +224,7 @@ function CredentialForm({
   const [password, setPassword] = useState("");
   const [key, setKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
-  const [scope, setScope] = useState(initial?.targets.join("\n") ?? "");
+  const [scope, setScope] = useState(initial?.targets.map(hostSpec).join("\n") ?? "");
   const [become, setBecome] = useState<CredentialBecome>(initial ? (initial.become === "none" ? "none" : "sudo") : "sudo");
   const [dbName, setDbName] = useState(initial?.db_name ?? "");
   const [platform, setPlatform] = useState<NetdevPlatform>((o.platform as NetdevPlatform) ?? "auto");
@@ -213,6 +233,8 @@ function CredentialForm({
   const [privProto, setPrivProto] = useState(o.priv_proto ?? "aes");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const allowlist = useAsync(() => api.allowlist(engagementId), [engagementId]);
 
   const isWinrm = protocol === "winrm";
   const isDb = isDbProtocol(protocol);
@@ -286,6 +308,21 @@ function CredentialForm({
       setBusy(false);
     }
   };
+
+  if (picking) {
+    return (
+      <HostPicker
+        engagementId={engagementId}
+        allowlist={(allowlist.data ?? []).map((a) => a.cidr)}
+        mode="credential"
+        onClose={() => setPicking(false)}
+        onPick={(addrs) => {
+          setScope((t) => mergeTargets(t, addrs));
+          setPicking(false);
+        }}
+      />
+    );
+  }
 
   const userLabel = isWinrm ? "Логин Windows" : isNetssh ? "Логин на устройстве" : isSnmp ? "Пользователь SNMPv3" : isDb ? "Логин СУБД" : "Логин на хосте";
   const portLabel = isWinrm ? "Порт WinRM" : isSnmp ? "Порт SNMP (UDP)" : isDb ? "Порт СУБД" : "Порт SSH";
@@ -572,12 +609,29 @@ function CredentialForm({
           </div>
         </fieldset>
         )}
-        <label className="field">
-          <span>Область действия (необязательно)</span>
-          <textarea className="textarea mono" value={scope} onChange={(e) => setScope(e.target.value)} placeholder={"10.0.0.0/24\n10.0.1.15"} spellCheck={false} />
-          <small>IP и подсети из allowlist проекта, к которым подходит учётка. Пусто — все цели прогона.</small>
+        <div className="field">
+          <div className="inline" style={{ justifyContent: "space-between", gap: 8 }}>
+            <label htmlFor="credential-scope" style={{ fontWeight: 500, fontSize: 13, color: "var(--text-2)" }}>
+              Привязанные активы
+            </label>
+            <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}>
+              <ListChecks size={14} /> Выбрать из активов
+            </button>
+          </div>
+          <textarea
+            id="credential-scope"
+            className="textarea mono"
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            placeholder={"10.0.0.0/24\n10.0.1.15"}
+            spellCheck={false}
+          />
+          <small>
+            Хосты, адреса или подсети из allowlist проекта. Сканер сам входит на них под этой учёткой в каждом прогоне и расписании. Пусто —
+            общая учётка: пробуется на всех целях прогона после привязанных к хосту.
+          </small>
           {parsed.invalid.length > 0 && <small style={{ color: "var(--danger)" }}>Не IP/подсеть: {parsed.invalid.slice(0, 5).join(", ")}</small>}
-        </label>
+        </div>
         <small className="muted">
           {isNetssh || isSnmp
             ? "На устройстве выполняются только команды просмотра версии и конфигурации (show / display / export): без enable, конфигурационного режима и сохранения. Учётке достаточно уровня «только чтение». Секреты из конфигурации в отчёт не попадают — маскируются."
