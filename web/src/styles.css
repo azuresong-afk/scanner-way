@@ -906,6 +906,13 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .nav-section-btn .nav-count { text-transform: none; letter-spacing: 0; }
 .nav-section-btn svg:last-child { margin-left: auto; }
 .nav-bottom { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--border); }
+/* лампочка состояния сервиса в пункте «Состояние»: 8 px с ореолом 3 px, справа — слово-состояние */
+.lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.lamp.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.lamp.off { background: var(--sev-critical); box-shadow: 0 0 0 3px var(--danger-soft); }
+.nav-state { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--text-3); white-space: nowrap; }
+.nav-state.off { color: var(--danger); font-weight: 600; }
+.rail-link .lamp { width: 13px; height: 13px; }
 [data-look="sharp"] .sidebar-foot { padding-top: var(--s2); gap: var(--s1); }
 [data-look="sharp"] .user-card { padding: var(--s1); gap: var(--s1); }
 [data-look="sharp"] .avatar { width: 34px; height: 34px; flex: 0 0 34px; }

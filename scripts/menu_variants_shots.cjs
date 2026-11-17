@@ -49,6 +49,8 @@ const routes = {
     page.on("pageerror", e => console.error("pageerror", e.message));
     await page.route((url) => url.pathname.startsWith("/api/"), (r) => {
       const u = new URL(r.request().url()); const p = u.pathname.replace(/^\/api/,""); const key = `${r.request().method()} ${p}`;
+      // сценарий «сервис не активен»: отвечает только то, что нужно для каркаса страницы
+      if (name === "down" && !["/me", "/engagements"].includes(p)) return r.abort();
       let body = routes[key];
       if (body === undefined && /\/engagements\/1\/runs$/.test(p)) {
         const st = u.searchParams.getAll("status");

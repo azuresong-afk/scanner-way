@@ -5,7 +5,7 @@
 // У вариантов v1–v4 включается «угловатый» вид (data-look="sharp" на <html>):
 // скругления 2–4 px, размеры меню — из ряда Фибоначчи (см. конец styles.css).
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Activity,
@@ -28,6 +28,7 @@ import {
   Users,
   Wifi,
 } from "lucide-react";
+import { api, ApiError } from "../api/client";
 import type { Perm } from "../auth/AuthContext";
 
 export type MenuVariant = "now" | "v1" | "v2" | "v3" | "v4";
@@ -79,6 +80,8 @@ interface Item {
   short?: string;
   /** Подписи второго уровня, если они отличаются от названий страниц. */
   tabLabels?: Record<string, string>;
+  /** Вместо значка — лампочка состояния сервиса (активен / не активен). */
+  lamp?: boolean;
 }
 
 const one = (p: Page, over: Partial<Item> = {}): Item => ({ label: p.label, icon: p.icon, pages: [p], ...over });
@@ -92,6 +95,40 @@ const SCAN: Item = {
 const NORMS = one(P.compl, { label: "Нормативы" });
 const CREDS = one(P.creds, { short: "Учётки" });
 const SETTINGS: Item = { label: "Настройка", icon: (s) => <Settings size={s} />, pages: ADMIN };
+// «Короткий список» и «Узкая панель»: «Состояние» — отдельный пункт с лампочкой, в «Настройке» остаются 5 страниц.
+const HEALTH = one(P.health, { lamp: true });
+const SETTINGS_NO_HEALTH: Item = { ...SETTINGS, pages: ADMIN.filter((p) => p !== P.health) };
+
+/** Состояние самого сервиса: отвечает ли API. Проблемы отдельных компонентов показывает плашка в шапке. */
+export type ServiceState = "on" | "off" | "unknown";
+const LAMP_POLL_MS = 30000;
+const SERVICE_LABEL: Record<ServiceState, string> = { on: "Активен", off: "Не активен", unknown: "Проверка…" };
+
+function useServiceState(enabled: boolean): ServiceState {
+  const [state, setState] = useState<ServiceState>("unknown");
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      try {
+        await api.systemHealth();
+        if (alive) setState("on");
+      } catch (e) {
+        // нет ответа или 5xx — сервис не работает; 401/403 — это про вход, а не про сервис
+        const status = e instanceof ApiError ? e.status : 0;
+        if (alive && (status === 0 || status >= 500)) setState("off");
+      }
+      if (alive) timer = setTimeout(tick, LAMP_POLL_MS);
+    };
+    void tick();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [enabled]);
+  return state;
+}
 
 type Has = (p: Perm) => boolean;
 const allowed = (p: Page, has: Has) => (Array.isArray(p.perm) ? p.perm : [p.perm]).some(has);
@@ -111,7 +148,7 @@ interface Section {
   collapsible?: boolean;
 }
 
-function structure(v: MenuVariant): { top: Section[]; bottom?: Item } {
+function structure(v: MenuVariant): { top: Section[]; bottom?: Item[] } {
   switch (v) {
     case "v1":
       return {
@@ -126,7 +163,7 @@ function structure(v: MenuVariant): { top: Section[]; bottom?: Item } {
     case "v3":
       return {
         top: [{ items: [one(P.summary), one(P.projects), one(P.assets), CREDS, SCAN, one(P.findings), NORMS, one(P.reports)] }],
-        bottom: SETTINGS,
+        bottom: [HEALTH, SETTINGS_NO_HEALTH],
       };
     case "v4":
       return {
@@ -136,25 +173,31 @@ function structure(v: MenuVariant): { top: Section[]; bottom?: Item } {
           { title: "Проверка", step: 2, items: [one(P.reach), one(P.runs), one(P.sched)] },
           { title: "Результаты", step: 3, items: [one(P.findings), NORMS, one(P.reports)] },
         ],
-        bottom: SETTINGS,
+        bottom: [SETTINGS],
       };
     default:
       return { top: [] };
   }
 }
 
-function ItemLink({ it, path, mode }: { it: Item; path: string; mode?: "rail" | "step" }) {
+function ItemLink({ it, path, mode, service }: { it: Item; path: string; mode?: "rail" | "step"; service?: ServiceState }) {
   const first = it.pages[0];
   const active = itemActive(it, path);
+  const lamp = it.lamp && service ? service : null;
+  const title = lamp ? `${it.label}: сервис ${SERVICE_LABEL[lamp].toLowerCase()}` : it.label;
   return (
     <NavLink
       to={first.to}
       end={first.to === "/"}
       className={() => `nav-link ${mode === "rail" ? "rail-link" : ""} ${mode === "step" ? "step-link" : ""} ${active ? "active" : ""}`}
-      title={mode === "rail" ? it.label : undefined}
+      title={mode === "rail" || lamp ? title : undefined}
+      aria-label={lamp ? title : undefined}
     >
-      {mode !== "step" && <span className="nav-ic">{it.icon(mode === "rail" ? 21 : 18)}</span>}
+      {mode !== "step" && (
+        <span className="nav-ic">{lamp ? <span className={`lamp ${lamp}`} aria-hidden="true" /> : it.icon(mode === "rail" ? 21 : 18)}</span>
+      )}
       <span>{mode === "rail" ? it.short ?? it.label : it.label}</span>
+      {lamp && mode !== "rail" && <span className={`nav-state ${lamp}`}>{SERVICE_LABEL[lamp]}</span>}
     </NavLink>
   );
 }
@@ -166,7 +209,8 @@ export function VariantNav({ variant, has }: { variant: MenuVariant; has: Has })
   const sections = top
     .map((s) => ({ ...s, items: s.items.map((i) => visible(i, has)).filter((i): i is Item => !!i) }))
     .filter((s) => s.items.length);
-  const bottomItem = bottom ? visible(bottom, has) : null;
+  const bottomItems = (bottom ?? []).map((i) => visible(i, has)).filter((i): i is Item => !!i);
+  const service = useServiceState(bottomItems.some((i) => i.lamp));
   const activeStep = sections.find((s) => s.step && s.items.some((i) => itemActive(i, pathname)))?.step;
   const adminActive = sections.some((s) => s.collapsible && s.items.some((i) => itemActive(i, pathname)));
   const [adminOpen, setAdminOpen] = useState(false);
@@ -213,9 +257,11 @@ export function VariantNav({ variant, has }: { variant: MenuVariant; has: Has })
           </div>
         );
       })}
-      {bottomItem && (
+      {bottomItems.length > 0 && (
         <div className="nav-group nav-bottom">
-          <ItemLink it={bottomItem} path={pathname} mode={rail ? "rail" : undefined} />
+          {bottomItems.map((i) => (
+            <ItemLink key={i.label} it={i} path={pathname} mode={rail ? "rail" : undefined} service={service} />
+          ))}
         </div>
       )}
     </div>
@@ -227,7 +273,7 @@ export function SubNav({ variant, has }: { variant: MenuVariant; has: Has }) {
   const { pathname } = useLocation();
   if (variant === "now") return null;
   const { top, bottom } = structure(variant);
-  const all = [...top.flatMap((s) => s.items), ...(bottom ? [bottom] : [])];
+  const all = [...top.flatMap((s) => s.items), ...(bottom ?? [])];
   const it = all.map((i) => visible(i, has)).find((i) => i && i.pages.length > 1 && itemActive(i, pathname));
   if (!it) return null;
   return (
