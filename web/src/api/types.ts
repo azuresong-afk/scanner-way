@@ -184,6 +184,18 @@ export interface RunPlan {
   full_check: boolean;
   accepted_targets: number;
   denied_targets: DeniedTarget[];
+  /** Покрытие целей учётками по привязке; null — прогону учётки не нужны. */
+  credential_coverage?: CredentialCoverage | null;
+}
+
+export interface CredentialCoverage {
+  auto: boolean;
+  credentials: number;
+  hosts: number;
+  bound: number;
+  fallback: number;
+  uncovered: number;
+  uncovered_sample: string[];
 }
 
 export type CoverageStatus = "completed" | "not_applicable" | "skipped" | "unreachable" | "no_credentials" | "timeout" | "error";

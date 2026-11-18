@@ -33,6 +33,7 @@ from scanner.core import findings_query as fq
 from scanner.core import host_latest, run_events
 from scanner.core import repository as repo
 from scanner.core.audit import AuditSink
+from scanner.core.credentials import bound_hosts
 from scanner.core.db import ScanRun
 from scanner.core.orchestrator import (
     RETRYABLE,
@@ -40,8 +41,10 @@ from scanner.core.orchestrator import (
     RunService,
     TargetPlan,
     order_modules,
+    with_companions,
 )
 from scanner.core.ratelimit import PROFILES
+from scanner.core.runner.service import auto_credential_ids, uses_auto_credentials
 
 router = APIRouter(tags=["runs"])
 
@@ -75,7 +78,8 @@ def start_run(engagement_id: int, body: RunCreate, request: Request,
                                  runs=runs)
     try:
         runs.check_node(body.node_id, credential_ids=body.credential_ids,
-                        cred_set_ids=body.cred_set_ids)
+                        cred_set_ids=body.cred_set_ids,
+                        auto_credentials=uses_auto_credentials(modules, body.credential_ids))
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
 
@@ -108,13 +112,39 @@ def run_plan(session: Session, engagement_id: int, body: RunCreate, runs: RunSer
     else:
         modules = with_engine(body.modules, body.vuln_engine, runs.registry)
         auto = set(VULN_ENGINES[body.vuln_engine]) if body.vuln_engine else set()
-    wanted = set(body.credential_ids)
-    protocols = {r.protocol or "ssh" for r in repo.list_host_credentials(session, engagement_id)
-                 if r.id in wanted}
+    protocols = {r.protocol or "ssh"
+                 for r in run_credential_rows(session, engagement_id, body, modules)}
     plan = plan_modules(modules, protocols=protocols, engine_modules=auto,
                         known=runs.registry, no_ping=body.no_ping)
     removed = {m.name for m in plan.removed}
     return [m for m in modules if m not in removed], plan
+
+
+def run_credential_rows(session: Session, engagement_id: int, body: RunCreate,
+                        modules: list[str]) -> list:
+    """Учётки, которые возьмёт прогон: выбранные явно или — без выбора —
+    подобранные по привязке к целям (как при исполнении, см. auto_credential_ids)."""
+    rows = repo.list_host_credentials(session, engagement_id)
+    if body.credential_ids:
+        wanted = set(body.credential_ids)
+        return [r for r in rows if r.id in wanted]
+    if not uses_auto_credentials(modules, []):
+        return []
+    picked = set(auto_credential_ids(rows, body.targets))
+    return [r for r in rows if r.id in picked]
+
+
+def credential_coverage(session: Session, engagement_id: int, body: RunCreate,
+                        modules: list[str], hosts: list[str]) -> dict | None:
+    """Сколько разрешённых целей получат учётку по привязке. None — прогону
+    учётки не нужны. Без секретов: только счётчики и адреса самих целей."""
+    if not uses_auto_credentials(modules, body.credential_ids) and not body.credential_ids:
+        return None
+    rows = run_credential_rows(session, engagement_id, body, modules)
+    bound, fallback, none = bound_hosts(hosts, [list(r.targets or []) for r in rows])
+    return {"auto": not body.credential_ids, "credentials": len(rows),
+            "hosts": len(hosts), "bound": bound, "fallback": fallback,
+            "uncovered": len(none), "uncovered_sample": none[:20]}
 
 
 @router.post("/engagements/{engagement_id}/runs/plan")
@@ -125,9 +155,12 @@ def preview_run(engagement_id: int, body: RunCreate,
     """Итоговый состав прогона до запуска: модули (со спутниками), что убрано
     как неприменимое и предупреждения о неполной проверке. Ничего не запускает."""
     get_engagement(session, engagement_id)
-    _, plan = run_plan(session, engagement_id, body, runs)
+    modules, plan = run_plan(session, engagement_id, body, runs)
     targets = runs.preview(engagement_id, body.targets)
+    coverage = credential_coverage(session, engagement_id, body,
+                                   with_companions(modules, runs.registry), targets.allowed)
     return {**plan.to_dict(), "accepted_targets": len(targets.allowed),
+            "credential_coverage": coverage,
             "denied_targets": [{"target": d.target, "reason": d.reason, "count": d.count}
                                for d in targets.denied]}
 
