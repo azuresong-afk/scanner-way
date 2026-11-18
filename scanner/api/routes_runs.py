@@ -141,9 +141,9 @@ def credential_coverage(session: Session, engagement_id: int, body: RunCreate,
     if not uses_auto_credentials(modules, body.credential_ids) and not body.credential_ids:
         return None
     rows = run_credential_rows(session, engagement_id, body, modules)
-    bound, fallback, none = bound_hosts(hosts, [list(r.targets or []) for r in rows])
+    bound, none = bound_hosts(hosts, [list(r.targets or []) for r in rows])
     return {"auto": not body.credential_ids, "credentials": len(rows),
-            "hosts": len(hosts), "bound": bound, "fallback": fallback,
+            "hosts": len(hosts), "bound": bound,
             "uncovered": len(none), "uncovered_sample": none[:20]}
 
 

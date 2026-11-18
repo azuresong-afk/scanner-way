@@ -207,9 +207,9 @@ it("привязывает активы к учётке выбором из «А
   expect(sent.targets).toEqual(["10.0.0.5", "10.0.0.6"]);
 });
 
-it("учётка без привязки показана как общая", async () => {
+it("учётка без привязки помечена как неиспользуемая", async () => {
   mockApi({ "GET /engagements/7/credentials": [ROW] });
   render(<CredentialsCard engagementId={7} />);
   const row = (await screen.findByText("root ДМЗ")).closest("tr")!;
-  expect(within(row).getByText(/общая — для всех целей/)).toBeInTheDocument();
+  expect(within(row).getByText(/не привязана — в прогонах не используется/)).toBeInTheDocument();
 });

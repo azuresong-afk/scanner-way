@@ -16,14 +16,13 @@ type When = "now" | "schedule";
 /** Сколько целей прогона получат учётку по привязке (ответ /runs/plan). */
 export function CredentialCoverageNote({ coverage }: { coverage: CredentialCoverage | null }) {
   if (!coverage) return <small className="muted">Учётные записи подбираются автоматически по привязке к активам.</small>;
-  const { hosts, bound, fallback, uncovered, uncovered_sample } = coverage;
+  const { hosts, bound, uncovered, uncovered_sample } = coverage;
   if (hosts === 0) return <small className="muted">Учётные записи подбираются автоматически по привязке к активам.</small>;
   const rest = uncovered - uncovered_sample.length;
   return (
     <div className="cred-coverage" data-testid="cred-coverage">
       <small>
         Учётки подберутся автоматически: {bound} из {hosts} {plural(hosts, ["цели", "целей", "целей"])} — по привязке
-        {fallback > 0 && <>, {fallback} — только по общей учётке без привязки</>}
         {uncovered > 0 ? (
           <>
             , <b style={{ color: "var(--warn)", fontWeight: 500 }}>{uncovered} без учётки</b> — вход на них не выполнится
@@ -514,7 +513,7 @@ export function StartRunModal({
             )}
             <small className="muted">
               Выбирать учётки не нужно: на каждый хост берутся учётки, к которым он привязан во вкладке «Учётные записи» (не больше трёх, сначала с
-              самой узкой областью). Учётка без привязки — общая: она пробуется на всех целях после привязанных.
+              самой узкой привязкой). Учётка без привязанных активов в прогонах не используется.
             </small>
           </fieldset>
         )}

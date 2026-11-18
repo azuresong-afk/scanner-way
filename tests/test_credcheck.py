@@ -104,15 +104,19 @@ def test_bound_credentials_by_scope_and_protocol():
     creds = [_cred(1, "вся сеть"), _cred(2, "узкая", targets=["10.0.0.5/32"]),
              _cred(3, "чужая", targets=["10.0.1.0/24"]),
              _cred(4, "win", protocol="winrm", port=5986, targets=["10.0.0.0/24"])]
-    assert [c.id for c in cc.bound_credentials("10.0.0.5", creds)] == [2, 1, 4]
-    assert [c.id for c in cc.bound_credentials("10.0.1.7", creds)] == [3, 1]
+    # учётка без привязки («вся сеть») ни к какому хосту не привязана
+    assert [c.id for c in cc.bound_credentials("10.0.0.5", creds)] == [2, 4]
+    assert [c.id for c in cc.bound_credentials("10.0.1.7", creds)] == [3]
+    assert cc.bound_credentials("10.0.2.1", creds) == []
 
 
 def test_host_summary():
     c = _conn()
     r = cc.check_host_credentials("10.0.0.5", [], c)
     assert r.status == cc.NO_CREDENTIAL and "не привязана" in r.message
-    r = cc.check_host_credentials("10.0.0.5", [_cred(1), _cred(2)], c)
+    r = cc.check_host_credentials("10.0.0.5", [_cred(9)], c)       # без привязки
+    assert r.status == cc.NO_CREDENTIAL
+    r = cc.check_host_credentials("10.0.0.5", [_cred(1, targets=["10.0.0.0/24"]), _cred(2, targets=["10.0.0.0/24"])], c)
     assert r.status == cc.OK and len(r.results) == 2
 
     def flaky(host, cred, opts):
@@ -120,8 +124,8 @@ def test_host_summary():
             raise sshexec.AuthFailed("x")
         return Shell()
     c.ssh_connect = flaky
-    assert cc.check_host_credentials("10.0.0.5", [_cred(1), _cred(2)], c).status == cc.PARTIAL
-    r = cc.check_host_credentials("10.0.0.5", [_cred(2)], c)
+    assert cc.check_host_credentials("10.0.0.5", [_cred(1, targets=["10.0.0.0/24"]), _cred(2, targets=["10.0.0.0/24"])], c).status == cc.PARTIAL
+    r = cc.check_host_credentials("10.0.0.5", [_cred(2, targets=["10.0.0.0/24"])], c)
     assert r.status == cc.AUTH_FAILED and "отклонены" in r.message
 
 

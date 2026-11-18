@@ -1,7 +1,8 @@
 """Проверка входа по учётной записи актива — без сканирования.
 
 Для каждого хоста берутся привязанные к нему учётки договора (область действия
-учётки покрывает адрес хоста или пуста — см. `credentials_for_host`), и по
+учётки покрывает адрес хоста; учётка без привязки не берётся — см.
+`bound_credentials`), и по
 каждой делается ровно одна попытка входа:
 
   * SSH — TCP-подключение к порту учётки, затем вход paramiko (`sshexec.connect`)
@@ -238,18 +239,20 @@ def check_login(host: str, cred: HostCredential, c: Connectors) -> LoginResult:
 
 
 def bound_credentials(host: str, creds: Sequence[HostCredential]) -> list[HostCredential]:
-    """Учётки, привязанные к хосту: по каждому протоколу — как их выберет прогон."""
+    """Учётки, привязанные к хосту: по каждому протоколу — как их выберет прогон.
+    Учётка без привязки (пустая область) ни к какому хосту не привязана."""
+    bound = [c for c in creds if c.targets]
     out: list[HostCredential] = []
     for proto in PROTOCOLS:
-        out.extend(credentials_for_host(host, creds, protocol=proto))
+        out.extend(credentials_for_host(host, bound, protocol=proto))
     return out
 
 
 def summarize(host: str, results: list[LoginResult], elapsed_ms: float) -> HostCheck:
     if not results:
         return HostCheck(host, NO_CREDENTIAL,
-                         "к хосту не привязана ни одна учётная запись: область "
-                         "действия учёток договора не покрывает этот адрес",
+                         "к хосту не привязана ни одна учётная запись: привяжите "
+                         "его во вкладке «Учётные записи»",
                          [], elapsed_ms)
     ok = [r for r in results if r.status == OK]
     if len(ok) == len(results):

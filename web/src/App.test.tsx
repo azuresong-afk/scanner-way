@@ -167,7 +167,7 @@ describe("модуль cred_audit в форме запуска", () => {
     const { dlg, api } = await openForm([...OPERATOR, "host_credentials"], {
       "GET /engagements/1/credentials": [CRED],
       "POST /engagements/1/runs/plan": { modules: [], removed: [], warnings: [], full_check: true, accepted_targets: 4, denied_targets: [],
-        credential_coverage: { auto: true, credentials: 1, hosts: 4, bound: 3, fallback: 0, uncovered: 1, uncovered_sample: ["10.0.0.9"] } },
+        credential_coverage: { auto: true, credentials: 1, hosts: 4, bound: 3, uncovered: 1, uncovered_sample: ["10.0.0.9"] } },
       "POST /engagements/1/runs": { id: 9, engagement_id: 1, modules: [], rate_profile: "gentle", credential_ids: [], cred_set_ids: [], status: "pending",
         started_by: 1, started_at: null, finished_at: null, created_at: null, accepted_targets: 1, denied_targets: [] },
     });
