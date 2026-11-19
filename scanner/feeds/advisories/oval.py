@@ -7,6 +7,12 @@
 ``constant_variable``) с состоянием «версия less than X». X — первая
 исправленная версия пакета.
 
+Отечественные вендоры (РЕД ОС, Astra) иногда ссылаются в бюллетене только на
+идентификатор БДУ ФСТЭК (``reference source="BDU"``) без CVE. Раньше такие
+определения отбрасывались целиком, и исправление вендора терялось. Теперь
+запись сохраняется с идентификатором ``BDU:ГГГГ-NNNNN`` в поле cve, а сверка
+находок (auth_inventory) ищет её по BDU находки, если по CVE записи нет.
+
 Логика AND/OR критериев намеренно не вычисляется: берутся все тесты
 «пакет < версия» определения. Прочие тесты (подпись ключом вендора, версия
 release-пакета, архитектура) пропускаются — у них нет состояния «evr less than».
@@ -25,7 +31,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable, Iterator
 from typing import IO
 
-from scanner.feeds.advisories.base import FIXED, Advisory, is_cve
+from scanner.feeds.advisories.base import FIXED, Advisory, bdu_id, is_cve
 from scanner.feeds.kernel import MAX_UNAME_PATTERN, UNAME_PREFIX
 
 _TESTS = ("rpminfo_test", "dpkginfo_test", "uname_test", "variable_test")
@@ -33,7 +39,9 @@ _OBJECTS = ("rpminfo_object", "dpkginfo_object")
 _STATES = ("rpminfo_state", "dpkginfo_state")
 # Ссылки на бюллетень, кроме самих CVE: id бюллетеня для evidence.
 _ADVISORY_SOURCES = ("RHSA", "USN", "DSA", "DLA", "ALAS", "ELSA", "ALSA", "RLSA",
-                     "ALT", "ALTPU", "BDU", "ASTRA", "REDOS", "ROSA", "OVAL")
+                     "ALT", "ALTPU", "ASTRA", "REDOS", "ROS", "ROSA", "OVAL")
+# Источник ссылки «идентификатор БДУ ФСТЭК».
+_BDU_SOURCES = ("BDU", "FSTEC", "БДУ", "FSTEC-BDU", "BDU-FSTEC")
 
 
 def _local(tag: str) -> str:
@@ -45,8 +53,11 @@ def _child(el: ET.Element, name: str) -> ET.Element | None:
 
 
 def _definition(el: ET.Element) -> tuple[str | None, list[str], list[str], list[str]]:
-    """(id бюллетеня, CVE, test_ref, платформы и комментарии критериев) определения."""
+    """(id бюллетеня, CVE, test_ref, платформы и комментарии критериев) определения.
+
+    Нет ни одной CVE — вместо них идентификаторы БДУ (``BDU:2025-03953``)."""
     cves: list[str] = []
+    bdus: list[str] = []
     adv: str | None = None
     tests: list[str] = []
     platforms: list[str] = []
@@ -61,12 +72,16 @@ def _definition(el: ET.Element) -> tuple[str | None, list[str], list[str], list[
             ref = (sub.get("ref_id") or "").strip()
             if src == "CVE" and is_cve(ref):
                 cves.append(ref)
+            elif (src in _BDU_SOURCES or ref.upper().startswith("BDU:")) and bdu_id(ref):
+                bdus.append(bdu_id(ref))  # type: ignore[arg-type]
             elif ref and adv is None and src.split("-")[0] in _ADVISORY_SOURCES:
                 adv = ref
-        elif tag == "cve":
+        elif tag in ("cve", "bdu"):
             text = (sub.text or "").strip()
             if is_cve(text):
                 cves.append(text)
+            elif text.upper().startswith("BDU:") and bdu_id(text):
+                bdus.append(bdu_id(text))  # type: ignore[arg-type]
         elif tag == "criterion":
             if sub.get("test_ref"):
                 tests.append(sub.get("test_ref"))  # type: ignore[arg-type]
@@ -76,7 +91,8 @@ def _definition(el: ET.Element) -> tuple[str | None, list[str], list[str], list[
             if head.split("-")[0].upper() in _ADVISORY_SOURCES and any(
                     ch.isdigit() for ch in head):
                 adv = head
-    return adv, list(dict.fromkeys(cves)), tests, platforms
+    ids = cves or bdus
+    return adv, list(dict.fromkeys(ids)), tests, platforms
 
 
 # (выпуски задания, платформы определения, исправленная версия) -> выпуски записи

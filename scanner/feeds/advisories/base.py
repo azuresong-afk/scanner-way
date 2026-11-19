@@ -55,10 +55,21 @@ class FamilySpec:
 
 
 _ID_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")
+_BDU_RE = re.compile(r"^(?:BDU:)?(\d{4}-\d{5})$", re.IGNORECASE)
 
 
 def is_cve(value: str) -> bool:
     return bool(_ID_RE.match(value))
+
+
+def bdu_id(value: str) -> str | None:
+    """``BDU:2025-03953`` / ``2025-03953`` -> ``BDU:2025-03953``, иначе None."""
+    m = _BDU_RE.match((value or "").strip())
+    return f"BDU:{m.group(1)}" if m else None
+
+
+def is_bdu(value: str) -> bool:
+    return bool(value) and value.startswith("BDU:") and bdu_id(value) == value
 
 
 def major(version_id: str | None) -> str | None:
