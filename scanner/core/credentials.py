@@ -409,12 +409,11 @@ def scope_touches_targets(scope: Sequence[str], targets: Iterable[str]) -> bool:
 
 
 def bound_hosts(hosts: Iterable[str], scopes: Sequence[Sequence[str]]
-                ) -> tuple[int, int, list[str]]:
-    """Покрытие хостов привязками: (с привязанной учёткой, только с общей,
-    без учётки — адреса). scopes — области учёток (пустая — «на всё»)."""
-    has_any = any(not s for s in scopes)
+                ) -> tuple[int, list[str]]:
+    """Покрытие хостов привязками: (с привязанной учёткой, без учётки — адреса).
+    scopes — области учёток; пустая область ни к чему не привязана."""
     nets = [_networks(s) for s in scopes if s]
-    bound = fallback = 0
+    bound = 0
     none: list[str] = []
     for h in hosts:
         try:
@@ -423,8 +422,6 @@ def bound_hosts(hosts: Iterable[str], scopes: Sequence[Sequence[str]]
             continue
         if any(addr.version == n.version and addr in n for ns in nets for n in ns):
             bound += 1
-        elif has_any:
-            fallback += 1
         else:
             none.append(h)
-    return bound, fallback, none
+    return bound, none

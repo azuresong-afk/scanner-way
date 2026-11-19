@@ -44,10 +44,15 @@ const SNMP_PRIV = [
 /** Адрес хоста без /32 (/128): привязка показывается как список активов. */
 const hostSpec = (t: string) => t.replace(/\/(32|128)$/, "");
 
-/** Привязка учётки в таблице: первые записи области или «общая». */
+/** Привязка учётки в таблице: первые записи области или «не привязана». */
 function BindingCell({ targets: raw }: { targets: string[] }) {
   const targets = raw.map(hostSpec);
-  if (targets.length === 0) return <span className="muted" title="Пробуется на всех целях прогона после привязанных к хосту учёток">общая — для всех целей</span>;
+  if (targets.length === 0)
+    return (
+      <span style={{ color: "var(--warn)" }} title="Привяжите активы, иначе учётка в прогонах не используется">
+        не привязана — в прогонах не используется
+      </span>
+    );
   const shown = targets.slice(0, 3).join(", ");
   return (
     <span className="mono muted" title={targets.join(", ")}>
@@ -627,8 +632,8 @@ function CredentialForm({
             spellCheck={false}
           />
           <small>
-            Хосты, адреса или подсети из allowlist проекта. Сканер сам входит на них под этой учёткой в каждом прогоне и расписании. Пусто —
-            общая учётка: пробуется на всех целях прогона после привязанных к хосту.
+            Хосты, адреса или подсети из allowlist проекта. Сканер сам входит на них под этой учёткой в каждом прогоне и расписании. Пока активы не
+            привязаны, учётка в прогонах не используется.
           </small>
           {parsed.invalid.length > 0 && <small style={{ color: "var(--danger)" }}>Не IP/подсеть: {parsed.invalid.slice(0, 5).join(", ")}</small>}
         </div>

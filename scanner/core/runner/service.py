@@ -101,10 +101,12 @@ def uses_auto_credentials(modules: list[str], credential_ids: list[int]) -> bool
 
 
 def auto_credential_ids(rows: list, targets: list[str]) -> list[int]:
-    """Учётки проекта, применимые к целям прогона: область пересекается с
-    целями или пуста (общая учётка). Остальные не расшифровываются и не
-    уходят на узел-сканер. Выбор на конкретный хост — credentials_for_host."""
-    return [r.id for r in rows if scope_touches_targets(list(r.targets or []), targets)]
+    """Учётки проекта, привязанные к целям прогона: область непуста и
+    пересекается с целями. Учётка без привязки не используется. Остальные не
+    расшифровываются и не уходят на узел-сканер. Выбор на конкретный хост —
+    credentials_for_host (у всех подобранных область задана)."""
+    return [r.id for r in rows
+            if r.targets and scope_touches_targets(list(r.targets), targets)]
 
 
 @dataclass(slots=True)
@@ -197,10 +199,10 @@ class RunService(RecoveryMixin, NodeRunsMixin, PersistMixin):
         """Учётки прогона: нужны модулям из CREDENTIAL_MODULES, принадлежат договору.
 
         Пустой credential_ids при модуле с учёткой — подбор по привязке: на
-        каждый хост берутся учётки, к области действия которых он привязан во
-        вкладке «Учётные записи» (см. auto_credential_ids). Нужна хотя бы одна
-        учётка в проекте. Явный список — только эти учётки (API, CLI, старые
-        расписания).
+        каждый хост берутся учётки, к которым он привязан во вкладке «Учётные
+        записи» (см. auto_credential_ids); учётка без привязки не используется.
+        Нужна хотя бы одна привязанная учётка в проекте. Явный список — только
+        эти учётки (API, CLI, старые расписания).
 
         ValueError — понятная оператору причина отказа (API отдаёт её как 422).
         """
@@ -212,8 +214,8 @@ class RunService(RecoveryMixin, NodeRunsMixin, PersistMixin):
                 raise ValueError("не задан ключ шифрования учётных записей "
                                  "(SCANNER_CREDENTIALS_KEY или SCANNER_API_SECRET)")
             with session_scope(self.sessions) as s:
-                has_any = bool(repo.list_host_credentials(s, engagement_id))
-            if not has_any:
+                has_bound = any(r.targets for r in repo.list_host_credentials(s, engagement_id))
+            if not has_bound:
                 raise ValueError(f"модулю {needs[0]} нужна учётная запись: добавьте её "
                                  "во вкладке «Учётные записи» и привяжите к активам")
             return
@@ -416,7 +418,7 @@ class RunService(RecoveryMixin, NodeRunsMixin, PersistMixin):
             if (cred_ids or set_ids) and self.vault is None:
                 raise RuntimeError("не задан ключ шифрования учётных записей")
             if not cred_ids and uses_auto_credentials(names, cred_ids):
-                # подбор по привязке: учётки, чья область задевает цели прогона
+                # подбор по привязке: учётки, привязанные к целям прогона
                 if self.vault is None:
                     raise RuntimeError("не задан ключ шифрования учётных записей")
                 cred_ids = auto_credential_ids(repo.list_host_credentials(s, engagement_id),

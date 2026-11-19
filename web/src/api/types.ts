@@ -193,7 +193,6 @@ export interface CredentialCoverage {
   credentials: number;
   hosts: number;
   bound: number;
-  fallback: number;
   uncovered: number;
   uncovered_sample: string[];
 }
