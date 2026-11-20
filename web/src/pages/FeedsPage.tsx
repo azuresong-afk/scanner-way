@@ -107,7 +107,7 @@ export function FeedProgressView({ progress }: { progress: FeedProgress | null |
     <div className="stack" style={{ gap: 4, minWidth: 220 }} role="status">
       <span>{stage ?? "Обновляется"}</span>
       {percent !== null && (
-        <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }} aria-label={`Выполнено ${percent}%`}>
+        <div style={{ height: 6, background: "var(--border)", borderRadius: 2, overflow: "hidden" }} aria-label={`Выполнено ${percent}%`}>
           <div style={{ width: `${percent}%`, height: "100%", background: "var(--accent)" }} />
         </div>
       )}
@@ -307,7 +307,7 @@ export function FeedsPage() {
     <>
       <div className="page-head">
         <div>
-          <span className="crumbs">Администрирование</span>
+          <span className="crumbs">Настройка</span>
           <h1>Справочники</h1>
         </div>
       </div>

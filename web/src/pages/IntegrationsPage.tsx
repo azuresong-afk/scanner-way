@@ -346,7 +346,7 @@ export function IntegrationsPage() {
     <>
       <div className="page-head">
         <div>
-          <span className="crumbs">Администрирование</span>
+          <span className="crumbs">Настройка</span>
           <h1>Уведомления</h1>
         </div>
         {canEdit && (

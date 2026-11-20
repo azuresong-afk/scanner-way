@@ -53,7 +53,7 @@ export function MfaSetupBox({ setup }: { setup: MfaSetupOut }) {
           alt="QR-код для приложения-аутентификатора"
           width={168}
           height={168}
-          style={{ alignSelf: "center", borderRadius: 8, background: "#fff", padding: 4 }}
+          style={{ alignSelf: "center", borderRadius: 4, background: "#fff", padding: 4 }}
         />
       )}
       <div className="field">

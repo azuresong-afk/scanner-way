@@ -302,7 +302,7 @@ export function NodesPage() {
     <>
       <div className="page-head">
         <div>
-          <span className="crumbs">Администрирование</span>
+          <span className="crumbs">Настройка</span>
           <h1>Сканеры</h1>
         </div>
         <div className="inline" style={{ gap: 8 }}>

@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 
 OK, WARN, ERROR, UNKNOWN = "ok", "warn", "error", "unknown"
 _RANK = {OK: 0, UNKNOWN: 1, WARN: 2, ERROR: 3}
-STATUS_TITLES = {OK: "в порядке", WARN: "требует внимания", ERROR: "не работает",
+STATUS_TITLES = {OK: "работает", WARN: "требует внимания", ERROR: "не работает",
                  UNKNOWN: "не проверено"}
 
 COMPONENT_TITLES = {

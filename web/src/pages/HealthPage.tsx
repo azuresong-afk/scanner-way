@@ -7,7 +7,7 @@ import { fmtDate } from "../lib/format";
 import { useAsync, useInterval } from "../lib/useAsync";
 
 const HEALTH_LABEL: Record<HealthStatus, string> = {
-  ok: "В порядке",
+  ok: "Работает",
   warn: "Требует внимания",
   error: "Не работает",
   unknown: "Не проверено",
@@ -133,7 +133,7 @@ export function HealthPage() {
     <>
       <div className="page-head">
         <div>
-          <span className="crumbs">Администрирование</span>
+          <span className="crumbs">Работа самого сканера</span>
           <h1>Состояние сканера</h1>
         </div>
         <button type="button" className="btn" onClick={() => void refresh()} disabled={refreshing}>

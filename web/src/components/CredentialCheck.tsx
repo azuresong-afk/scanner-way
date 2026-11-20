@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { KeyRound, RotateCcw, Square } from "lucide-react";
+import { KeyRound, RotateCcw } from "lucide-react";
 import { ApiError, api } from "../api/client";
 import type {
   CredHostStatus,
@@ -174,7 +174,7 @@ export function CredentialCheckModal({
               className="btn"
               onClick={() => (stop.current = true)}
             >
-              <Square size={15} /> Остановить
+              Остановить
             </button>
           ) : (
             <>

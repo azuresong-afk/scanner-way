@@ -21,7 +21,7 @@ SEVERITY_ONE = {"critical": "критическая", "high": "высокая", 
                 "low": "низкая", "info": "информационная"}
 
 
-HEALTH_RU = {"ok": "снова в порядке", "warn": "требует внимания", "error": "не работает"}
+HEALTH_RU = {"ok": "снова работает", "warn": "требует внимания", "error": "не работает"}
 
 
 def _clean(text: str, limit: int = 200) -> str:
