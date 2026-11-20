@@ -1,69 +1,16 @@
-import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import {
-  Activity,
-  BarChart3,
-  Bell,
-  CalendarClock,
-  ClipboardCheck,
-  Database,
-  FileText,
-  KeyRound,
-  LayoutDashboard,
-  ListChecks,
-  LogOut,
-  Menu,
-  Moon,
-  Network,
-  Radar,
-  Server,
-  ShieldAlert,
-  ShieldCheck,
-  Sun,
-  Users,
-  Wifi,
-} from "lucide-react";
-import { useAuth, type Perm } from "../auth/AuthContext";
+import { useEffect, useState } from "react";
+import { Link, Outlet, useLocation } from "react-router-dom";
+import { LogOut, Menu, Moon, Radar, ShieldCheck, Sun } from "lucide-react";
+import { useAuth } from "../auth/AuthContext";
 import { useEngagement } from "../auth/EngagementContext";
 import { useTheme } from "../theme/ThemeContext";
 import { ROLE_LABEL } from "../lib/labels";
 import { HealthChip } from "./HealthChip";
 import { QuickSearch } from "./QuickSearch";
 import { RunProgressChip } from "./RunProgressChip";
-import { menuVariant, SubNav, VariantNav } from "./MenuVariants";
+import { SideNav } from "./SideNav";
 import { SessionNotice } from "./SessionNotice";
-
-interface NavItem {
-  to: string;
-  label: string;
-  icon: ReactNode;
-  /** Пункт виден, если есть хотя бы одно из прав. */
-  perm: Perm | Perm[];
-  admin?: boolean;
-}
-
-// Порядок пунктов — «сверху вниз» по ходу работы (выбор Антона): проект → активы →
-// учётные записи → находки → сетевой поиск → сканирование → расписание → нормативы → отчёты.
-// Служебные разделы — отдельной группой «Администрирование» ниже.
-// URL прежние (/engagements, /reachability, /runs …), чтобы не ломать закладки и ссылки.
-const NAV: NavItem[] = [
-  { to: "/", label: "Сводка", icon: <LayoutDashboard size={18} />, perm: "view_report" },
-  { to: "/engagements", label: "Проекты", icon: <FileText size={18} />, perm: "view_engagements" },
-  { to: "/hosts", label: "Активы", icon: <Server size={18} />, perm: "view_report" },
-  { to: "/credentials", label: "Учётные записи", icon: <KeyRound size={18} />, perm: ["host_credentials", "cred_audit"] },
-  { to: "/findings", label: "Находки", icon: <ShieldAlert size={18} />, perm: "view_report" },
-  { to: "/reachability", label: "Сетевой поиск", icon: <Wifi size={18} />, perm: "view_report" },
-  { to: "/runs", label: "Сканирование", icon: <Radar size={18} />, perm: "view_report" },
-  { to: "/schedules", label: "Расписание", icon: <CalendarClock size={18} />, perm: "view_report" },
-  { to: "/compliance", label: "Соответствие нормативам", icon: <ClipboardCheck size={18} />, perm: "view_report" },
-  { to: "/reports", label: "Отчёты", icon: <BarChart3 size={18} />, perm: "view_report" },
-  { to: "/feeds", label: "Справочники", icon: <Database size={18} />, perm: "view_engagements", admin: true },
-  { to: "/nodes", label: "Сканеры", icon: <Network size={18} />, perm: "view_engagements", admin: true },
-  { to: "/integrations", label: "Уведомления", icon: <Bell size={18} />, perm: "view_engagements", admin: true },
-  { to: "/health", label: "Состояние", icon: <Activity size={18} />, perm: "view_engagements", admin: true },
-  { to: "/audit", label: "Журнал аудита", icon: <ListChecks size={18} />, perm: "view_audit", admin: true },
-  { to: "/users", label: "Пользователи и роли", icon: <Users size={18} />, perm: "manage_users", admin: true },
-];
+import { SystemHealthProvider } from "../health/SystemHealthContext";
 
 function initials(name: string): string {
   const parts = name.split(/[\s._@-]+/).filter(Boolean);
@@ -104,15 +51,6 @@ function ThemeToggle() {
   );
 }
 
-function RailThemeToggle() {
-  const { theme, toggleTheme } = useTheme();
-  return (
-    <button type="button" className="btn btn-ghost icon-btn" onClick={toggleTheme} aria-label="Сменить тему" title="Сменить тему">
-      {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-    </button>
-  );
-}
-
 function Brand() {
   return (
     <div className="brand">
@@ -128,64 +66,29 @@ function Brand() {
 }
 
 export function Layout() {
+  const { has } = useAuth();
+  // Лампочка «Состояние» в меню и плашка в шапке берут один общий опрос /system/health.
+  return (
+    <SystemHealthProvider enabled={has("view_engagements")}>
+      <Shell />
+    </SystemHealthProvider>
+  );
+}
+
+function Shell() {
   const { me, has, logout } = useAuth();
-  const items = NAV.filter((i) => (Array.isArray(i.perm) ? i.perm : [i.perm]).some(has));
   const [open, setOpen] = useState(false);
   const location = useLocation();
   useEffect(() => setOpen(false), [location.pathname]);
   const name = me?.display_name || me?.username || "";
   const roles = me?.roles.map((r) => ROLE_LABEL[r] ?? r).join(", ") || "нет ролей";
-  const main = items.filter((i) => !i.admin);
-  const admin = items.filter((i) => i.admin);
-  const variant = menuVariant();
-  const rail = variant === "v3";
-  // Макеты v1–v4 показываются в «угловатом» виде; текущее меню — как есть.
-  useLayoutEffect(() => {
-    if (variant === "now") delete document.documentElement.dataset.look;
-    else document.documentElement.dataset.look = "sharp";
-  }, [variant]);
 
   return (
     <div className="shell">
       {open && <div className="scrim" onClick={() => setOpen(false)} />}
-      <nav className={`sidebar ${open ? "open" : ""} ${rail ? "rail" : ""} menu-${variant}`} aria-label="Основное меню">
-        {rail ? (
-          <div className="brand rail-brand" title="Scanner">
-            <div className="brand-mark" aria-hidden="true">
-              <Radar size={18} />
-            </div>
-          </div>
-        ) : (
-          <Brand />
-        )}
-        {variant !== "now" && <VariantNav variant={variant} has={has} />}
-        {variant === "now" && main.map((i) => (
-          <NavLink key={i.to} to={i.to} end={i.to === "/"} className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-            {i.icon}
-            <span>{i.label}</span>
-          </NavLink>
-        ))}
-        {variant === "now" && admin.length > 0 && <div className="nav-section">Администрирование</div>}
-        {variant === "now" && admin.map((i) => (
-          <NavLink key={i.to} to={i.to} className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-            {i.icon}
-            <span>{i.label}</span>
-          </NavLink>
-        ))}
-        {rail ? (
-          <div className="sidebar-foot rail-foot">
-            <div className="avatar" title={`${name} · ${roles}`}>
-              {initials(name)}
-            </div>
-            <Link to="/security" className="btn btn-ghost icon-btn" aria-label="Безопасность входа" title="Безопасность входа (2FA)">
-              <ShieldCheck size={16} />
-            </Link>
-            <RailThemeToggle />
-            <button type="button" className="btn btn-ghost icon-btn" onClick={logout} aria-label="Выйти" title="Выйти">
-              <LogOut size={16} />
-            </button>
-          </div>
-        ) : (
+      <nav className={`sidebar ${open ? "open" : ""}`} aria-label="Основное меню">
+        <Brand />
+        <SideNav has={has} />
         <div className="sidebar-foot">
           <div className="user-card">
             <div className="avatar" aria-hidden="true">
@@ -204,7 +107,6 @@ export function Layout() {
           </div>
           <ThemeToggle />
         </div>
-        )}
       </nav>
       <div className="main">
         <header className="topbar">
@@ -220,7 +122,6 @@ export function Layout() {
             Только цели из allowlist проекта
           </span>
         </header>
-        <SubNav variant={variant} has={has} />
         <main className="content">
           <SessionNotice />
           <Outlet />

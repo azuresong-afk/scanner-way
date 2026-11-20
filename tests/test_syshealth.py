@@ -240,8 +240,8 @@ def test_system_health_event_routing_and_render():
     subject, body = render_text(ev)
     assert "не работает" in subject and "Освободите место" in body
     ok = Event(kind=SYSTEM_HEALTH, title="Место на диске", source="disk",
-               health_status="ok", message="в порядке", hint="Освободите место")
-    assert "снова в порядке" in render_text(ok)[0]
+               health_status="ok", message="работает", hint="Освободите место")
+    assert "снова работает" in render_text(ok)[0]
     assert "Что сделать" not in render_text(ok)[1]
     [(line, prio)] = SyslogCefChannel()._packets(ev)
     assert "system_health" in line and "cs5=error" in line and prio == 3
@@ -267,7 +267,7 @@ def test_dispatcher_system_health_dedup(sqlite_factory):
                    tick_seconds=0, public_url="https://scanner.local/")
     d.notify_system_health("disk", "Место на диске", "error", "мало места", "почистить")
     d.notify_system_health("disk", "Место на диске", "error", "мало места", "почистить")
-    d.notify_system_health("disk", "Место на диске", "ok", "в порядке", None)
+    d.notify_system_health("disk", "Место на диске", "ok", "работает", None)
     with sqlite_factory() as s:
         rows = list(s.query(NotificationLogRow).order_by(NotificationLogRow.id))
     assert [(r.channel_id, r.dedup_key) for r in rows] == [

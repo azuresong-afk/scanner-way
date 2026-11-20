@@ -276,7 +276,7 @@ export function UsersPage() {
     <>
       <div className="page-head">
         <div>
-          <span className="crumbs">Администрирование</span>
+          <span className="crumbs">Настройка</span>
           <h1>Пользователи и роли</h1>
         </div>
         <div className="actions">

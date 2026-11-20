@@ -1,38 +1,10 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
-import type { SystemHealth } from "../api/types";
-import { useAuth } from "../auth/AuthContext";
-
-const POLL_MS = 60000;
+import { useSystemHealth } from "../health/SystemHealthContext";
 
 /** Плашка в шапке: появляется, только когда со сканером что-то не так, и ведёт на «Состояние». */
 export function HealthChip() {
-  const { has } = useAuth();
-  const canView = has("view_engagements");
-  const [health, setHealth] = useState<SystemHealth | null>(null);
-
-  useEffect(() => {
-    if (!canView) return;
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const tick = async () => {
-      if (typeof document === "undefined" || document.visibilityState !== "hidden") {
-        try {
-          const h = await api.systemHealth();
-          if (alive) setHealth(h);
-        } catch {
-          // сеть моргнула — оставляем прежнее состояние до следующего опроса
-        }
-      }
-      if (alive) timer = setTimeout(tick, POLL_MS);
-    };
-    void tick();
-    return () => {
-      alive = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [canView]);
+  // опрос /system/health общий с лампочкой «Состояние» в меню (SystemHealthProvider)
+  const { health } = useSystemHealth();
 
   if (!health || (health.status !== "warn" && health.status !== "error")) return null;
   const bad = health.components.filter((c) => c.status === health.status).map((c) => c.title);

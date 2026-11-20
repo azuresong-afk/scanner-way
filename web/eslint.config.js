@@ -18,7 +18,7 @@ export default tseslint.config(
   },
   {
     // Провайдеры контекста экспортируют компонент и хук — это нормально.
-    files: ["src/auth/**", "src/theme/**"],
+    files: ["src/auth/**", "src/theme/**", "src/health/**"],
     rules: { "react-refresh/only-export-components": "off" },
   },
 );

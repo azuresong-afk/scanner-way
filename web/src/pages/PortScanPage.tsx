@@ -408,7 +408,7 @@ function ScanResult({ scan, canStop, onStopped }: { scan: PortScanDetail; canSto
             style={{
               height: 6,
               background: "var(--border)",
-              borderRadius: 3,
+              borderRadius: 2,
               overflow: "hidden",
             }}
             aria-label={`Проверено ${pct}%`}

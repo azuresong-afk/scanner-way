@@ -45,7 +45,7 @@ describe("HealthPage", () => {
   });
 
   it("«Проверить сейчас» запрашивает проверку заново", async () => {
-    const spy = vi.spyOn(api, "systemHealth").mockResolvedValue({ ...REPORT, status: "ok", status_title: "в порядке", components: [REPORT.components[0]] });
+    const spy = vi.spyOn(api, "systemHealth").mockResolvedValue({ ...REPORT, status: "ok", status_title: "работает", components: [REPORT.components[0]] });
     render(
       <MemoryRouter>
         <HealthPage />

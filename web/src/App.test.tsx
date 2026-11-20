@@ -89,27 +89,88 @@ it("без прав на учётки вкладки «Учётные запис
   expect(within(nav).queryByText("Учётные записи")).not.toBeInTheDocument();
 });
 
-it("меню идёт сверху вниз по ходу работы, служебные разделы — в «Администрировании»", async () => {
+const HEALTH_OK = { status: "ok", status_title: "работает", checked_at: "2026-11-20T10:00:00", components: [] };
+const ADMIN_OPERATOR = [...new Set([...ADMIN, ...OPERATOR])];
+
+it("меню «Короткий список»: рабочие пункты по ходу работы, внизу «Настройка» и под ней «Состояние»", async () => {
   setToken("t");
-  mockApi({ "GET /me": me(["admin", "operator"], [...new Set([...ADMIN, ...OPERATOR])]), "GET /engagements": [ENG], "GET /engagements/1/runs": [] });
+  mockApi({ "GET /me": me(["admin", "operator"], ADMIN_OPERATOR), "GET /engagements": [ENG], "GET /engagements/1/runs": [], "GET /system/health": HEALTH_OK });
   renderApp("/");
   const nav = await screen.findByRole("navigation", { name: "Основное меню" });
-  await within(nav).findByText("Сканирование");
-  const links = within(nav).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]);
-  expect(links.slice(0, 9)).toEqual([
-    ["Сводка", "/"],
-    ["Проекты", "/engagements"],
-    ["Активы", "/hosts"],
-    ["Находки", "/findings"],
-    ["Сетевой поиск", "/reachability"],
-    ["Сканирование", "/runs"],
-    ["Расписание", "/schedules"],
-    ["Соответствие нормативам", "/compliance"],
-    ["Отчёты", "/reports"],
-  ]);
-  expect(within(nav).getByText("Администрирование")).toBeInTheDocument();
-  expect(links.slice(9).map(([t]) => t)).toEqual(expect.arrayContaining(["Справочники", "Журнал аудита", "Пользователи и роли"]));
+  await within(nav).findByRole("link", { name: "Состояние: сервис активен" });
+  const links = within(nav).getAllByRole("link").map((a) => a.getAttribute("href"));
+  expect(links).toEqual(["/", "/engagements", "/hosts", "/runs", "/findings", "/compliance", "/reports", "/feeds", "/health", "/security"]);
+  const names = within(nav).getAllByRole("link").slice(0, 8).map((a) => a.textContent);
+  expect(names).toEqual(["Сводка", "Проекты", "Активы", "Сканирование", "Находки", "Нормативы", "Отчёты", "Настройка"]);
+  // подпункты свёрнуты, пока не открыта страница пункта
+  expect(within(nav).queryByRole("link", { name: "Расписание" })).not.toBeInTheDocument();
+  expect(within(nav).queryByRole("link", { name: "Пользователи и роли" })).not.toBeInTheDocument();
+  expect(within(nav).queryByText("Администрирование")).not.toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "Проект" })).toBeInTheDocument(); // выбор проекта в шапке, без видимой подписи
+});
+
+it("в «Сканировании» подпункты «Прогоны», «Сетевой поиск» и «Расписание» раскрываются в боковом меню", async () => {
+  setToken("t");
+  mockApi({ "GET /me": me(["operator"], OPERATOR), "GET /engagements": [ENG], "GET /engagements/1/schedules": [] });
+  renderApp("/schedules");
+  const nav = await screen.findByRole("navigation", { name: "Основное меню" });
+  const sub = await within(nav).findByRole("group", { name: "Сканирование" });
+  expect(within(sub).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+    ["Прогоны", "/runs"],
+    ["Сетевой поиск", "/reachability"],
+    ["Расписание", "/schedules"],
+  ]);
+  expect(within(sub).getByRole("link", { name: "Расписание" })).toHaveAttribute("aria-current", "page");
+  expect(within(nav).getByRole("link", { name: "Сканирование" })).toHaveAttribute("aria-expanded", "true");
+  // подпункты «Настройки» при этом свёрнуты
+  expect(within(nav).getByRole("link", { name: "Настройка" })).toHaveAttribute("aria-expanded", "false");
+  expect(within(nav).queryByRole("group", { name: "Настройка" })).not.toBeInTheDocument();
+});
+
+it("в «Настройке» подпункты — служебные страницы, «Состояние» стоит отдельно под ней", async () => {
+  setToken("t");
+  mockApi({ "GET /me": me(["admin"], ADMIN), "GET /engagements": [ENG], "GET /users": [], "GET /system/health": HEALTH_OK });
+  renderApp("/users");
+  const nav = await screen.findByRole("navigation", { name: "Основное меню" });
+  const sub = await within(nav).findByRole("group", { name: "Настройка" });
+  expect(within(sub).getAllByRole("link").map((a) => a.textContent)).toEqual(["Справочники", "Сканеры", "Уведомления", "Журнал аудита", "Пользователи и роли"]);
+  expect(within(sub).getByRole("link", { name: "Пользователи и роли" })).toHaveAttribute("aria-current", "page");
+  expect(await within(nav).findByRole("link", { name: "Состояние: сервис активен" })).toHaveAttribute("href", "/health");
+  expect(screen.getByText("Настройка", { selector: ".crumbs" })).toBeInTheDocument();
+});
+
+it("лампочка «Состояние»: сервис не отвечает — «Не активен», плашка в шапке берёт тот же опрос", async () => {
+  setToken("t");
+  const api = mockApi({
+    "GET /me": me(["admin"], ADMIN),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [],
+    "GET /system/health": () => new Response("Bad Gateway", { status: 502 }),
+  });
+  renderApp("/");
+  const nav = await screen.findByRole("navigation", { name: "Основное меню" });
+  const lamp = await within(nav).findByRole("link", { name: "Состояние: сервис не активен" });
+  expect(within(lamp).getByText("Не активен")).toBeInTheDocument();
+  expect(api.calls.filter((c) => c.path === "/system/health")).toHaveLength(1);
+});
+
+it("плашка в шапке показывает сбой компонента, лампочка при этом «Активен»", async () => {
+  setToken("t");
+  mockApi({
+    "GET /me": me(["admin"], ADMIN),
+    "GET /engagements": [ENG],
+    "GET /engagements/1/runs": [],
+    "GET /system/health": {
+      ...HEALTH_OK,
+      status: "error",
+      status_title: "не работает",
+      components: [{ id: "disk", title: "Место на диске", status: "error", summary: "Свободно 0,5 ГБ", hint: null, items: [], details: {} }],
+    },
+  });
+  renderApp("/");
+  expect(await screen.findByRole("link", { name: "Сбой сканера: Место на диске" })).toHaveAttribute("href", "/health");
+  const nav = screen.getByRole("navigation", { name: "Основное меню" });
+  expect(within(nav).getByRole("link", { name: "Состояние: сервис активен" })).toBeInTheDocument();
 });
 
 it("администратор видит пользователей, но не кнопку запуска прогона", async () => {
@@ -117,7 +178,7 @@ it("администратор видит пользователей, но не 
   mockApi({ "GET /me": me(["admin"], ADMIN), "GET /engagements": [ENG], "GET /engagements/1/runs": [] });
   renderApp("/");
   const nav = await screen.findByRole("navigation", { name: "Основное меню" });
-  await within(nav).findByText("Пользователи и роли");
+  expect(await within(nav).findByRole("link", { name: "Настройка" })).toHaveAttribute("href", "/feeds");
   await screen.findByText("Завершённых прогонов пока нет");
   expect(screen.queryByRole("button", { name: /Новый прогон/ })).not.toBeInTheDocument();
 });
