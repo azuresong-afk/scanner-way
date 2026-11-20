@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from collections.abc import Sequence
@@ -97,6 +98,7 @@ def _env() -> Environment:
         MODULE_TITLES=MODULE_TITLES,
     )
     env.filters["links"] = _links
+    env.globals["service_label"] = service_label
     return env
 
 
@@ -129,6 +131,8 @@ class HostBlock:
     host: str
     findings: list[FindingView]
     counts: dict[Severity, int]
+    # открытые порты и сервисы; None — сведений о сервисах в отчёте нет
+    services: list[dict] | None = None
 
     @property
     def total(self) -> int:
@@ -144,14 +148,44 @@ class HostBlock:
 
 
 def host_blocks(report: Report) -> list[HostBlock]:
-    """Находки по хостам; хосты — по убыванию риска (как топ хостов в резюме)."""
+    """Находки и открытые порты по хостам; хосты — по убыванию риска (как топ
+    хостов в резюме), хосты только с открытыми портами — в конце."""
     per: dict[str, list[FindingView]] = {}
     for v in report.combined.findings:      # уже отсортированы по опасности
         per.setdefault(v.finding.host, []).append(v)
-    blocks = [HostBlock(h, vs, severity_counts([v.finding for v in vs]))
+    svc = report.services
+    if svc is not None:
+        known = {_addr(h) for h in per}
+        for h in svc:
+            if h not in known:
+                per[h] = []
+    blocks = [HostBlock(h, vs, severity_counts([v.finding for v in vs]),
+                        (svc.get(_addr(h), []) if svc is not None else None))
               for h, vs in per.items()]
-    blocks.sort(key=lambda b: tuple(-b.counts[s] for s in SEVERITY_ORDER) + (b.host,))
+    blocks.sort(key=lambda b: tuple(-b.counts[s] for s in SEVERITY_ORDER)
+                + (-b.total, _addr_sort(b.host)))
     return blocks
+
+
+def _addr(host: str) -> str:
+    try:
+        return str(ipaddress.ip_address(str(host).split("/")[0]))
+    except ValueError:
+        return str(host)
+
+
+def _addr_sort(host: str) -> tuple:
+    try:
+        ip = ipaddress.ip_address(str(host).split("/")[0])
+        return (0, ip.version, int(ip), "")
+    except ValueError:
+        return (1, 0, 0, str(host))
+
+
+def service_label(s: dict) -> str:
+    """«OpenSSH 8.9p1» из продукта и версии; без них — имя сервиса nmap."""
+    name = " ".join(x for x in (s.get("product"), s.get("version")) if x)
+    return name or "—"
 
 
 def section_numbers(brief: bool, priority: bool = False,
@@ -444,6 +478,10 @@ class ReportRenderer:
             meta.append(f"Договор / проект: {c.engagement}")
         if c.group:
             meta.append(f"Группа активов: {c.group}")
+        if c.host:
+            meta.append(f"Актив: {c.host}")
+        if c.sources:
+            meta.append(f"Данные: {c.sources}")
         if c.run_id is not None:
             meta.append(f"Прогон: {c.run_id}")
         if c.previous_run_id is not None:
@@ -453,7 +491,9 @@ class ReportRenderer:
         spacer(24)
         kpis([("Уровень риска", s.risk_label,
                SEVERITY_HEX[s.risk_level] if s.risk_level else GOOD),
-              ("Хостов с находками", str(s.hosts), None),
+              (("Открытых портов", str(sum(len(p) for p in report.services.values())), None)
+               if c.host and report.services is not None
+               else ("Хостов с находками", str(s.hosts), None)),
               ("Всего находок", str(s.total), None),
               ("Критических и высоких",
                str(s.severity_counts[Severity.CRITICAL] + s.severity_counts[Severity.HIGH]),
@@ -647,11 +687,24 @@ class ReportRenderer:
                 rr.font.size = Pt(9)
                 rr.font.color.rgb = RGBColor(*SEVERITY_RGB[b.risk])
             facts = f"Находок: {b.total}"
-            if b.ports:
+            if b.services is not None:
+                facts += f" · Открытых портов: {len(b.services)}"
+            elif b.ports:
                 facts += " · Порты: " + ", ".join(map(str, b.ports))
             facts += " · " + ", ".join(f"{SEVERITY_LABELS[x].lower()}: {b.counts[x]}"
                                        for x in SEVERITY_ORDER if b.counts[x])
             small(doc.add_paragraph(), facts, MUTED, 8.5)
+            if b.services:
+                small(doc.add_paragraph(), "Открытые порты и сервисы", INK_2, 9)
+                table(["Порт", "Сервис", "Продукт и версия", "CPE"],
+                      [[f"{x['port']}/{x['protocol']}", x["service"] or "—",
+                        service_label(x), x["cpe"] or "—"] for x in b.services],
+                      widths=[2.2, 3.0, 6.0, 5.8])
+            if not b.findings:
+                small(doc.add_paragraph(), "Уязвимостей не найдено.", MUTED, 9)
+                continue
+            if b.services:
+                small(doc.add_paragraph(), "Находки", INK_2, 9)
             header = ["Опасность", "Находка", "Порт", "Идентификаторы", "CVSS"]
             widths = [3.1, 6.6, 1.2, 4.6, 1.5]
             if t:

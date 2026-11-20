@@ -28,7 +28,8 @@ class NodeRunsMixin:
     _audit_start: Callable[..., None]
 
     def check_node(self, node_id: int | None, *, credential_ids: list[int] | None = None,
-                   cred_set_ids: list[int] | None = None) -> str | None:
+                   cred_set_ids: list[int] | None = None,
+                   auto_credentials: bool = False) -> str | None:
         """Узел прогона существует, включён и допускает учётки. -> имя узла.
         ValueError — понятная оператору причина (422)."""
         if node_id is None:
@@ -40,9 +41,11 @@ class NodeRunsMixin:
                 raise ValueError(f"узел-сканер {node_id} не найден")
             if not node.enabled:
                 raise ValueError(f"узел-сканер «{node.name}» отключён администратором")
-            if (credential_ids or cred_set_ids) and not node.allow_credentials:
+            if (credential_ids or cred_set_ids or auto_credentials) \
+                    and not node.allow_credentials:
                 raise ValueError(f"узлу «{node.name}» запрещено передавать учётные "
-                                 "записи: уберите учётки или разрешите их в «Сканерах»")
+                                 "записи: уберите учётки и модули с входом на хосты или "
+                                 "разрешите учётки узлу в «Сканерах»")
             return node.name
 
     # --- прогоны на узлах-сканерах (scanner.nodes) --------------------------

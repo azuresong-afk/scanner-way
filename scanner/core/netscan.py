@@ -13,7 +13,8 @@
 вызывается без shell с лимитами профиля интенсивности (`--max-rate`,
 `--max-parallelism`); каждый вызов и итог пишутся в журнал аудита.
 
-Задание выполняется в фоне пачками по `BATCH` хостов: после каждой пачки
+Задание выполняется в фоне пачками (до `BATCH` хостов, меньше на медленном
+профиле — см. nmaptiming): после каждой пачки
 результат сохраняется (прогресс в интерфейсе), а живые хосты заносятся в
 «Активы» — даже если учётных записей к ним ещё нет.
 """
@@ -33,6 +34,7 @@ from libnmap.parser import NmapParser, NmapParserException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from scanner.core import nmaptiming
 from scanner.core.audit import AuditSink
 from scanner.core.db import PortScanRow
 from scanner.core.ratelimit import RateProfile, get_profile
@@ -42,8 +44,7 @@ log = logging.getLogger(__name__)
 MODE_TOP = "top"          # N самых популярных портов nmap
 MODE_LIST = "list"        # явный список/диапазоны
 TOP_PORTS = 1000
-BATCH = 32
-HOST_TIMEOUT_SEC = 300
+BATCH = 32                # предел; фактическая пачка — nmaptiming.plan
 MAX_RETRIES = 1
 ACTIVE = ("queued", "running")
 
@@ -113,9 +114,20 @@ def literal_ips(targets: Iterable[str]) -> tuple[list[str], list[str]]:
     return ok, bad
 
 
+def timing_plan(rate: RateProfile, opts: ScanOptions) -> nmaptiming.TimingPlan:
+    """--max-rate общий на вызов: группа хостов и host-timeout — из него."""
+    n_ports = nmaptiming.count_ports(opts.ports if opts.mode == MODE_LIST else None,
+                                     top=opts.top, exclude=opts.exclude)
+    return nmaptiming.plan(rate, n_ports, max_retries=MAX_RETRIES,
+                           service_detection=opts.service_detection,
+                           no_ping=opts.no_ping, max_batch=BATCH)
+
+
 def build_command(targets: Sequence[str], rate: RateProfile, opts: ScanOptions,
-                  nmap_path: str = "nmap") -> list[str]:
+                  nmap_path: str = "nmap",
+                  plan: nmaptiming.TimingPlan | None = None) -> list[str]:
     """argv nmap. Цели — проверенные литеральные IP, порты — из portspec."""
+    plan = plan or timing_plan(rate, opts)
     cmd = [nmap_path, "-n"]
     if opts.service_detection:
         cmd.append("-sV")
@@ -136,7 +148,8 @@ def build_command(targets: Sequence[str], rate: RateProfile, opts: ScanOptions,
         "--max-rate", f"{rate.max_requests_per_sec:g}",
         "--max-parallelism", str(rate.max_concurrency),
         "--max-retries", str(MAX_RETRIES),
-        "--host-timeout", f"{HOST_TIMEOUT_SEC}s",
+        "--max-hostgroup", str(plan.hostgroup),
+        "--host-timeout", f"{plan.host_timeout_sec}s",
         "-oX", "-", *targets,
     ]
     return cmd
@@ -314,10 +327,11 @@ class PortScanService:
             self.audit.record(subject="scanner", action="nmap_exec", target=t,
                               result="not_an_ip_literal")
         results: list[dict] = []
-        for i in range(0, len(targets), BATCH):
+        plan = timing_plan(rate, opts)
+        for i in range(0, len(targets), plan.batch_size):
             if stop.is_set():
                 return self._finish(scan_id, "stopped")
-            batch = targets[i:i + BATCH]
+            batch = targets[i:i + plan.batch_size]
             # allowlist — ещё раз перед каждой пачкой: его могли сузить во время проверки
             with self.sessions() as s:
                 from scanner.core import repository as repo
@@ -326,8 +340,8 @@ class PortScanService:
                 self.audit.record(subject="scanner", action="nmap_exec", target=t,
                                   result="not_in_allowlist")
             if allowed:
-                cmd = build_command(allowed, rate, opts, self.nmap_path)
-                timeout = HOST_TIMEOUT_SEC * 2 + 60
+                cmd = build_command(allowed, rate, opts, self.nmap_path, plan)
+                timeout = plan.call_timeout(len(allowed))
                 self.audit.record(subject="scanner", action="nmap_exec",
                                   target=",".join(allowed), result="started",
                                   details=shlex.join(cmd))

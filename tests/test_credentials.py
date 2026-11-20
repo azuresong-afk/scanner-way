@@ -158,3 +158,17 @@ def test_other_engagement_credentials_are_not_loaded(sqlite_factory, vault):
         cid = repo.create_host_credential(s, vault, engagement_id=e1, name="x",
                                           auth="password", username="a", password="p")
         assert repo.load_host_credentials(s, vault, e2, [cid]) == []
+
+
+def test_scope_helpers_ranges_and_overlap():
+    from scanner.core.credentials import bound_hosts, normalize_scope, scope_touches_targets
+    # диапазон в области сворачивается в покрывающие подсети
+    assert normalize_scope(["10.0.0.5-10.0.0.7", "10.0.0.5"]) == [
+        "10.0.0.5/32", "10.0.0.6/31"]
+    assert scope_touches_targets(["10.0.0.0/28"], ["10.0.0.0/24"])
+    assert scope_touches_targets(["10.0.0.5/32"], ["10.0.0.1-10.0.0.9"])
+    assert not scope_touches_targets(["10.0.0.128/28"], ["10.0.0.5"])
+    assert not scope_touches_targets(["10.0.0.0/24"], ["fd00::1"])
+    assert bound_hosts(["10.0.0.5", "10.0.0.6"], [["10.0.0.5/32"]]) == (1, ["10.0.0.6"])
+    # учётка без привязки хост не покрывает
+    assert bound_hosts(["10.0.0.5", "10.0.0.6"], [["10.0.0.5/32"], []]) == (1, ["10.0.0.6"])

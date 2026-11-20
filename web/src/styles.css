@@ -835,6 +835,7 @@ a.tag:hover { text-decoration: none; filter: brightness(1.15); }
 .health-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .health-items li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .spin { animation: spin 0.8s linear infinite; }
+.cred-coverage { display: flex; flex-direction: column; gap: 4px; }
 
 /* ---------- макеты меню (В4), ключ localStorage «scanner.menu» ----------
    Варианты v1–v4 показываются в «угловатом» виде: <html data-look="sharp">.

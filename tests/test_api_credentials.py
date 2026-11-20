@@ -326,12 +326,71 @@ def test_run_engine_both_and_nuclei(api, rec):
     assert r.status_code == 202 and r.json()["modules"] == ["discovery", "vuln"]
 
 
+def test_run_picks_credentials_by_asset_binding(api, rec, sqlite_factory):
+    """Учётки не выбираются в прогоне: берутся только привязанные к целям;
+    учётки других активов и учётки без привязки не расшифровываются и в
+    прогон не попадают."""
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    near = _cred(api, eid, holder, name="ДМЗ", targets=["10.0.0.5", "10.0.0.6"]).json()
+    far = _cred(api, eid, holder, name="ядро", targets=["10.0.0.128/28"]).json()
+    unbound = _cred(api, eid, holder, name="без привязки").json()
+    assert near["targets"] == ["10.0.0.5/32", "10.0.0.6/32"]
+    body = {"targets": ["10.0.0.5"], "modules": ["discovery"], "vuln_engine": "credentialed"}
+
+    plan = api.c.post(f"/engagements/{eid}/runs/plan", headers=holder,
+                      json={**body, "targets": ["10.0.0.5", "10.0.0.6", "10.0.0.7"]}).json()
+    assert plan["credential_coverage"] == {
+        "auto": True, "credentials": 1, "hosts": 3, "bound": 2,
+        "uncovered": 1, "uncovered_sample": ["10.0.0.7"]}
+
+    r = api.c.post(f"/engagements/{eid}/runs", headers=holder, json=body)
+    assert r.status_code == 202, r.text
+    run = r.json()
+    assert run["credential_ids"] == [] and run["status"] == "done"
+    assert {c.id for c in rec.creds} == {near["id"]}
+    assert not {far["id"], unbound["id"]} & {c.id for c in rec.creds}
+    with sqlite_factory() as s:
+        start = s.scalars(select(AuditLogRow).where(AuditLogRow.action == "scan_start")).all()
+        queued = s.scalars(select(AuditLogRow).where(AuditLogRow.action == "scan_queue")).all()
+    assert queued[-1].details["credentials_auto"] is True
+    assert {c["credential"] for c in start[-1].details["credentials"]} == {"ДМЗ"}
+
+    # «Повторить» снова подбирает по привязке — уже с учёткой, добавленной позже
+    later = _cred(api, eid, holder, name="позже", targets=["10.0.0.5"]).json()
+    r = api.c.post(f"/runs/{run['id']}/retry", headers=holder)
+    assert r.status_code in (200, 202), r.text
+    assert later["id"] in {c.id for c in rec.creds}
+
+    # явный выбор (API, CLI, старые расписания) по-прежнему ограничивает прогон
+    r = api.c.post(f"/engagements/{eid}/runs", headers=holder,
+                   json={**body, "credential_ids": [far["id"]], "targets": ["10.0.0.130"]})
+    assert r.status_code == 202, r.text
+    assert [c.id for c in rec.creds] == [far["id"]]
+
+
+def test_plan_reports_targets_without_credential(api):
+    eid = api.engagement("10.0.0.0/24")
+    holder = api.user("keeper", "operator", "host_credentials")
+    _cred(api, eid, holder, targets=["10.0.0.5"])
+    plan = api.c.post(f"/engagements/{eid}/runs/plan", headers=holder,
+                      json={"targets": ["10.0.0.4-10.0.0.6"], "modules": ["discovery"],
+                            "vuln_engine": "credentialed"}).json()
+    cov = plan["credential_coverage"]
+    assert (cov["bound"], cov["uncovered"]) == (1, 2)
+    assert cov["uncovered_sample"] == ["10.0.0.4", "10.0.0.6"]
+    # прогону без модулей с учёткой покрытие не считается
+    plan = api.c.post(f"/engagements/{eid}/runs/plan", headers=holder,
+                      json={"targets": ["10.0.0.5"], "modules": ["discovery"]}).json()
+    assert plan["credential_coverage"] is None
+
+
 def test_run_credential_checks(api):
     eid = api.engagement("10.0.0.0/24")
     other = api.engagement("10.1.0.0/24")
     holder = api.user("keeper", "operator", "host_credentials")
     op = api.user("op", "operator")
-    cid = _cred(api, eid, holder).json()["id"]
+    cid = _cred(api, eid, holder, targets=["10.0.0.5"]).json()["id"]
     foreign = _cred(api, other, holder).json()["id"]
 
     def run(headers, **kw):
@@ -341,9 +400,17 @@ def test_run_credential_checks(api):
     # без права host_credentials — ни движок, ни учётки
     assert run(op, vuln_engine="credentialed", credential_ids=[cid]).status_code == 403
     assert run(op, credential_ids=[cid]).status_code == 403
-    # движку нужна учётка
+    # без выбора учёток — подбор по привязке (учётка в проекте есть)
     r = run(holder, vuln_engine="credentialed")
+    assert r.status_code == 202, r.text
+    assert r.json()["credential_ids"] == []
+    # движку нужна хотя бы одна учётка в проекте
+    empty = api.engagement("10.2.0.0/24")
+    r = api.c.post(f"/engagements/{empty}/runs", headers=holder,
+                   json={"targets": ["10.2.0.5"], "modules": ["discovery"],
+                         "vuln_engine": "credentialed"})
     assert r.status_code == 422 and "учётная запись" in r.json()["detail"]
+    assert "привяжите к активам" in r.json()["detail"]
     # учётка чужого договора
     r = run(holder, vuln_engine="credentialed", credential_ids=[foreign])
     assert r.status_code == 422 and str(foreign) in r.json()["detail"]

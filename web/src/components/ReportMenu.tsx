@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, Eye } from "lucide-react";
+import { Download, Eye, Printer } from "lucide-react";
 import { api } from "../api/client";
 import type { AssetGroupOut, ReportFormat, ReportSections, ReportVariant, RunOut } from "../api/types";
 import { saveBlob } from "../lib/download";
@@ -31,6 +31,10 @@ const VARIANTS: { id: ReportVariant; label: string; hint: string }[] = [
  * «Разделы» — необязательные части отчёта: «План устранения» (в кратком его нет всегда),
  * «Рекомендации инженерам» (раздел «Детальные результаты для инженеров») и «Соответствие» по каждому профилю договора (ФСТЭК №117 нужен не всем — только ГИС).
  * По умолчанию профили отмечены по признаку «в отчёт» со страницы «Соответствие».
+ *
+ * `host` — отчёт по одному активу: с `runId` — по этому прогону (/runs/{id}/report?host=),
+ * с `runId = null` — по последним данным актива (нужен `engagementId`). Сравнения и
+ * выбора группы в этом режиме нет. В предпросмотре есть «Печать».
  */
 export function ReportMenu({
   runId,
@@ -39,15 +43,20 @@ export function ReportMenu({
   small,
   runs,
   engagementId,
+  host,
 }: {
-  runId: number;
+  /** null — только вместе с host: отчёт по последним данным актива. */
+  runId: number | null;
   disabled?: boolean;
   compact?: boolean;
   small?: boolean;
   runs?: RunOut[];
   /** Договор: если задан и в нём есть группы активов, появляется «Группа» — отчёт только по её хостам. */
   engagementId?: number;
+  /** Адрес актива: отчёт только по этому хосту. */
+  host?: string;
 }) {
+  const hostMode = host !== undefined;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [html, setHtml] = useState<string | null>(null);
@@ -97,14 +106,23 @@ export function ReportMenu({
     api.assetGroups(engagementId).then((g) => setGroups(g.filter((x) => x.asset_count > 0)), () => setGroups([]));
   }, [engagementId]);
   // Сравнивать можно только с более ранним успешно завершённым прогоном — так же проверяет API.
-  const baselines = (runs ?? []).filter((r) => r.id < runId && (r.status === "done" || r.status === "partial")).sort((a, b) => b.id - a.id);
+  const baselines = (hostMode || runId === null ? [] : runs ?? []).filter((r) => r.id < runId! && (r.status === "done" || r.status === "partial")).sort((a, b) => b.id - a.id);
   const suffix = (variant === "brief" ? "-brief" : "") + (compareTo === null ? "" : `-vs-${compareTo}`) + (groupId === null ? "" : `-group-${groupId}`);
+  const hostPart = host?.replace(/:/g, "_");
+  const fileStem = hostMode ? (runId === null ? `report-host-${hostPart}` : `report-run-${runId}-host-${hostPart}`) : `report-run-${runId}`;
+  const fetchReport = (fmt: ReportFormat) =>
+    hostMode && runId === null
+      ? api.hostReport(engagementId!, host!, fmt, variant, sections)
+      : api.report(runId!, fmt, variant, compareTo, groupId, sections, host ?? null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  // Печать из предпросмотра: iframe без скриптов (allow-same-origin нужен, чтобы вызвать print()).
+  const print = () => frameRef.current?.contentWindow?.print();
 
   const download = async (fmt: ReportFormat) => {
     setBusy(fmt);
     setError(null);
     try {
-      saveBlob(await api.report(runId, fmt, variant, compareTo, groupId, sections), `report-run-${runId}${suffix}.${fmt}`);
+      saveBlob(await fetchReport(fmt), `${fileStem}${suffix}.${fmt}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -118,7 +136,7 @@ export function ReportMenu({
     setBusy("view");
     setError(null);
     try {
-      setHtml(await (await api.report(runId, "html", variant, compareTo, groupId, sections)).text());
+      setHtml(await (await fetchReport("html")).text());
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -169,7 +187,7 @@ export function ReportMenu({
             </select>
           </label>
         )}
-        {groups.length > 0 && (
+        {!hostMode && groups.length > 0 && (
           <label className={`inline report-compare${small ? " sm" : ""}`} style={{ gap: 8 }}>
             <span className="faint nowrap" style={{ fontSize: 13 }}>
               Группа
@@ -257,11 +275,27 @@ export function ReportMenu({
       {error && <span style={{ color: "var(--danger)", fontSize: 12 }}>{error}</span>}
       {html !== null && (
         <Modal
-          title={`${variant === "brief" ? "Краткий отчёт" : "Отчёт"} по прогону №${runId}${compareTo === null ? "" : ` · сравнение с №${compareTo}`}${groupId === null ? "" : ` · ${groups.find((g) => g.id === groupId)?.name ?? "группа"}`}`}
+          title={
+            hostMode
+              ? `${variant === "brief" ? "Краткий отчёт" : "Отчёт"} по активу ${host}${runId === null ? " · последние данные" : ` · прогон №${runId}`}`
+              : `${variant === "brief" ? "Краткий отчёт" : "Отчёт"} по прогону №${runId}${compareTo === null ? "" : ` · сравнение с №${compareTo}`}${groupId === null ? "" : ` · ${groups.find((g) => g.id === groupId)?.name ?? "группа"}`}`
+          }
           onClose={() => setHtml(null)}
           wide
         >
-          <iframe title={`Отчёт по прогону №${runId}`} sandbox="" srcDoc={html} className="report-frame" />
+          <div className="inline" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
+            <button type="button" className="btn btn-sm" onClick={print}>
+              <Printer size={14} /> Печать
+            </button>
+          </div>
+          {/* Без allow-scripts: данные со сканируемых хостов не исполняются; allow-same-origin и allow-modals — только для print(). */}
+          <iframe
+            ref={frameRef}
+            title={hostMode ? `Отчёт по активу ${host}` : `Отчёт по прогону №${runId}`}
+            sandbox="allow-same-origin allow-modals"
+            srcDoc={html}
+            className="report-frame"
+          />
         </Modal>
       )}
     </div>

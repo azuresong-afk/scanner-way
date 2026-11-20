@@ -184,6 +184,17 @@ export interface RunPlan {
   full_check: boolean;
   accepted_targets: number;
   denied_targets: DeniedTarget[];
+  /** Покрытие целей учётками по привязке; null — прогону учётки не нужны. */
+  credential_coverage?: CredentialCoverage | null;
+}
+
+export interface CredentialCoverage {
+  auto: boolean;
+  credentials: number;
+  hosts: number;
+  bound: number;
+  uncovered: number;
+  uncovered_sample: string[];
 }
 
 export type CoverageStatus = "completed" | "not_applicable" | "skipped" | "unreachable" | "no_credentials" | "timeout" | "error";
@@ -691,6 +702,21 @@ export interface ServiceOut {
   product: string | null;
   version: string | null;
   cpe: string | null;
+}
+
+/** Открытые порты актива по последним данным (GET /engagements/{id}/hosts/{host}/ports). */
+export interface HostPortsOut {
+  host: string;
+  /** run — разведка прогона; port_scan — «Доступность»; null — сведений нет. */
+  source: "run" | "port_scan" | null;
+  /** Подпись источника: «прогон 5 от 12.11.2026», «проверка доступности 3 от …; версии ПО — из прогона 5». */
+  label: string;
+  run_id: number | null;
+  port_scan_id: number | null;
+  seen_at: string | null;
+  versions_from_run: boolean;
+  ports_from_run: boolean;
+  services: ServiceOut[];
 }
 
 /** Хост инвентаря договора (по всем прогонам). */

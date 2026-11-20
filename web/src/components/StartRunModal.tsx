@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ListChecks, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "../api/client";
-import type { DeniedTarget, EngagementOut, RunCreated, RunPlan, RunProfile, ScheduleIn, ScheduleKind, ScheduleOut } from "../api/types";
+import type { CredentialCoverage, DeniedTarget, EngagementOut, RunCreated, RunPlan, RunProfile, ScheduleIn, ScheduleKind, ScheduleOut } from "../api/types";
 import { useAuth, type Perm } from "../auth/AuthContext";
-import { localToIso, toLocalInput } from "../lib/format";
+import { localToIso, plural, toLocalInput } from "../lib/format";
 import { CREDENTIAL_MODULES, ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, applyProfile, runTitle, type EngineInfo } from "../lib/labels";
 import { compactAddresses, mergeTargets, parseTargets, specSize, splitTargets } from "../lib/targets";
 import { NODE_STATUS_LABEL } from "../lib/nodes";
@@ -12,6 +12,33 @@ import { HostPicker } from "./HostPicker";
 import { ErrorAlert, Modal } from "./ui";
 
 type When = "now" | "schedule";
+
+/** Сколько целей прогона получат учётку по привязке (ответ /runs/plan). */
+export function CredentialCoverageNote({ coverage }: { coverage: CredentialCoverage | null }) {
+  if (!coverage) return <small className="muted">Учётные записи подбираются автоматически по привязке к активам.</small>;
+  const { hosts, bound, uncovered, uncovered_sample } = coverage;
+  if (hosts === 0) return <small className="muted">Учётные записи подбираются автоматически по привязке к активам.</small>;
+  const rest = uncovered - uncovered_sample.length;
+  return (
+    <div className="cred-coverage" data-testid="cred-coverage">
+      <small>
+        Учётки подберутся автоматически: {bound} из {hosts} {plural(hosts, ["цели", "целей", "целей"])} — по привязке
+        {uncovered > 0 ? (
+          <>
+            , <b style={{ color: "var(--warn)", fontWeight: 500 }}>{uncovered} без учётки</b> — вход на них не выполнится
+          </>
+        ) : null}
+        .
+      </small>
+      {uncovered > 0 && (
+        <small className="muted mono">
+          {uncovered_sample.join(", ")}
+          {rest > 0 ? ` и ещё ${rest}` : ""}
+        </small>
+      )}
+    </div>
+  );
+}
 
 /** Движок по сохранённому списку модулей (для редактирования расписания). */
 function engineOf(modules: string[]): EngineInfo["id"] {
@@ -58,7 +85,8 @@ export function StartRunModal({
   const [targets, setTargets] = useState(schedule ? schedule.targets.join("\n") : "");
   const [modules, setModules] = useState<string[]>(schedule ? schedule.modules.filter((m) => !ENGINE_MODULES.includes(m)) : ["discovery"]);
   const [engine, setEngine] = useState<EngineInfo["id"]>(schedule ? engineOf(schedule.modules) : "nuclei");
-  const [credIds, setCredIds] = useState<number[]>(schedule?.credential_ids ?? []);
+  // Учётки подбираются по привязке к активам; явный выбор старых расписаний снимается при сохранении.
+  const legacyCreds = (schedule?.credential_ids ?? []).length > 0;
   const canCreds = has("host_credentials");
   const creds = useAsync(() => api.credentials(engagement.id), [engagement.id], canCreds);
   const [credSetIds, setCredSetIds] = useState<number[]>(schedule?.cred_set_ids ?? []);
@@ -102,7 +130,7 @@ export function StartRunModal({
   const configAudit = modules.includes("config_audit");
   // Учётки нужны движку «по учётной записи» и модулям из CREDENTIAL_MODULES (аудит конфигураций).
   const needsCreds = eng.credentials || modules.some((m) => CREDENTIAL_MODULES.includes(m));
-  const credsOk = !needsCreds || credIds.length > 0;
+  const credsOk = !needsCreds || !canCreds || creds.loading || (creds.data ?? []).length > 0;
   const scheduled = when === "schedule";
   const whenOk =
     !scheduled ||
@@ -122,10 +150,9 @@ export function StartRunModal({
     setCheckProfile("custom");
     setModules((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
   };
-  const toggleCred = (id: number) => setCredIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
   const toggleCredSet = (id: number) => setCredSetIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
   const credAuditOn = modules.includes("cred_audit");
-  const planKey = JSON.stringify([parsed.targets, allModules, needsCreds ? credIds : [], noPing, scheduled]);
+  const planKey = JSON.stringify([parsed.targets, allModules, noPing, scheduled]);
 
   // Итоговый состав прогона с сервера: модули со спутниками, неприменимые, предупреждения.
   useEffect(() => {
@@ -140,7 +167,7 @@ export function StartRunModal({
           targets: parsed.targets,
           modules: allModules,
           rate_profile: profile,
-          credential_ids: needsCreds ? credIds : [],
+          credential_ids: [],
           no_ping: !scheduled && noPing,
         })
         .then((p) => alive && (setPlan(p), setPlanError(null)))
@@ -164,7 +191,7 @@ export function StartRunModal({
         targets: parsed.targets,
         modules: allModules,
         rate_profile: profile,
-        credential_ids: needsCreds ? credIds : [],
+        credential_ids: [],
         cred_set_ids: credAuditOn ? credSetIds : [],
         name: name.trim() || undefined,
         node_id: nodeId,
@@ -457,23 +484,15 @@ export function StartRunModal({
               <ErrorAlert error={creds.error} onRetry={creds.reload} />
             ) : (creds.data ?? []).length === 0 ? (
               <small style={{ color: "var(--warn)" }}>
-                У проекта нет учётных записей — добавьте их во вкладке «Учётные записи».
+                У проекта нет учётных записей — добавьте их во вкладке «Учётные записи» и привяжите к активам.
               </small>
             ) : (
-              <div className="grid-2">
-                {creds.data!.map((c) => (
-                  <label key={c.id} className="option-card">
-                    <input type="checkbox" checked={credIds.includes(c.id)} onChange={() => toggleCred(c.id)} />
-                    <span>
-                      <b style={{ fontWeight: 500 }}>{c.name}</b>
-                      <small>
-                        {c.username} · {c.auth === "key" ? "ключ SSH" : "пароль"} · порт {c.port} · {c.become === "none" ? "без sudo" : "sudo"} ·{" "}
-                        {c.targets.length ? c.targets.join(", ") : "все цели прогона"}
-                      </small>
-                    </span>
-                  </label>
-                ))}
-              </div>
+              <CredentialCoverageNote coverage={plan?.credential_coverage ?? null} />
+            )}
+            {legacyCreds && (
+              <small className="muted">
+                В расписании учётки были выбраны вручную. После сохранения они подбираются по привязке к активам, как в новых прогонах.
+              </small>
             )}
             {eng.credentials && (
               <small className="muted">
@@ -492,7 +511,10 @@ export function StartRunModal({
                 привязываются к CVE и БДУ ФСТЭК. Lynis и OpenSCAP остаются аудитом конфигураций.
               </small>
             )}
-            <small className="muted">На хост пробуется не больше трёх учёток — сначала с самой узкой областью действия.</small>
+            <small className="muted">
+              Выбирать учётки не нужно: на каждый хост берутся учётки, к которым он привязан во вкладке «Учётные записи» (не больше трёх, сначала с
+              самой узкой привязкой). Учётка без привязанных активов в прогонах не используется.
+            </small>
           </fieldset>
         )}
 

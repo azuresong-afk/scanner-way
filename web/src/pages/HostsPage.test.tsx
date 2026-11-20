@@ -230,7 +230,7 @@ it("проверка одного актива из строки и подска
   await userEvent.click(screen.getByRole("button", { name: "Проверить учётные записи 10.0.0.2" }));
   const dialog = screen.getByRole("dialog");
   await userEvent.click(within(dialog).getByRole("button", { name: /Проверить вход/ }));
-  expect(await within(dialog).findByText(/Область действия ни одной учётки/)).toBeInTheDocument();
+  expect(await within(dialog).findByText(/не привязана ни одна учётка/)).toBeInTheDocument();
 });
 
 it("без права на учётки кнопок проверки нет", async () => {

@@ -149,7 +149,7 @@ it("правит учётку без повторного ввода парол�
   expect(within(dlg).getByRole("radio", { name: /WinRM/ })).toBeChecked();
   expect((within(dlg).getByLabelText("Логин Windows") as HTMLInputElement).value).toBe("svc");
   expect((within(dlg).getByLabelText(/Домен Windows/) as HTMLInputElement).value).toBe("CORP");
-  expect((within(dlg).getByLabelText(/Область действия/) as HTMLTextAreaElement).value).toBe("10.0.0.0/24");
+  expect((within(dlg).getByLabelText(/Привязанные активы/) as HTMLTextAreaElement).value).toBe("10.0.0.0/24");
   const pass = within(dlg).getByLabelText("Пароль Windows", { selector: "input[type=password]" }) as HTMLInputElement;
   expect(pass.value).toBe("");
   expect(pass.placeholder).toMatch(/сохранён/);
@@ -173,4 +173,43 @@ it("при смене способа входа на ключ требует к�
   await userEvent.click(within(dlg).getByRole("radio", { name: /Ключ SSH/ }));
   expect(within(dlg).getByText(/введите пароль или ключ заново/)).toBeInTheDocument();
   expect(save).toBeDisabled();
+});
+
+it("привязывает активы к учётке выбором из «Активов» (только из allowlist)", async () => {
+  const host = (h: string) => ({ host: h, os_guess: null, os_family: "debian", os_family_label: "Debian", run_ids: [1], services_run_id: 1, packages_run_id: null, package_count: 0, services: [] });
+  const api = mockApi({
+    "GET /engagements/7/credentials": [{ ...ROW, targets: ["10.0.0.0/24", "10.0.1.5", "10.0.1.6", "10.0.1.7"] }],
+    "GET /engagements/7/allowlist": [{ id: 1, cidr: "10.0.0.0/16", note: null, added_by: 1, added_at: null, range_spec: null }],
+    "GET /engagements/7/hosts": ["10.0.0.5", "10.0.0.6", "10.9.9.9"].map(host),
+    "GET /engagements/7/assets": [],
+    "GET /engagements/7/asset-groups": [],
+    "GET /engagements/7/asset-tags": [],
+    "PUT /engagements/7/credentials/3": ROW,
+  });
+  render(<CredentialsCard engagementId={7} />);
+  const row = (await screen.findByText("root ДМЗ")).closest("tr")!;
+  expect(within(row).getByText("10.0.0.0/24, 10.0.1.5, 10.0.1.6 и ещё 1")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Изменить root ДМЗ" }));
+  const form = await screen.findByRole("dialog");
+  const scope = within(form).getByLabelText(/Привязанные активы/) as HTMLTextAreaElement;
+  await userEvent.clear(scope);
+  await userEvent.click(within(form).getByRole("button", { name: /Выбрать из активов/ }));
+  const picker = await screen.findByRole("dialog", { name: "Привязать активы к учётной записи" });
+  expect(await within(picker).findByRole("checkbox", { name: "Выбрать 10.9.9.9" })).toBeDisabled();   // вне allowlist
+  await userEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать 10.0.0.5" }));
+  await userEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать 10.0.0.6" }));
+  await userEvent.click(screen.getByRole("button", { name: "Привязать (2)" }));
+  const back = await screen.findByRole("dialog");
+  expect((within(back).getByLabelText(/Привязанные активы/) as HTMLTextAreaElement).value).toBe("10.0.0.5\n10.0.0.6");
+  await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(api.calls.some((c) => c.init?.method === "PUT")).toBe(true));
+  const sent = JSON.parse(String(api.calls.find((c) => c.init?.method === "PUT")!.init!.body));
+  expect(sent.targets).toEqual(["10.0.0.5", "10.0.0.6"]);
+});
+
+it("учётка без привязки помечена как неиспользуемая", async () => {
+  mockApi({ "GET /engagements/7/credentials": [ROW] });
+  render(<CredentialsCard engagementId={7} />);
+  const row = (await screen.findByText("root ДМЗ")).closest("tr")!;
+  expect(within(row).getByText(/не привязана — в прогонах не используется/)).toBeInTheDocument();
 });

@@ -10,6 +10,10 @@
   ни hostname, ни подсеть шире разрешённой;
 - nmap вызывается без shell, с явными лимитами из RateProfile
   (`--max-rate`, `--max-parallelism`) и таймаутами;
+- `--max-rate` общий на весь вызов, поэтому число одновременно сканируемых
+  хостов (`--max-hostgroup`), host-timeout, размер пачки и таймаут вызова
+  считаются из него (scanner.core.nmaptiming): лимит скорости не превышается,
+  а хосты не обрываются по host-timeout из-за того, что делят скорость;
 - каждый вызов (полная команда) и его итог пишутся в ctx.audit.
 """
 from __future__ import annotations
@@ -18,11 +22,12 @@ import ipaddress
 import shlex
 import subprocess
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from libnmap.parser import NmapParser, NmapParserException
 
 from scanner.core import coverage as cv
+from scanner.core import nmaptiming
 from scanner.core.models import Finding, FindingType, HostOs, ServiceInfo, Severity
 from scanner.core.osfamily import GENERIC_LINUX, classify, family_label, is_distro
 from scanner.core.ratelimit import RateProfile
@@ -46,8 +51,9 @@ class DiscoveryOptions:
     ports: str | None = None          # None — топ-1000 портов nmap по умолчанию
     os_detection: bool = True         # -O требует root (в контейнере — есть)
     udp: bool = False                 # -sU: медленно, включается явно
-    batch_size: int = 64              # хостов на один вызов nmap
-    host_timeout_sec: int = 900
+    batch_size: int = 64              # предел хостов на один вызов nmap
+    # None — считается из профиля скорости и числа портов (nmaptiming.plan)
+    host_timeout_sec: int | None = None
     max_retries: int = 2
     nmap_path: str = "nmap"
 
@@ -63,15 +69,31 @@ def validate_targets(targets: Sequence[str]) -> tuple[list[str], list[str]]:
     return ok, rejected
 
 
+def timing_plan(rate: RateProfile, opts: DiscoveryOptions, *,
+                no_ping: bool = False) -> nmaptiming.TimingPlan:
+    """Тайминг вызова nmap: группа хостов, host-timeout, пачка (см. nmaptiming)."""
+    n_ports = nmaptiming.count_ports(opts.ports)
+    if opts.udp:
+        n_ports *= 2              # -sS -sU: столько же UDP-портов сверху
+    p = nmaptiming.plan(rate, n_ports, max_retries=opts.max_retries,
+                        service_detection=True, no_ping=no_ping,
+                        max_batch=max(1, opts.batch_size))
+    if opts.host_timeout_sec:     # явное значение из настроек побеждает расчёт
+        p = replace(p, host_timeout_sec=opts.host_timeout_sec)
+    return p
+
+
 def build_nmap_command(targets: Sequence[str], rate: RateProfile,
                        opts: DiscoveryOptions | None = None, *,
-                       no_ping: bool = False) -> list[str]:
+                       no_ping: bool = False,
+                       plan: nmaptiming.TimingPlan | None = None) -> list[str]:
     """Собирает argv nmap. Цели должны быть уже проверены validate_targets().
 
     no_ping — опция прогона «без проверки ping» (-Pn): хосты, не отвечающие на
     ICMP/пробы обнаружения, всё равно сканируются по портам. Дольше (каждый
     выключенный адрес ждёт таймаутов всех портов)."""
     opts = opts or DiscoveryOptions()
+    plan = plan or timing_plan(rate, opts, no_ping=no_ping)
     cmd = [opts.nmap_path, "-sV"]
     if no_ping:
         cmd.append("-Pn")
@@ -86,7 +108,8 @@ def build_nmap_command(targets: Sequence[str], rate: RateProfile,
         "--max-rate", f"{rate.max_requests_per_sec:g}",
         "--max-parallelism", str(rate.max_concurrency),
         "--max-retries", str(opts.max_retries),
-        "--host-timeout", f"{opts.host_timeout_sec}s",
+        "--max-hostgroup", str(plan.hostgroup),
+        "--host-timeout", f"{plan.host_timeout_sec}s",
     ]
     if opts.ports:
         cmd += ["-p", opts.ports]
@@ -240,12 +263,13 @@ class DiscoveryModule(ScanModule):
         opts = self.options
         no_ping = bool(ctx.options.get("no_ping"))
         findings: list[Finding] = []
-        step = max(1, opts.batch_size)
+        plan = timing_plan(ctx.rate, opts, no_ping=no_ping)
+        step = plan.batch_size
         for i in range(0, len(targets), step):
             batch = targets[i:i + step]
-            cmd = build_nmap_command(batch, ctx.rate, opts, no_ping=no_ping)
-            # Общий таймаут вызова: host-timeout на волну параллельных хостов + запас.
-            timeout = opts.host_timeout_sec * 2 + 60
+            cmd = build_nmap_command(batch, ctx.rate, opts, no_ping=no_ping, plan=plan)
+            # Общий таймаут вызова: host-timeout × число волн групп в пачке + запас.
+            timeout = plan.call_timeout(len(batch))
             ctx.audit.record(subject="scanner", action="nmap_exec",
                              target=",".join(batch), result="started",
                              details=shlex.join(cmd))
