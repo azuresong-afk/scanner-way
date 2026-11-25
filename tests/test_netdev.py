@@ -355,7 +355,8 @@ class FirmwareMatcher:
         return self.m.findings_for_firmware(host, **kw)
 
 
-def test_module_cisco_full_cycle():
+@pytest.mark.parametrize("with_discovery", [True, False])
+def test_module_cisco_full_cycle(with_discovery):
     session = _ios_session()
     opened = []
 
@@ -364,6 +365,9 @@ def test_module_cisco_full_cycle():
         return session
 
     ctx = _ctx([_cred()])
+    if with_discovery:
+        ctx.services = []
+        ctx.completed.add("discovery")
     mod = NetdevAuditModule(matcher=FirmwareMatcher(), cli_opener=opener,
                             snmp_getter=lambda *a: pytest.fail("SNMP не нужен"),
                             sleep=lambda s: None)
@@ -660,7 +664,7 @@ def test_plan_network_devices_profile_and_engine():
     from scanner.core.profiles import PROFILES, plan_modules
     prof = PROFILES["network_devices"]
     plan = plan_modules(prof.modules, protocols={"netssh"}, engine_modules=prof.modules)
-    assert plan.names == ["discovery", "netdev_audit"] and not plan.warnings
+    assert plan.names == ["netdev_audit"] and not plan.warnings
     # движок «По учётной записи» с одной SSH-учёткой сервера: netdev_audit убран
     eng = ["discovery", "auth_inventory", "win_inventory", "netdev_audit"]
     plan = plan_modules(eng, protocols={"ssh"}, engine_modules=eng[1:])

@@ -561,10 +561,10 @@ def test_network_devices_profile_end_to_end(net_api):
     plan = api.c.post(f"/engagements/{eid}/runs/plan", headers=holder, json=body)
     assert plan.status_code == 200, plan.text
     plan = plan.json()
-    assert [m["name"] for m in plan["modules"]] == ["discovery", "netdev_audit"]
+    assert [m["name"] for m in plan["modules"]] == ["netdev_audit"]
     r = api.c.post(f"/engagements/{eid}/runs", headers=holder, json=body)
     assert r.status_code == 202, r.text
-    assert r.json()["name"].startswith("Обнаружение + сетевое оборудование")
+    assert r.json()["name"].startswith("Сетевое оборудование")
     run_id = r.json()["id"]
     run = api.c.get(f"/runs/{run_id}", headers=holder).json()
     assert run["status"] in ("done", "partial"), run

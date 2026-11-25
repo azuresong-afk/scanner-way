@@ -4,7 +4,7 @@ import { api, ApiError } from "../api/client";
 import type { CredentialCoverage, DeniedTarget, EngagementOut, RunCreated, RunPlan, RunProfile, ScheduleIn, ScheduleKind, ScheduleOut } from "../api/types";
 import { useAuth, type Perm } from "../auth/AuthContext";
 import { localToIso, plural, toLocalInput } from "../lib/format";
-import { CREDENTIAL_MODULES, ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, applyProfile, runTitle, type EngineInfo } from "../lib/labels";
+import { CREDENTIAL_MODULES, ENGINE_MODULES, MODULES, RATE_PROFILES, SCHEDULE_KINDS, VULN_ENGINES, WEEKDAYS, runTitle, type EngineInfo } from "../lib/labels";
 import { compactAddresses, mergeTargets, parseTargets, specSize, splitTargets } from "../lib/targets";
 import { NODE_STATUS_LABEL } from "../lib/nodes";
 import { useAsync } from "../lib/useAsync";
@@ -43,7 +43,7 @@ export function CredentialCoverageNote({ coverage }: { coverage: CredentialCover
 /** Движок по сохранённому списку модулей (для редактирования расписания). */
 function engineOf(modules: string[]): EngineInfo["id"] {
   const v = modules.includes("vuln");
-  const a = modules.includes("auth_inventory");
+  const a = VULN_ENGINES.find((x) => x.id === "credentialed")!.modules.some((m) => modules.includes(m));
   return v && a ? "both" : v ? "nuclei" : a ? "credentialed" : "none";
 }
 
@@ -83,8 +83,15 @@ export function StartRunModal({
   const allowlist = useAsync(() => api.allowlist(engagement.id), [engagement.id]);
   const [when, setWhen] = useState<When>(schedule ? "schedule" : initialWhen);
   const [targets, setTargets] = useState(schedule ? schedule.targets.join("\n") : "");
-  const [modules, setModules] = useState<string[]>(schedule ? schedule.modules.filter((m) => !ENGINE_MODULES.includes(m)) : ["discovery"]);
-  const [engine, setEngine] = useState<EngineInfo["id"]>(schedule ? engineOf(schedule.modules) : "nuclei");
+  const [selectedModules, setModules] = useState<string[]>(schedule ? schedule.modules.filter((m) => !ENGINE_MODULES.includes(m)) : []);
+  const [useNetworkDefault, setUseNetworkDefault] = useState(!schedule);
+  const [engineModules, setEngineModules] = useState<string[]>(schedule
+    ? schedule.modules.filter((m) => ENGINE_MODULES.includes(m)) : ["vuln"]);
+  const engine = engineOf(engineModules);
+  const networkDefault = useNetworkDefault && engine === "nuclei"
+    && !selectedModules.some((m) => CREDENTIAL_MODULES.includes(m));
+  const modules = networkDefault
+    ? ["discovery", ...selectedModules] : selectedModules;
   // Учётки подбираются по привязке к активам; явный выбор старых расписаний снимается при сохранении.
   const legacyCreds = (schedule?.credential_ids ?? []).length > 0;
   const canCreds = has("host_credentials");
@@ -117,15 +124,15 @@ export function StartRunModal({
   const [planError, setPlanError] = useState<string | null>(null);
   const pickProfile = (p: RunProfile | null) => {
     if (!p) return setCheckProfile("custom");
-    const x = applyProfile(p);
-    setEngine(x.engine);
-    setModules(x.modules);
+    setEngineModules(p.modules.filter((m) => ENGINE_MODULES.includes(m)));
+    setUseNetworkDefault(false);
+    setModules(p.modules.filter((m) => !ENGINE_MODULES.includes(m)));
     setCheckProfile(p.id);
   };
 
   const available = MODULES.filter((m) => !ENGINE_MODULES.includes(m.id) && (!m.permission || has(m.permission as Perm)));
   const eng = VULN_ENGINES.find((x) => x.id === engine)!;
-  const allModules = [...modules, ...eng.modules];
+  const allModules = [...modules, ...engineModules];
   const parsed = parseTargets(targets);
   const configAudit = modules.includes("config_audit");
   // Учётки нужны движку «по учётной записи» и модулям из CREDENTIAL_MODULES (аудит конфигураций).
@@ -148,7 +155,12 @@ export function StartRunModal({
 
   const toggle = (id: string) => {
     setCheckProfile("custom");
-    setModules((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
+    if (id === "discovery") {
+      setUseNetworkDefault(false);
+      setModules(modules.includes(id) ? selectedModules.filter((x) => x !== id) : [...selectedModules, id]);
+    } else {
+      setModules((m) => m.includes(id) ? m.filter((x) => x !== id) : [...m, id]);
+    }
   };
   const toggleCredSet = (id: number) => setCredSetIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
   const credAuditOn = modules.includes("cred_audit");
@@ -168,7 +180,7 @@ export function StartRunModal({
           modules: allModules,
           rate_profile: profile,
           credential_ids: [],
-          no_ping: !scheduled && noPing,
+          no_ping: !scheduled && allModules.includes("discovery") && noPing,
         })
         .then((p) => alive && (setPlan(p), setPlanError(null)))
         .catch((e) => alive && (setPlan(null), setPlanError((e as Error).message)));
@@ -212,7 +224,7 @@ export function StartRunModal({
         onStarted?.(
           await api.startRun(engagement.id, {
             ...base,
-            no_ping: noPing || undefined,
+            no_ping: (allModules.includes("discovery") && noPing) || undefined,
             profile: checkProfile !== "custom" ? checkProfile : undefined,
           }),
         );
@@ -408,7 +420,7 @@ export function StartRunModal({
               return (
                 <label key={x.id} className="option-card" aria-disabled={locked || undefined} style={locked ? { opacity: 0.55 } : undefined}>
                   <input type="radio" name="engine" checked={engine === x.id} disabled={locked} onChange={() => {
-                      setEngine(x.id);
+                      setEngineModules(x.modules);
                       setCheckProfile("custom");
                     }}
                   />
@@ -505,7 +517,7 @@ export function StartRunModal({
                 NOPASSWD) или вход под root. OpenSCAP и Lynis передаются во временный каталог и удаляются после проверки.
               </small>
             )}
-            {configAudit && !eng.modules.includes("auth_inventory") && (
+            {configAudit && !engineModules.includes("auth_inventory") && (
               <small className="muted">
                 По той же учётке автоматически проверяются пакеты хоста: версии сверяются с бюллетенями вендора ОС (с учётом бэкпортов) и
                 привязываются к CVE и БДУ ФСТЭК. Lynis и OpenSCAP остаются аудитом конфигураций.

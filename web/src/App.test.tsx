@@ -224,7 +224,7 @@ describe("модуль cred_audit в форме запуска", () => {
     expect(within(dlg).getAllByText("Нужно право host_credentials")).toHaveLength(2);
   });
 
-  it("по учётной записи: учётки подбираются по привязке, в запрос уходят auth_inventory без выбора учёток", async () => {
+  it.each([false, true])("по учётной записи: учётки по привязке, явный выбор Nmap — %s", async (withDiscovery) => {
     const { dlg, api } = await openForm([...OPERATOR, "host_credentials"], {
       "GET /engagements/1/credentials": [CRED],
       "POST /engagements/1/runs/plan": { modules: [], removed: [], warnings: [], full_check: true, accepted_targets: 4, denied_targets: [],
@@ -233,6 +233,9 @@ describe("модуль cred_audit в форме запуска", () => {
         started_by: 1, started_at: null, finished_at: null, created_at: null, accepted_targets: 1, denied_targets: [] },
     });
     await userEvent.click(within(dlg).getByRole("radio", { name: /По учётной записи/ }));
+    const discovery = within(dlg).getByRole("checkbox", { name: /Обнаружение и инвентаризация/ });
+    expect(discovery).not.toBeChecked();
+    if (withDiscovery) await userEvent.click(discovery);
     await userEvent.click(within(dlg).getByRole("button", { name: /Подставить весь allowlist/ }));
     await userEvent.click(within(dlg).getByRole("checkbox", { name: /Подтверждаю/ }));
     // выбора учёток в форме больше нет — только итог подбора по привязке
@@ -247,7 +250,8 @@ describe("модуль cred_audit в форме запуска", () => {
     await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")).toBe(true));
     const call = api.calls.find((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")!;
     const sent = JSON.parse(String(call.init!.body));
-    expect(sent.modules).toEqual(["discovery", "auth_inventory", "win_inventory", "netdev_audit"]);
+    const inventory = ["auth_inventory", "win_inventory", "netdev_audit"];
+    expect(sent.modules).toEqual(withDiscovery ? ["discovery", ...inventory] : inventory);
     expect(sent.credential_ids).toEqual([]);
   });
 
@@ -284,7 +288,7 @@ describe("модуль cred_audit в форме запуска", () => {
     await waitFor(() => expect(api.calls.some((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")).toBe(true));
     const call = api.calls.find((c) => c.path === "/engagements/1/runs" && c.init?.method === "POST")!;
     const sent = JSON.parse(String(call.init!.body));
-    expect(sent.modules).toEqual(["discovery", "config_audit"]);
+    expect(sent.modules).toEqual(["config_audit"]);
     expect(sent.credential_ids).toEqual([]);
   });
 

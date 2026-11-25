@@ -36,18 +36,18 @@ PROFILES: dict[str, Profile] = {p.id: p for p in (
             "WinRM-учётка.",
             ("discovery", "vuln", "win_inventory"), ("winrm",)),
     Profile("dbms", "Проверка СУБД",
-            "Обнаружение хостов и сервисов, затем вход в СУБД учётной записью только на "
+            "Вход в СУБД учётной записью только на "
             "чтение: версия → CVE/БДУ ФСТЭК (SQL Server — по обновлениям Microsoft), "
             "окончание поддержки и конфигурация по CIS. PostgreSQL и Postgres Pro, "
             "MySQL и MariaDB, MS SQL Server, Oracle. Нужна учётка СУБД.",
-            ("discovery", "db_audit"), ("dbms",)),
+            ("db_audit",), ("dbms",)),
     Profile("network_devices", "Сетевое оборудование",
             "Коммутаторы, маршрутизаторы и межсетевые экраны (Cisco, Juniper, MikroTik, "
             "Huawei, Eltex): версия ОС устройства → CVE/БДУ ФСТЭК и аудит конфигурации "
             "(Telnet/HTTP, SNMP, пароли, AAA, журналы, NTP). Нужна учётка сетевого "
             "устройства: SSH только на просмотр (версия и конфигурация) или SNMP "
             "(только версия).",
-            ("discovery", "netdev_audit"), ("netssh",)),
+            ("netdev_audit",), ("netssh",)),
     Profile("network", "Только сетевая проверка",
             "Обнаружение и проверка без учётной записи: шаблоны Nuclei и версии из "
             "баннеров. Бэкпорты дистрибутивов не учитываются — находки по баннерам "
@@ -158,7 +158,7 @@ def plan_modules(requested: Iterable[str], *, protocols: set[str],
                              "учитываются, пакеты и конфигурация не проверяются.")
     if names <= {"discovery"}:
         plan.warnings.append("Выбрано только обнаружение: уязвимости не проверяются.")
-    if "discovery" not in names:
+    if "vuln" in names and "discovery" not in names:
         plan.warnings.append("Без обнаружения (discovery) недоступность хостов не "
                              "определяется заранее — модули попробуют все цели.")
     if no_ping:

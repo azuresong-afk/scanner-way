@@ -1,6 +1,6 @@
 // Русские подписи для значений API и справочники модулей/профилей.
 
-import type { Criticality, FindingStatus, FindingsSummary, RunOut, RunProfile, RunStatus, ScheduleOut, Severity, VulnEngine } from "../api/types";
+import type { Criticality, FindingStatus, FindingsSummary, RunOut, RunStatus, ScheduleOut, Severity, VulnEngine } from "../api/types";
 
 export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
 
@@ -160,7 +160,7 @@ export const DB_PROTOCOLS: { id: "postgresql" | "mysql" | "mssql" | "oracle"; la
 export const isDbProtocol = (p: string | undefined) => DB_PROTOCOLS.some((d) => d.id === p);
 
 /** Модули поиска уязвимостей — выбираются движком, а не флажками. */
-export const ENGINE_MODULES = ["vuln", "auth_inventory"];
+export const ENGINE_MODULES = ["vuln", "auth_inventory", "win_inventory", "netdev_audit"];
 
 /** Модули, которые входят на хосты по учётным записям договора (CREDENTIAL_MODULES на бэкенде). */
 export const CREDENTIAL_MODULES = ["auth_inventory", "netdev_audit", "config_audit", "db_audit"];
@@ -365,15 +365,3 @@ export function nothingChecked(summary: FindingsSummary | null | undefined): boo
   const c = summary?.coverage;
   return !!c && c.hosts > 0 && c.hosts_checked + c.hosts_partial === 0;
 }
-
-
-/** Движок и модули-флажки по готовому профилю проверки. */
-export function applyProfile(p: RunProfile): { engine: EngineInfo["id"]; modules: string[] } {
-  const v = p.modules.includes("vuln");
-  const a = ["auth_inventory", "win_inventory", "netdev_audit"].some((m) => p.modules.includes(m));
-  return {
-    engine: v && a ? "both" : v ? "nuclei" : a ? "credentialed" : "none",
-    modules: p.modules.filter((m) => !["vuln", "auth_inventory", "win_inventory", "netdev_audit"].includes(m)),
-  };
-}
-
