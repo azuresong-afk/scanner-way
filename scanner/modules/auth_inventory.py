@@ -12,8 +12,7 @@ dpkg / rpm / apk и состояние ядра (`uname -r`, модули /sys/k
 входных данных (нет места для инъекции).
 
 Безопасность:
-- цели — только литеральные IP, уже прошедшие allowlist оркестратора; если в
-  прогоне был discovery, подключаемся только к хостам, которые он нашёл;
+- цели — только литеральные IP, уже прошедшие allowlist оркестратора;
 - учётки — только выбранные оператором для прогона (ctx.credentials), и только
   те, в область действия которых входит хост; на хосте пробуется не больше
   `MAX_CREDENTIALS_PER_HOST` учёток (защита от блокировки учётных записей);
@@ -905,17 +904,6 @@ class AuthInventoryModule(ScanModule):
             except ValueError:
                 ctx.audit.record(subject="scanner", action="auth_inventory_deny", target=t,
                                  result="not_an_ip_literal")
-        if "discovery" in ctx.completed and ctx.services is not None:
-            # discovery отработал: не стучимся по SSH в хосты, которых он не нашёл.
-            # Если он упал (нет nmap, ошибка) — пробуем все цели прогона.
-            alive = {s.host for s in ctx.services}
-            for h in hosts:
-                if h not in alive:
-                    ctx.coverage.mark(h, MODULE, cv.UNREACHABLE,
-                                      "хост не обнаружен (нет открытых портов)")
-                    ctx.audit.record(subject="scanner", action="auth_inventory_skip",
-                                     target=h, result="host_not_discovered")
-            hosts = [h for h in hosts if h in alive]
         return hosts
 
     def run(self, ctx: ScanContext) -> list[Finding]:

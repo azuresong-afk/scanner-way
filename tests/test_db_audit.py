@@ -396,13 +396,17 @@ def test_credential_scope_respected():
     assert not called
 
 
-def test_discovery_gates_ports_and_reports_db_without_credential():
+def test_discovery_preserves_configured_ports_and_reports_db_without_credential():
     services = [ServiceInfo(host=HOST, port=22, protocol="tcp", service="ssh"),
                 ServiceInfo(host=HOST, port=3306, protocol="tcp", service="mysql")]
     called = []
-    _, ctx = _run([_cred(PROTOCOL_POSTGRESQL)], {},
-                         services=services, connector=lambda *a: called.append(a))
-    assert not called                                 # 5432 закрыт — не подключаемся
+
+    def connect(host, cred, options):
+        called.append((host, cred.port))
+        return FakeDb(PROTOCOL_POSTGRESQL, PG_ANSWERS)
+
+    _, ctx = _run([_cred(PROTOCOL_POSTGRESQL, port=15432)], {}, services=services, connector=connect)
+    assert called == [(HOST, 15432)]
     entry = ctx.coverage.get(HOST, "db_audit")
     assert entry.status == cv.NO_CREDENTIALS and "MySQL" in entry.reason
 
@@ -465,9 +469,9 @@ def test_profile_and_plan_for_dbms():
     assert MODULE_PERMISSIONS["db_audit"] is Perm.HOST_CREDENTIALS
     assert "db_audit" in default_module_registry()
     prof = PROFILES["dbms"]
-    assert prof.modules == ("discovery", "db_audit") and prof.needs == ("dbms",)
+    assert prof.modules == ("db_audit",) and prof.needs == ("dbms",)
     ok = plan_modules(prof.modules, protocols={"postgresql"})
-    assert ok.names == ["discovery", "db_audit"] and not any("СУБД" in w
+    assert ok.names == ["db_audit"] and not any("СУБД" in w
                                                              for w in ok.warnings)
     no = plan_modules(prof.modules, protocols={"ssh"})
     assert any("нет учётки СУБД" in w for w in no.warnings)

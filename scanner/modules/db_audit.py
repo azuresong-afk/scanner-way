@@ -22,8 +22,7 @@
 считается выполненным.
 
 Безопасность (как у auth_inventory / win_inventory):
-- цели — только литеральные IP, уже прошедшие allowlist; если в прогоне был
-  discovery, подключаемся только к хостам, где он нашёл открытым порт учётки;
+- цели — только литеральные IP, уже прошедшие allowlist; порт подключения задаёт учётка;
 - учётки — только учётки СУБД, выбранные оператором для прогона, с областью
   действия, покрывающей хост; не больше `MAX_CREDENTIALS_PER_HOST` на порт;
 - сессия только на чтение (см. `core.dbexec`), запросы — константы из кода;
@@ -153,10 +152,8 @@ class DbAuditModule(ScanModule):
 
     def _jobs(self, ctx: ScanContext) -> list[_Job]:
         discovered = "discovery" in ctx.completed and ctx.services is not None
-        open_ports: dict[str, set[int]] = {}
         db_services: dict[str, dict[int, str]] = {}
         for s in ctx.services or []:
-            open_ports.setdefault(s.host, set()).add(s.port)
             proto = SERVICE_PROTOCOLS.get((s.service or "").lower())
             if proto:
                 db_services.setdefault(s.host, {})[s.port] = proto
@@ -173,21 +170,7 @@ class DbAuditModule(ScanModule):
                     planned.append(_Job(host, proto, port,
                                         items[:MAX_CREDENTIALS_PER_HOST]))
             if discovered:
-                alive = open_ports.get(host)
-                if not alive:
-                    ctx.coverage.mark(host, MODULE, cv.UNREACHABLE,
-                                      "хост не обнаружен (нет открытых портов)")
-                    ctx.audit.record(subject="scanner", action="db_audit_skip",
-                                     target=host, result="host_not_discovered")
-                    continue
-                kept = [j for j in planned if j.port in alive]
-                for j in planned:
-                    if j.port not in alive:
-                        ctx.audit.record(subject="scanner", action="db_audit_skip",
-                                         target=f"{host}:{j.port}",
-                                         result="port_not_open",
-                                         details={"protocol": j.protocol})
-                covered = {(j.protocol, j.port) for j in kept}
+                covered = {(j.protocol, j.port) for j in planned}
                 missing = [(port, proto) for port, proto in
                            (db_services.get(host) or {}).items()
                            if (proto, port) not in covered]
@@ -199,11 +182,9 @@ class DbAuditModule(ScanModule):
                     ctx.audit.record(subject="scanner", action="db_audit_skip",
                                      target=host, result="no_db_credentials",
                                      details={"services": what})
-                if not kept and not missing:
+                if not planned and not missing:
                     ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
-                                      "порты СУБД из учёток на хосте закрыты"
-                                      if planned else "СУБД на хосте не найдена")
-                planned = kept
+                                      "СУБД на хосте не найдена")
             elif not planned:
                 ctx.coverage.mark(host, MODULE, cv.NOT_APPLICABLE,
                                   "нет учётки СУБД для хоста")

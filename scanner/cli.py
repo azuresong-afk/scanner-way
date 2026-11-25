@@ -17,7 +17,7 @@
                 --user 'CORP\audit' --ask-password [--targets 10.0.2.0/24]
     scanner credentials add --engagement 1 --name "PostgreSQL ДМЗ" --protocol postgresql \
                 --user scan_ro --ask-password [--db-name postgres]
-    scanner run --engagement 1 --targets 10.0.0.0/24 --modules discovery db_audit --credential 3 \
+    scanner run --engagement 1 --targets 10.0.0.0/24 --modules db_audit --credential 3 \
                 --confirm-authorized --allow-credentials
     scanner feeds sync-msrc [--file 2024-Jan.json ...]
     scanner feeds sync nvd epss kev advisories     # как автообновление, с учётом даты
@@ -210,8 +210,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--engagement", required=True, type=int, help="id договора")
     run.add_argument("--targets", required=True, nargs="+",
                      help="IP-адреса и подсети CIDR (только из allowlist договора)")
-    run.add_argument("--modules", nargs="+", default=["discovery", "vuln"],
-                     choices=MODULE_ORDER, help="модули (по умолчанию discovery vuln)")
+    run.add_argument("--modules", nargs="+",
+                     choices=MODULE_ORDER, help="модули (по умолчанию discovery vuln; для --engine credentialed — только по учётке)")
     run.add_argument("--rate", default="gentle", choices=sorted(PROFILES),
                      help="профиль нагрузки (по умолчанию gentle)")
     run.add_argument("--confirm-authorized", action="store_true",
@@ -741,6 +741,8 @@ def cmd_run(args: argparse.Namespace, env: _Env, registry=None) -> int:
     if not args.confirm_authorized:
         raise CliError("запуск только по целям из договора: подтвердите флагом "
                        "--confirm-authorized")
+    if args.modules is None:
+        args.modules = [] if args.engine == "credentialed" else ["discovery", "vuln"]
     if args.engine:
         engine_modules = {m for ms in VULN_ENGINES.values() for m in ms}
         known = set(registry) if registry is not None else None

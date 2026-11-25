@@ -18,7 +18,7 @@ scanner --actor cli:ivanov run --engagement 1 --targets 192.0.2.0/28 \
 |---|---|
 | `--engagement ID` | проект |
 | `--targets …` | адреса и подсети CIDR из allowlist |
-| `--modules …` | модули (раздел 5.3); по умолчанию `discovery vuln` |
+| `--modules …` | модули (раздел 5.3); по умолчанию `discovery vuln`, для `--engine credentialed` — только модули по учётке |
 | `--engine nuclei\|credentialed\|both` | движок поиска уязвимостей (заменяет `vuln`/`auth_inventory` в `--modules`) |
 | `--credential ID` | учётная запись актива, можно несколько |
 | `--cred-set ID` | набор проверки для `cred_audit`, можно несколько |
@@ -62,7 +62,7 @@ scanner credentials add --engagement 1 --name "PostgreSQL" --protocol postgresql
     --password-env DB_PASS --targets 192.0.2.30 [--db-name postgres]
 scanner credentials add --engagement 1 --name "Oracle ERP" --protocol oracle --user scan_ro \
     --password-env DB_PASS --db-name ERPPDB --targets 192.0.2.31
-scanner run --engagement 1 --targets 192.0.2.30 --modules discovery db_audit --credential 3 \
+scanner run --engagement 1 --targets 192.0.2.30 --modules db_audit --credential 3 \
     --confirm-authorized --allow-credentials
 scanner credentials list --engagement 1
 scanner credentials delete --engagement 1 --id 2
@@ -314,8 +314,8 @@ curl -s -H "Authorization: Bearer $TOKEN" http://<сервер>:8080/api/me
 |---|---|---|
 | `linux_full` | Полная проверка Linux | `discovery`, `vuln`, `auth_inventory`, `config_audit`, `password_policy` |
 | `windows_full` | Полная проверка Windows | `discovery`, `vuln`, `win_inventory` |
-| `network_devices` | Сетевое оборудование | `discovery`, `netdev_audit` |
-| `dbms` | Проверка СУБД | `discovery`, `db_audit` |
+| `network_devices` | Сетевое оборудование | `netdev_audit` |
+| `dbms` | Проверка СУБД | `db_audit` |
 | `network` | Только сетевая проверка | `discovery`, `vuln` |
 | `discovery` | Только обнаружение | `discovery` |
 

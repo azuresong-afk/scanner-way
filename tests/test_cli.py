@@ -103,7 +103,7 @@ def test_parse_run():
 
 def test_parse_run_defaults_and_rejects_unknown():
     a = cli.build_parser().parse_args(["run", "--engagement", "1", "--targets", "10.0.0.1"])
-    assert a.modules == ["discovery", "vuln"] and a.rate == "gentle"
+    assert a.modules is None and a.rate == "gentle"
     assert not a.confirm_authorized
     for bad in (["--modules", "exploit"], ["--rate", "insane"]):
         with pytest.raises(SystemExit):
@@ -242,6 +242,19 @@ def test_run_requires_cred_audit_flag(engagement):
     with pytest.raises(cli.CliError, match="--allow-cred-audit"):
         _run(url, "--engagement", str(eid), "--targets", "10.10.0.1",
              "--modules", "cred_audit", "--confirm-authorized")
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_credentialed_engine_runs_discovery_only_when_selected(explicit):
+    options = ["--modules", "discovery"] if explicit else []
+    args = cli.build_parser().parse_args([
+        "run", "--engagement", "1", "--targets", "192.0.2.1", "--confirm-authorized",
+        "--engine", "credentialed", *options])
+    # Проверяем реальный состав до обращения к БД и до открытия соединения.
+    with pytest.raises(cli.CliError, match="--allow-credentials"):
+        cli.cmd_run(args, None)
+    expected = ["auth_inventory", "win_inventory", "netdev_audit"]
+    assert args.modules == (["discovery", *expected] if explicit else expected)
 
 
 def test_run_config_audit_requires_credentials_flag(engagement):

@@ -7,6 +7,8 @@ WinRM-сессия заменяется фейковой оболочкой (Fak
 """
 from __future__ import annotations
 
+import pytest
+
 from scanner.core.credentials import PROTOCOL_SSH, PROTOCOL_WINRM, HostCredential
 from scanner.core.models import Finding, FindingType, Severity
 from scanner.core.ratelimit import RateProfile
@@ -104,7 +106,7 @@ def _ctx(creds):
                        audit=Audit(), credentials=list(creds))
 
 
-def _run(creds, connector=None, msrc_store=None, matcher=None):
+def _run(creds, connector=None, msrc_store=None, matcher=None, services=None):
     shell = FakeWinShell(ALL_OUT)
     module = WinInventoryModule(
         matcher=matcher if matcher is not None else FakeMatcher(),
@@ -112,6 +114,9 @@ def _run(creds, connector=None, msrc_store=None, matcher=None):
         msrc_store=msrc_store if msrc_store is not None else _msrc_store(),
         sleep=lambda s: None)
     ctx = _ctx(creds)
+    if services is not None:
+        ctx.services = services
+        ctx.completed.add("discovery")
     findings = module.run(ctx)
     return findings, ctx, shell
 
@@ -137,8 +142,9 @@ def test_command_line_parts_fit_budget():
 
 # ---------- модуль целиком ----------
 
-def test_run_collects_and_matches_os_and_software():
-    findings, ctx, shell = _run([_winrm_cred()])
+@pytest.mark.parametrize("services", [None, []])
+def test_run_collects_and_matches_os_and_software(services):
+    findings, ctx, shell = _run([_winrm_cred()], services=services)
     assert shell.closed
     by_id = {f.vuln_id: f for f in findings}
 

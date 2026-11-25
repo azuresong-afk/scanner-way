@@ -17,8 +17,7 @@ Windows-аналог `auth_inventory`: вместо сетевых провер�
 не меняется, повышение прав не используется.
 
 Безопасность (как у `auth_inventory`):
-- цели — только литеральные IP, уже прошедшие allowlist оркестратора; если в
-  прогоне был discovery, подключаемся только к найденным им хостам;
+- цели — только литеральные IP, уже прошедшие allowlist оркестратора;
 - учётки — только WinRM-учётки, выбранные оператором для прогона и подходящие
   хосту по области действия; на хосте пробуется не больше
   `MAX_CREDENTIALS_PER_HOST` учёток (защита от блокировки учётных записей);
@@ -520,16 +519,6 @@ class WinInventoryModule(ScanModule):
             except ValueError:
                 ctx.audit.record(subject="scanner", action="win_inventory_deny", target=t,
                                  result="not_an_ip_literal")
-        if "discovery" in ctx.completed and ctx.services is not None:
-            # discovery отработал: не стучимся по WinRM в хосты, которых он не нашёл.
-            alive = {s.host for s in ctx.services}
-            for h in hosts:
-                if h not in alive:
-                    ctx.coverage.mark(h, MODULE, cv.UNREACHABLE,
-                                      "хост не обнаружен (нет открытых портов)")
-                    ctx.audit.record(subject="scanner", action="win_inventory_skip",
-                                     target=h, result="host_not_discovered")
-            hosts = [h for h in hosts if h in alive]
         return hosts
 
     def run(self, ctx: ScanContext) -> list[Finding]:

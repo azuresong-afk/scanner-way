@@ -420,19 +420,12 @@ class NetdevAuditModule(ScanModule):
     def run(self, ctx: ScanContext) -> list[Finding]:
         from concurrent.futures import ThreadPoolExecutor
 
-        alive = ctx.alive_hosts()
         has_netdev = any(c.protocol in (PROTOCOL_NETSSH, PROTOCOL_SNMP)
                          for c in ctx.credentials)
         jobs: list[tuple[str, list[HostCredential]]] = []
         for host in self._hosts(ctx):
             ssh = credentials_for_host(host, ctx.credentials, protocol=PROTOCOL_NETSSH)
             snmp = credentials_for_host(host, ctx.credentials, protocol=PROTOCOL_SNMP)
-            if alive is not None and host not in alive:
-                ssh = []        # discovery не нашёл TCP-портов: SSH не пробуем
-                if not snmp:    # SNMP — UDP, discovery его не видит: пробуем
-                    ctx.coverage.mark(host, MODULE, cv.UNREACHABLE,
-                                      "хост не обнаружен (нет открытых портов)")
-                    continue
             if not ssh and not snmp:
                 fam = ctx.host_family(host)
                 if fam == "network" or (fam is None and has_netdev):

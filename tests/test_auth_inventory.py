@@ -307,7 +307,7 @@ def test_module_tries_next_credential_and_reports_errors():
     assert {"auth_failed", "host_key_mismatch", "unreachable"} <= set(results)
 
 
-def test_module_skips_hosts_without_credentials_or_not_discovered():
+def test_module_uses_scoped_credentials_independently_of_discovery():
     audit = Audit()
     mod = AuthInventoryModule(connector=lambda *a: pytest.fail("no ssh expected"),
                               sleep=lambda s: None)
@@ -320,8 +320,8 @@ def test_module_skips_hosts_without_credentials_or_not_discovered():
     mod2 = AuthInventoryModule(connector=lambda h, c, o: FakeShell(APK_OUT),
                                sleep=lambda s: None)
     found = mod2.run(ctx_for(["10.0.0.1", "10.0.0.2"], scoped, audit2, services=services))
-    assert {f.host for f in found} == {"10.0.0.2"}
-    assert [r["target"] for r in audit2.actions("auth_inventory_skip")] == ["10.0.0.1"]
+    assert {f.host for f in found} == {"10.0.0.1", "10.0.0.2"}
+    assert not audit2.actions("auth_inventory_skip")
     # discovery упал (нет nmap): ctx.services пуст, но фильтровать по нему нельзя
     audit3 = Audit()
     ctx = ctx_for(["10.0.0.1"], scoped, audit3)

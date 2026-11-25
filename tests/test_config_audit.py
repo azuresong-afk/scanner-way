@@ -536,14 +536,13 @@ def test_become_none_and_root_login_skip_sudo(scap_dir, lynis_bundle):
     assert "вход под root" in by_host["10.0.0.8"].evidence
 
 
-def test_only_discovered_hosts(scap_dir, lynis_bundle):
+def test_discovery_does_not_filter_credentialed_hosts(scap_dir, lynis_bundle):
     net = FakeNet()
     ctx = _ctx(["10.0.0.5", "10.0.0.6"], [pw_cred()])
     ctx.completed.add("discovery")
     ctx.services = [ServiceInfo("10.0.0.5", 22, "tcp", "ssh")]
     _mod(net, scap_dir, lynis_bundle, backends=("lynis",)).run(ctx)
-    assert {h for h, _ in net.connects} == {"10.0.0.5"}
-    assert any(r["result"] == "host_not_discovered" for r in ctx.audit.records)
+    assert {h for h, _ in net.connects} == {"10.0.0.5", "10.0.0.6"}
 
 
 def test_os_fallback_to_discovery_when_os_release_missing(scap_dir, lynis_bundle):

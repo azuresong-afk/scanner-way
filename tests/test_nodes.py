@@ -164,6 +164,20 @@ def test_execute_job_enforces_local_allowlist():
     assert any(r["action"] == "deny" for r in audit._buf)
 
 
+def test_credentialed_job_needs_only_selected_module():
+    from scanner.modules.auth_inventory import AuthInventoryModule
+
+    job = NodeJob(1, 1, ["auth_inventory"], "gentle", ["10.1.0.5", "10.1.0.200"],
+                  ["10.1.0.0/24"])
+    audit = BufferedAudit(lambda recs: None)
+    out = execute_job(job, {"auth_inventory": AuthInventoryModule}, audit=audit,
+                      local_allowlist=["10.1.0.0/25"])
+    assert out.allowed == ["10.1.0.5"] and not out.errors
+    assert out.coverage.status("10.1.0.5", "auth_inventory") == cv.NO_CREDENTIALS
+    assert out.coverage.status("10.1.0.5", "discovery") is None
+    assert any(r["action"] == "deny" for r in audit._buf)
+
+
 def test_execute_job_unknown_module():
     job = NodeJob(1, 1, ["netdev_audit"], "gentle", ["10.1.0.5"], ["10.1.0.0/24"])
     with pytest.raises(ValueError, match="обновите образ узла"):
