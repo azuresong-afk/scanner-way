@@ -7,7 +7,9 @@
 На хосте выполняется ОДНА фиксированная команда только на чтение
 (`INVENTORY_SCRIPT`): /etc/os-release, `uname`, `hostname`, список пакетов
 dpkg / rpm / apk и состояние ядра (`uname -r`, модули /sys/kernel/livepatch,
-`canonical-livepatch status`, флаг /var/run/reboot-required). Ничего не
+`canonical-livepatch status`, флаг /var/run/reboot-required) и идентификаторы
+CVE/BDU из журналов изменений пакетов (rpm %changelog, changelog.Debian.gz —
+признак бэкпорта, когда бюллетень молчит; до 90 с и 8 МБ). Ничего не
 устанавливается, права root не нужны, в команду не подставляется ничего из
 входных данных (нет места для инъекции).
 
@@ -29,7 +31,9 @@ dpkg / rpm / apk и состояние ядра (`uname -r`, модули /sys/k
 - учёт бэкпортов (R2): если для выпуска ОС загружены бюллетени вендора
   (scanner.feeds.advisories), находка сверяется с ними по ТОЧНОЙ версии пакета:
   закрыто бэкпортом / не затронут — находки нет; уязвим — находка с версией
-  исправления; нет записи вендора — как раньше, с оговоркой. Бюллетень может
+  исправления; нет записи вендора — решение ищется по идентификатору БДУ,
+  по указанию вендора в записи БДУ (Astra) и по журналу изменений пакета, а
+  если и там нет — как раньше, с оговоркой. Бюллетень может
   и добавить находку: CVE, исправленную вендором в версии выше установленной;
 - ядро (scanner.feeds.kernel): уязвимости РАБОТАЮЩЕГО ядра по бюллетеням вендора,
   с учётом livepatch и «новое ядро установлено, но хост не перезагружен»;
@@ -67,7 +71,7 @@ from scanner.core.sshexec import (
 )
 from scanner.feeds import kernel as kn
 from scanner.feeds import packages as pk
-from scanner.feeds.advisories import bduscope, host_release
+from scanner.feeds.advisories import bdufix, bduscope, host_release
 from scanner.feeds.advisories.assess import Decision, Verdict, combine, decide
 from scanner.feeds.advisories.base import Advisory, FamilySpec
 from scanner.feeds.advisories.store import AdvisoryStore, CachingAdvisoryStore
@@ -109,6 +113,21 @@ if [ -n "$LP" ]; then
 fi
 echo '@@reboot-required'
 [ -f /var/run/reboot-required ] && echo yes
+CL='if command -v rpm >/dev/null 2>&1; then
+  rpm -qa --qf "=P=%{NAME}\n[%{CHANGELOGTEXT}\n]" 2>/dev/null | grep -oE "^=P=[^[:space:]]+|CVE-[0-9]{4}-[0-9]{4,}|BDU:[0-9]{4}-[0-9]{5}" | uniq
+fi
+if command -v dpkg-query >/dev/null 2>&1; then
+  for f in /usr/share/doc/*/changelog.Debian.gz; do
+    [ -f "$f" ] || continue; d=${f%/*}; echo "=P=${d##*/}"
+    gzip -dc "$f" 2>/dev/null | grep -oE "CVE-[0-9]{4}-[0-9]{4,}|BDU:[0-9]{4}-[0-9]{5}" | sort -u
+  done
+fi'
+echo '@@changelog'
+if command -v timeout >/dev/null 2>&1; then
+  timeout 90 sh -c "$CL" 2>/dev/null | head -c 8000000
+else
+  sh -c "$CL" 2>/dev/null | head -c 8000000
+fi
 echo '@@end'
 """
 INVENTORY_COMMAND = "sh -c " + shlex.quote(INVENTORY_SCRIPT)
@@ -197,7 +216,29 @@ def parse_inventory(text: str, host: str) -> HostInventory:
         inv.livepatch_tool = bool(lp.strip())
         inv.livepatch_cves = sorted(kn.parse_canonical_livepatch(lp))[:5000]
     inv.reboot_required = any(x.strip() == "yes" for x in sections.get("reboot-required", []))
+    if "changelog" in sections and "end" in sections:
+        # Секция дошла целиком (после неё есть @@end) — иначе вывод обрезан и
+        # журнал не используется: лучше «нет данных», чем неполный список.
+        inv.changelog_collected = True
+        inv.changelog_ids = parse_changelog_ids(sections["changelog"])
     return inv
+
+
+_CHANGELOG_ID_RE = re.compile(r"CVE-\d{4}-\d{4,}|BDU:\d{4}-\d{5}")
+
+
+def parse_changelog_ids(lines: list[str]) -> dict[str, set[str]]:
+    """Секция @@changelog: строки ``=P=<пакет>`` и идентификаторы под ними."""
+    out: dict[str, set[str]] = {}
+    current: set[str] | None = None
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("=P="):
+            name = line[3:][:200]
+            current = out.setdefault(name, set()) if name else None
+        elif current is not None and _CHANGELOG_ID_RE.fullmatch(line):
+            current.add(line)
+    return {k: v for k, v in out.items() if v}
 
 
 # ---------- пакеты -> ПО ----------
@@ -247,16 +288,53 @@ class BackportReport:
     # или вендор ведёт бюллетени пакета, а этой CVE в них нет.
     other_release: list[str] = field(default_factory=list)
     vendor_silent: list[str] = field(default_factory=list)
+    # Бюллетень молчит, но журнал изменений установленного пакета называет
+    # CVE/БДУ находки — исправление перенесено вендором (бэкпорт).
+    changelog: list[str] = field(default_factory=list)
+    changelog_detail: dict[str, str] = field(default_factory=dict)
+    # Закрыто по указанию вендора в записи БДУ (Astra: «обновить пакет X до V»).
+    bdu_vendor: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         if not self.has_data:
-            return (f"бюллетени дистрибутива: {self.source} — находки по версии "
+            text = (f"бюллетени дистрибутива: {self.source} — находки по версии "
                     "апстрима, с оговоркой о возможном бэкпорте")
-        return (f"бюллетени дистрибутива ({self.source}): закрыто бэкпортом / не "
-                f"затронуто — {len(self.closed)}, подтверждено вендором — "
-                f"{self.confirmed}, добавлено по бюллетеню — {self.added}, нет записи "
-                f"вендора — {self.no_record}, не относится к выпуску — "
-                f"{len(self.other_release) + len(self.vendor_silent)}")
+        else:
+            text = (f"бюллетени дистрибутива ({self.source}): закрыто бэкпортом / не "
+                    f"затронуто — {len(self.closed)}, подтверждено вендором — "
+                    f"{self.confirmed}, добавлено по бюллетеню — {self.added}, нет записи "
+                    f"вендора — {self.no_record}, не относится к выпуску — "
+                    f"{len(self.other_release) + len(self.vendor_silent)}")
+        if self.bdu_vendor:
+            text += (f"\nзакрыто по указанию вендора в записи БДУ ФСТЭК — "
+                     f"{len(self.bdu_vendor)}: {', '.join(self.bdu_vendor[:10])}"
+                     + (f" и ещё {len(self.bdu_vendor) - 10}"
+                        if len(self.bdu_vendor) > 10 else ""))
+        if self.changelog:
+            shown = ", ".join(self.changelog[:10])
+            more = f" и ещё {len(self.changelog) - 10}" if len(self.changelog) > 10 else ""
+            text += (f"\nзакрыто по журналу изменений пакета (исправление перенесено "
+                     f"вендором) — {len(self.changelog)}: {shown}{more}")
+        return text
+
+
+def _bdu_vendor_line(d: Decision) -> str:
+    a = d.advisory
+    ref = f" ({a.advisory_id})" if a and a.advisory_id else ""
+    return (f"БДУ ФСТЭК, указание вендора{ref}: {d.cve} исправлена в версии "
+            f"{a.fixed_version if a else '?'} (пакет {a.package if a else d.package}); "
+            f"установлена {d.installed} — пакет уязвим, обновите его из репозитория "
+            "дистрибутива.")
+
+
+def _bdu_ids(f: Finding, key: str) -> list[str]:
+    ids = [key] if key.startswith("BDU:") else []
+    return list(dict.fromkeys([*ids, *(f.bdu_ids or ())]))
+
+
+def _id_fields(vid: str) -> dict[str, list[str]]:
+    """Идентификатор записи бюллетеня -> поля находки (CVE или БДУ)."""
+    return {"bdu_ids": [vid]} if vid.startswith("BDU:") else {"cve_ids": [vid]}
 
 
 def _version_for(p: InstalledPackage, by_source: bool) -> str:
@@ -582,17 +660,30 @@ class AuthInventoryModule(ScanModule):
                           matcher: _Matcher | None) -> None:
         """Сверка находок с бюллетенями вендора (изменяет out на месте)."""
         rep = adv.report
-        if not adv.has_data:
-            for f in out.values():
-                if f.evidence and BACKPORT_CAVEAT in f.evidence:
-                    f.evidence += f"\nНет данных вендора: {rep.source}."
-            return
         for key in list(out):
             f = out[key]
             cves = [key] if key.startswith("CVE-") else list(f.cve_ids)
             pkgs = origin.get(key, [])
-            decisions = [adv.decide(p, c) for p in pkgs for c in cves]
-            verdict = combine(decisions)
+            decisions: list[Decision] = []
+            verdict = Verdict.NO_DATA
+            line = lambda d: _vendor_line(adv, d)  # noqa: E731
+            if adv.has_data:
+                decisions = [adv.decide(p, c) for p in pkgs for c in cves]
+                verdict = combine(decisions)
+                if verdict is Verdict.NO_DATA:
+                    # Бюллетень может ссылаться только на БДУ ФСТЭК (без CVE) —
+                    # тогда записи вендора ищем по идентификаторам БДУ находки.
+                    by_bdu = [adv.decide(p, b) for p in pkgs for b in _bdu_ids(f, key)]
+                    if combine(by_bdu) is not Verdict.NO_DATA:
+                        decisions, verdict = by_bdu, combine(by_bdu)
+            if verdict is Verdict.NO_DATA:
+                # Указание вендора в самой записи БДУ (Astra: «обновить пакет X до V»).
+                by_rec = self._bdu_vendor_decisions(inv, adv, f, key, pkgs, matcher)
+                if combine(by_rec) is not Verdict.NO_DATA:
+                    decisions, verdict = by_rec, combine(by_rec)
+                    line = _bdu_vendor_line
+                    if verdict is Verdict.FIXED:
+                        rep.bdu_vendor.append(key)
             if verdict in (Verdict.FIXED, Verdict.NOT_AFFECTED):
                 rep.closed.append(key)
                 del out[key]
@@ -600,12 +691,19 @@ class AuthInventoryModule(ScanModule):
             if verdict is Verdict.VULNERABLE:
                 rep.confirmed += 1
                 f.source, f.confidence = "vendor_advisory", "high"
-                lines = list(dict.fromkeys(_vendor_line(adv, d) for d in decisions
+                lines = list(dict.fromkeys(line(d) for d in decisions
                                            if d.verdict is Verdict.VULNERABLE))
                 text = "\n".join(lines)
                 f.evidence = (f.evidence.replace(BACKPORT_CAVEAT, text)
                               if f.evidence and BACKPORT_CAVEAT in f.evidence
                               else "\n".join(x for x in (f.evidence, text) if x))
+                continue
+            if self._closed_by_changelog(inv, f, key, pkgs, rep):
+                del out[key]
+                continue
+            if not adv.has_data:
+                if f.evidence and BACKPORT_CAVEAT in f.evidence:
+                    f.evidence += f"\nНет данных вендора: {rep.source}."
                 continue
             if (reason := self._not_for_release(inv, adv, f, cves, pkgs, matcher)):
                 (rep.other_release if reason == "other_release"
@@ -613,14 +711,25 @@ class AuthInventoryModule(ScanModule):
                 del out[key]
                 continue
             rep.no_record += 1
-            why = ("в записи нет CVE — сверить с бюллетенем нельзя" if not cves else
-                   f"в бюллетенях {rep.source} нет записи о "
-                   f"{', '.join(cves[:3])} для пакета {', '.join(p.name for p in pkgs)}")
+            names = ", ".join(p.name for p in pkgs)
+            if not cves:
+                why = "в записи нет CVE — сверить с бюллетенем нельзя"
+            elif pkgs and not adv.tracks(pkgs):
+                why = (f"в бюллетенях {rep.source} нет ни одной записи о пакете {names} "
+                       f"(сверено и по CVE, и по БДУ); в журнале изменений пакета "
+                       f"{', '.join(cves[:3])} не упоминается"
+                       if inv.changelog_collected else
+                       f"в бюллетенях {rep.source} нет ни одной записи о пакете {names}")
+            else:
+                why = (f"в бюллетенях {rep.source} нет записи о "
+                       f"{', '.join(cves[:3])} для пакета {names}")
             f.evidence = "\n".join(x for x in (f.evidence, f"Нет данных вендора: {why}.") if x)
+        if not adv.has_data:
+            return
 
         # Находки по бюллетеню: CVE, исправленные вендором выше установленной версии,
         # которых не нашло сопоставление по версии апстрима.
-        known = {c for f in out.values() for c in (f.vuln_id, *f.cve_ids) if c}
+        known = {c for f in out.values() for c in (f.vuln_id, *f.cve_ids, *f.bdu_ids) if c}
         known.update(rep.closed)
         added: dict[str, Finding] = {}
         for p in inv.packages:
@@ -634,7 +743,7 @@ class AuthInventoryModule(ScanModule):
                         prev.evidence = f"{prev.evidence}\n{line}"
                     continue
                 f = Finding(module=MODULE, host=inv.host, finding_type=FindingType.VULN,
-                            vuln_id=cve, cve_ids=[cve],
+                            vuln_id=cve, **_id_fields(cve),
                             title=f"{cve}: пакет {p.name} {d.installed} (исправлено в "
                                   f"{d.advisory.fixed_version if d.advisory else '?'})")
                 if matcher is not None and hasattr(matcher, "enrich"):
@@ -661,6 +770,71 @@ class AuthInventoryModule(ScanModule):
                 added[cve] = f
         rep.added = len(added)
         out.update(added)
+
+    @staticmethod
+    def _bdu_vendor_decisions(inv: HostInventory, adv: _HostAdvisories, f: Finding,
+                              key: str, pkgs: list[InstalledPackage],
+                              matcher: _Matcher | None) -> list[Decision]:
+        """Решения по указаниям вендора в записях БДУ находки (только Astra Linux:
+        у неё в «Возможных мерах» точная версия исправленного пакета)."""
+        if (adv.spec is None or adv.spec.family != "astra" or adv.release is None
+                or inv.os_family != "astra" or not pkgs or not f.bdu_ids):
+            return []
+        store = getattr(matcher, "store", None) if matcher is not None else None
+        if store is None or not hasattr(store, "get_bdu"):
+            return []
+        rows: list[Advisory] = []
+        for bid in f.bdu_ids:
+            try:
+                rec = store.get_bdu(bid)
+            except Exception:  # noqa: BLE001 — без записи: нет данных
+                rec = None
+            if rec is not None:
+                rows.extend(bdufix.astra_rows(rec.remediation, key, adv.release))
+        if not rows:
+            return []
+        out: list[Decision] = []
+        for p in pkgs:
+            if p.manager != "dpkg":
+                return []
+            mine = [r for r in rows if r.package == p.name.lower()]
+            if mine:
+                out.append(decide(mine, key, package=p.name, installed=p.version,
+                                  manager="dpkg"))
+                continue
+            by_src = [r for r in rows if r.package == (p.source or "").lower()]
+            if not by_src:
+                return []        # указание есть, но не для этого пакета — решать нельзя
+            out.append(decide(by_src, key, package=p.name,
+                              installed=_version_for(p, True), manager="dpkg"))
+        return out
+
+    @staticmethod
+    def _closed_by_changelog(inv: HostInventory, f: Finding, key: str,
+                             pkgs: list[InstalledPackage], rep: BackportReport) -> bool:
+        """Бюллетень вендора молчит, а журнал изменений установленного пакета
+        называет CVE (или БДУ) находки — вендор перенёс исправление (бэкпорт).
+
+        Закрываем только находку по версии апстрима (с оговоркой о бэкпорте) и
+        только если журнал КАЖДОГО пакета находки называет её идентификатор:
+        находка с решением вендора «уязвим» сюда не попадает.
+        """
+        if not inv.changelog_ids or not pkgs:
+            return False
+        if not f.evidence or BACKPORT_CAVEAT not in f.evidence:
+            return False
+        ids = {key, *(f.cve_ids or ()), *(f.bdu_ids or ())} - {""}
+        hits: dict[str, set[str]] = {}
+        for p in pkgs:
+            log = inv.changelog_ids.get(p.name) or inv.changelog_ids.get(p.source or "")
+            found = ids & (log or set())
+            if not found:
+                return False
+            hits[f"{p.name} {p.version}"] = found
+        rep.changelog.append(key)
+        rep.changelog_detail[key] = "; ".join(
+            f"{name}: {', '.join(sorted(v))}" for name, v in hits.items())
+        return True
 
     @staticmethod
     def _not_for_release(inv: HostInventory, adv: _HostAdvisories, f: Finding,
@@ -829,7 +1003,7 @@ class AuthInventoryModule(ScanModule):
             assert vuln.advisory is not None
             fixed = vuln.advisory.fixed_version
             f = Finding(module=MODULE, host=inv.host, finding_type=FindingType.VULN,
-                        vuln_id=cve, cve_ids=[cve],
+                        vuln_id=cve, **_id_fields(cve),
                         title=f"{cve}: ядро Linux {st.release} (исправлено в {fixed})")
             if matcher is not None and hasattr(matcher, "enrich"):
                 try:
@@ -974,7 +1148,7 @@ class AuthInventoryModule(ScanModule):
                     if c and c.upper().startswith("CVE-"):
                         assessed.setdefault(c.upper(), "reported")
             if adv is not None:
-                for c in adv.report.closed:
+                for c in (*adv.report.closed, *adv.report.changelog):
                     if c.upper().startswith("CVE-"):
                         assessed[c.upper()] = "closed"
                 if not adv.report.has_data:
@@ -986,7 +1160,9 @@ class AuthInventoryModule(ScanModule):
                                  details={"source": r.source, "closed": len(r.closed),
                                           "closed_ids": r.closed[:50],
                                           "confirmed": r.confirmed, "added": r.added,
-                                          "no_record": r.no_record})
+                                          "no_record": r.no_record,
+                                          "changelog_closed": dict(list(
+                                              r.changelog_detail.items())[:50])})
             kernel_found, krep = self._kernel_findings(
                 ctx, inv, adv, matcher,
                 {f.vuln_id: f for f in matched if f.vuln_id})
